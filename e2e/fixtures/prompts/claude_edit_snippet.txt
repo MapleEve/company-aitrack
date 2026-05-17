@@ -1,0 +1,21 @@
+// Sample code snippet used as realistic diff content for claude e2e test payloads
+
+fn compute_record_sig(
+    hmac_secret: &str,
+    token_key: &str,
+    device_id: &str,
+    timestamp: &str,
+    tool: &str,
+    file_path: &str,
+    repo_url: &str,
+    current_sha: &str,
+    added_lines: i64,
+    removed_lines: i64,
+    diff_hunk: Option<&str>,
+) -> String {
+    let diff_hash = sha256_hex(diff_hunk.unwrap_or("").as_bytes());
+    let msg = format!(
+        "{token_key}\n{device_id}\n{timestamp}\n{tool}\n{file_path}\n{repo_url}\n{current_sha}\n{added_lines}\n{removed_lines}\n{diff_hash}"
+    );
+    hmac_sha256_hex(hmac_secret.as_bytes(), msg.as_bytes())
+}

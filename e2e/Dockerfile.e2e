@@ -1,0 +1,22 @@
+FROM golang:1.22 AS builder
+
+WORKDIR /e2e-build
+
+COPY e2e/go.mod ./
+RUN go mod download 2>/dev/null || true
+
+COPY e2e/ ./
+
+RUN go build -o /e2e-runner ./scenarios/
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl wget && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /e2e-runner /e2e-runner
+COPY e2e/fixtures /e2e/fixtures
+COPY e2e/run.sh /e2e/run.sh
+
+RUN chmod +x /e2e/run.sh
+
+ENTRYPOINT ["/e2e/run.sh"]

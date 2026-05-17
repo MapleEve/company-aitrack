@@ -1,0 +1,196 @@
+# 部署说明
+
+## 适用对象
+
+这篇面向准备在私有服务器或容器环境中运行 AiTrack 服务端的系统管理员。当前重点是 Docker 私有部署。
+
+---
+
+## 前提条件
+
+- Docker 20+
+- 所有构建命令均从项目根目录 `aitrack-selfbuilt/` 执行（构建上下文包含三个组件）
+
+---
+
+## 三镜像构建
+
+每个 Dockerfile 均为多阶段构建：构建阶段运行测试并强制 90% 覆盖率门槛，通过后产出最小运行时镜像。
+
+### Rust 客户端镜像
+
+```bash
+docker build -f docker/Dockerfile.client -t aitrack-client:latest .
+```
+
+- 构建阶段：`rust:1.82`，执行 `cargo build --release` + `cargo test` + `cargo llvm-cov` 覆盖率门槛
+- 运行时镜像：`debian:bookworm-slim`，二进制位于 `/usr/local/bin/aitrack`
+
+客户端镜像主要用于 e2e 测试，生产使用时直接将二进制安装到开发者机器。
+
+### Java 服务端镜像
+
+```bash
+docker build -f docker/Dockerfile.server-java -t aitrack-server-java:latest .
+```
+
+- 构建阶段：`maven:3.9-eclipse-temurin-17`，执行 `mvn verify`（含 JaCoCo LINE ≥ 90% 门槛）
+- 运行时镜像：`eclipse-temurin:17-jre`，监听端口 8080，H2 数据库持久化到 `/app/data`
+
+### Go 服务端镜像
+
+```bash
+docker build -f docker/Dockerfile.server-go -t aitrack-server-go:latest .
+```
+
+- 构建阶段：`golang:1.22`，执行 `go test ./...` + 覆盖率门槛 + `CGO_ENABLED=0 go build`
+- 运行时镜像：`gcr.io/distroless/base-debian12`（无 shell），监听端口 8080
+
+---
+
+## 启动服务端
+
+使用 docker compose 按需选择实现。同一主机上建议只运行一个实现。
+
+### 启动 Java 服务端（端口 8080）
+
+```bash
+docker compose -f docker/docker-compose.yml --profile java up -d
+```
+
+### 启动 Go 服务端（端口 8081）
+
+```bash
+docker compose -f docker/docker-compose.yml --profile go up -d
+```
+
+---
+
+## 配置项
+
+### 必须配置（生产环境）
+
+| 环境变量 | 说明 |
+|----------|------|
+| `AITRACK_ADMIN_KEY` | 管理接口鉴权密钥，用于调用 `POST /admin/tokens`。**生产环境必须修改默认值。** 生成：`openssl rand -hex 32` |
+| `AITRACK_SECRET_KEY` | AES-256-GCM 密钥，用于加密存储 `hmac_secret`。Base64 编码的 32 字节。**生产环境必须设置。** 生成：`openssl rand -base64 32` |
+
+开发环境下 `AITRACK_SECRET_KEY` 可不设置，`hmac_secret` 将以 `plain:` 前缀明文存储。
+
+### 可调整的业务参数
+
+以下参数两套服务端实现均支持，Go 实现通过环境变量或 `config.yaml` 配置，Java 实现通过 `application.yml` 配置。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `AITRACK_TIMESTAMP_WINDOW` / `aitrack.timestamp-window-seconds` | `300` | 请求时间戳允许偏差（秒），超出则 401 |
+| `AITRACK_RATE_LIMIT_PER_HOUR` / `aitrack.rate-limit-per-hour` | `30` | 每 (token, file_path) 每小时最多接受的编辑数 |
+| `AITRACK_MAX_ADDED_LINES` / `aitrack.max-added-lines` | `5000` | 单条记录 added_lines 上限，超出则 flagged: oversized |
+| `AITRACK_REPO_WHITELIST_ENFORCE` / `aitrack.repo-whitelist.enforce` | `false` | 是否强制拒绝白名单外的 repo_url |
+| `AITRACK_REPO_WHITELIST_URLS` / `aitrack.repo-whitelist.urls` | 空 | 允许的 repo URL 列表（逗号分隔 / YAML 列表） |
+
+### 通过 .env 文件配置
+
+```bash
+# .env
+AITRACK_ADMIN_KEY=your-secure-admin-key
+AITRACK_SECRET_KEY=your-base64-32-byte-key
+AITRACK_RATE_LIMIT_PER_HOUR=30
+AITRACK_MAX_ADDED_LINES=5000
+```
+
+启动前导入：
+
+```bash
+export $(cat .env | xargs)
+docker compose -f docker/docker-compose.yml --profile java up -d
+```
+
+---
+
+## 数据卷
+
+| 服务 | 卷名 | 容器内路径 | 说明 |
+|------|------|-----------|------|
+| server-java | `aitrack-java-data` | `/app/data` | H2 数据库文件 |
+| server-go | `aitrack-go-data` | `/data` | SQLite 数据库文件 |
+
+删除卷（谨慎，将丢失所有数据）：
+
+```bash
+docker compose -f docker/docker-compose.yml down -v
+```
+
+---
+
+## Java 服务端切换 PostgreSQL
+
+在 `application.yml` 中替换 datasource 配置：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/aitrack
+    driver-class-name: org.postgresql.Driver
+    username: aitrack
+    password: secret
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+```
+
+同时在 `pom.xml` 添加 PostgreSQL 驱动：
+
+```xml
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+</dependency>
+```
+
+---
+
+## 运维要点
+
+**Admin 接口安全**：生产环境中 `/admin/**` 应通过网络 ACL 或反向代理限制访问，不对公网暴露。
+
+**Token 签发流程**：
+
+```bash
+curl -X POST http://localhost:8080/admin/tokens \
+  -H 'X-Admin-Key: YOUR_ADMIN_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"owner":"alice","note":"dev machine"}'
+# 响应中的 token 和 hmac_secret 仅出现一次，立即保存
+```
+
+**检查设备心跳状态**：
+
+```bash
+curl http://localhost:8080/api/v1/ai-track/devices \
+  -H 'Authorization: Bearer aitrack_...'
+```
+
+`hooks.claude/codex/cursor` 为 `false` 的设备需人工核查是否绕过了监控。
+
+**H2 控制台**（Java 实现，仅开发环境）：
+
+```
+http://localhost:8080/h2-console
+JDBC URL: jdbc:h2:file:./data/aitrack
+```
+
+---
+
+## E2E 验证
+
+部署完成后可运行 e2e 测试套件验证整体链路：
+
+```bash
+# 对 Java 和 Go 实现各跑一轮
+bash e2e/run.sh both
+
+# 使用真实 Rust 二进制做端到端验证
+bash e2e/run-client-e2e.sh both
+```
+
+详见 `e2e/README.md`。

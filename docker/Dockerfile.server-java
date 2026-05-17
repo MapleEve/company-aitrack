@@ -1,0 +1,25 @@
+# ── Stage 1: build + test + JaCoCo coverage gate ─────────────────────────────
+FROM maven:3.9-eclipse-temurin-17 AS builder
+
+WORKDIR /workspace
+
+# Maven mirror settings (Aliyun public mirror — reliable artifact downloads)
+COPY docker/maven-settings.xml /root/.m2/settings.xml
+
+# Copy pom + source, run full verify (compile + tests + JaCoCo LINE >= 90% gate)
+COPY server-java/pom.xml ./
+COPY server-java/src ./src
+RUN mvn -q verify -Dmaven.wagon.http.retryHandler.count=5
+
+# ── Stage 2: minimal JRE runtime ─────────────────────────────────────────────
+FROM eclipse-temurin:17-jre AS runtime
+
+WORKDIR /app
+
+RUN mkdir -p /app/data
+
+COPY --from=builder /workspace/target/aitrack-server-*.jar /app/aitrack-server.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "/app/aitrack-server.jar"]

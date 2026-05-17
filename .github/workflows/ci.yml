@@ -1,0 +1,75 @@
+name: aitrack CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  client:
+    name: Build & test client (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out aitrack
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build client image (build + test + 90% coverage gate)
+        run: docker build -f docker/Dockerfile.client .
+
+  server-java:
+    name: Build & test server-java (Java 17 + Maven)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out aitrack
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build server-java image (mvn verify + JaCoCo 90% gate)
+        run: docker build -f docker/Dockerfile.server-java .
+
+  server-go:
+    name: Build & test server-go (Go 1.22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out aitrack
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build server-go image (go test + 90% coverage gate)
+        run: docker build -f docker/Dockerfile.server-go .
+
+  e2e:
+    name: End-to-end tests (both implementations)
+    needs: [client, server-java, server-go]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out aitrack
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run e2e suite against Java and Go servers
+        run: bash e2e/run.sh both

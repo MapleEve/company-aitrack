@@ -1,0 +1,74 @@
+version: "3.9"
+
+# E2E compose — spins up one server backend + e2e runner container.
+# Usage:
+#   SERVER_PROFILE=java docker compose -f docker/docker-compose.e2e.yml up --abort-on-container-exit
+#   SERVER_PROFILE=go   docker compose -f docker/docker-compose.e2e.yml up --abort-on-container-exit
+
+services:
+  server-java:
+    profiles: ["java"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server-java
+    image: aitrack-server-java:latest
+    environment:
+      AITRACK_ADMIN_KEY: "e2e-admin-key"
+      AITRACK_SECRET_KEY: ""
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/h2-console > /dev/null && echo ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  server-go:
+    profiles: ["go"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server-go
+    image: aitrack-server-go:latest
+    environment:
+      AITRACK_ADMIN_KEY: "e2e-admin-key"
+      AITRACK_SECRET_KEY: ""
+      AITRACK_DB_PATH: "/tmp/aitrack_e2e.db"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/ai-track/stats 2>&1 | grep -q 'rows\\|\\[\\|{' && echo ok || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  e2e-java:
+    profiles: ["java"]
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.e2e
+    image: aitrack-e2e:latest
+    environment:
+      SERVER_URL: "http://server-java:8080"
+      ADMIN_KEY: "e2e-admin-key"
+      SERVER_IMPL: "java"
+    depends_on:
+      server-java:
+        condition: service_healthy
+    volumes:
+      - ../e2e:/e2e:ro
+    command: ["/e2e/run.sh"]
+
+  e2e-go:
+    profiles: ["go"]
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.e2e
+    image: aitrack-e2e:latest
+    environment:
+      SERVER_URL: "http://server-go:8080"
+      ADMIN_KEY: "e2e-admin-key"
+      SERVER_IMPL: "go"
+    depends_on:
+      server-go:
+        condition: service_healthy
+    volumes:
+      - ../e2e:/e2e:ro
+    command: ["/e2e/run.sh"]

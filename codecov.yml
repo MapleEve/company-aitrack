@@ -1,0 +1,33 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+        threshold: 5%
+
+flag_management:
+  default_rules:
+    carryforward: true
+
+flags:
+  client:
+    paths:
+      - client/
+    carryforward: true
+  server-java:
+    paths:
+      - server-java/
+    carryforward: true
+  server-go:
+    paths:
+      - server-go/
+    carryforward: true
+
+ignore:
+  - "**/*.md"
+  - "**/testdata/**"
+  - "**/fixtures/**"

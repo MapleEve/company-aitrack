@@ -1,0 +1,94 @@
+name: Feature request / 功能建议
+description: Suggest a product improvement for aitrack
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢分享想法。
+
+        请一个 issue 只描述一个问题或工作流，并先说明用户问题，不要只写实现方案。
+        aitrack 是 AI 编码效能治理平台，建议也应符合这个产品边界（client capture、server 接收、anti-cheat、stats 分析）。
+        隐私提醒：不要粘贴凭据、token、admin key、私人 diff 内容、内部 repo URL、完整环境文件或内部 / 本地文件路径。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve / 要解决的问题
+      description: Describe the user problem or workflow gap.
+      placeholder: What problem or use case should aitrack handle better?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution / 期望方案
+      description: Describe the product behavior you want to see.
+      placeholder: What should the product do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的替代方案
+      description: Describe any workarounds or alternative solutions you considered.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product area / 产品区域
+      description: Which area is this request about?
+      options:
+        - client capture (Rust)
+        - server API (Java / Go)
+        - anti-cheat validation
+        - stats and reporting
+        - authentication and token management
+        - Docker / deployment
+        - e2e testing
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Expected impact / 影响程度
+      description: How important is this for your workflow?
+      options:
+        - Nice to have
+        - Useful
+        - Important
+        - Critical
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples, references, or mockups / 示例、参考或草图
+      description: Link to examples, screenshots, or related workflows if they help explain the request. 请确保内容已脱敏。
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context / 补充说明
+      description: Add anything else that would help evaluate the request.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist / 自检
+      options:
+        - label: I searched existing issues before opening this request.
+          required: true
+        - label: I described the user problem, not just a technical implementation detail.
+          required: true
+        - label: I removed or redacted credentials, tokens, admin keys, private diff content, repo URLs, env values, and internal paths from this request.
+          required: true
+        - label: I can help validate the feature if it gets implemented.
+          required: false

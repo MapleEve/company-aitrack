@@ -1,0 +1,30 @@
+# ── Stage 1: build + test + coverage gate ─────────────────────────────────────
+FROM golang:1.22 AS builder
+
+WORKDIR /workspace
+
+# Cache Go module download
+COPY server-go/go.mod server-go/go.sum ./
+RUN go mod download
+
+# Copy source
+COPY server-go/ ./
+
+# Run tests with coverage
+RUN go test ./... -coverprofile=cover.out -covermode=atomic -count=1
+
+# Check coverage >= 90%
+RUN go tool cover -func=cover.out | \
+    awk '/^total/{val=$NF; sub(/%$/,"",val); if(val+0 < 90.0){ print "Coverage " val "% is below 90% threshold"; exit 1 }}'
+
+# Build static release binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o aitrack-server .
+
+# ── Stage 2: minimal distroless runtime ───────────────────────────────────────
+FROM gcr.io/distroless/base-debian12 AS runtime
+
+COPY --from=builder /workspace/aitrack-server /aitrack-server
+
+EXPOSE 8080
+
+ENTRYPOINT ["/aitrack-server"]

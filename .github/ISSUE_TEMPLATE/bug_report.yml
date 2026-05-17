@@ -1,0 +1,119 @@
+name: Bug report / 缺陷报告
+description: Report a reproducible problem in aitrack
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢帮助改进 aitrack。
+
+        提交前请先搜索已有 issue，并确认这是 aitrack 本身的产品或运行问题，而不是功能建议、通用部署咨询或第三方服务临时故障。
+
+        隐私提醒：不要粘贴 token、hmac_secret、admin key、组织内部 repo URL、私人 diff 内容、完整环境文件或内部 / 本地文件路径。分享日志前请先脱敏。
+
+  - type: input
+    id: version
+    attributes:
+      label: aitrack version or commit / 版本或提交
+      description: Which release, branch build, or commit are you running?
+      placeholder: v0.1.0 / main @ abc1234
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component / 影响组件
+      description: Which part of the system is most affected?
+      options:
+        - client (Rust binary)
+        - server-java (Java 17 + Spring Boot)
+        - server-go (Go 1.22)
+        - e2e test suite
+        - Docker / build
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened? / 发生了什么
+      description: Describe the bug clearly and concisely. 请勿贴未脱敏内容。
+      placeholder: Tell us what went wrong.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Installation method / 安装方式
+      description: How are you running aitrack?
+      options:
+        - Docker Compose
+        - Docker (individual image)
+        - Local development (cargo / mvn / go run)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen? / 期望行为
+      placeholder: Describe the expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Give the exact steps so someone else can reproduce the issue. 不要包含真实凭据或私人内容。
+      placeholder: |
+        1. Start server with ...
+        2. Run client capture ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details / 环境信息
+      description: Include OS, runtime versions, deployment details, and anything else relevant. Do not paste full env files, secrets, or internal paths.
+      placeholder: |
+        - OS:
+        - Rust version (if client):
+        - Java version (if server-java):
+        - Go version (if server-go):
+        - Docker version:
+        - Deployment:
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error messages / 日志或错误信息
+      description: Paste only relevant redacted logs, stack traces, or error output. Do not include credentials, tokens, hmac_secret, admin keys, repo URLs, or private diff content.
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context / 补充说明
+      description: Add screenshots or anything else that helps explain the problem.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist / 自检
+      options:
+        - label: I searched existing issues before opening this report.
+          required: true
+        - label: I filled in the requested details above.
+          required: true
+        - label: I removed or redacted credentials, tokens, hmac_secret, admin keys, repo URLs, private diff content, and internal paths from this report.
+          required: true
+        - label: I can help verify a fix if needed.
+          required: false

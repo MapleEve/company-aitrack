@@ -1,0 +1,24 @@
+// Sample code snippet used as realistic diff content for cursor e2e test payloads
+
+public class ValidationService {
+    public ValidationResult validate(TokenEntity token, EditDto edit) {
+        // Step 4: record_sig HMAC
+        String expected = signatureService.computeRecordSig(
+            token.getHmacSecret(),
+            token.getTokenKey(),
+            edit.getDeviceId(),
+            edit.getTimestamp(),
+            edit.getTool(),
+            edit.getFilePath(),
+            edit.getRepoUrl(),
+            edit.getCurrentSha(),
+            edit.getAddedLines(),
+            edit.getRemovedLines(),
+            edit.getDiffHunk()
+        );
+        if (!constantTimeEquals(expected, edit.getRecordSig())) {
+            return ValidationResult.rejected("sig_mismatch");
+        }
+        return ValidationResult.accepted();
+    }
+}

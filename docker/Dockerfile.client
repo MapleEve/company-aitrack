@@ -1,0 +1,39 @@
+# ── Stage 1: build + test + coverage ──────────────────────────────────────────
+FROM rust:1 AS builder
+
+WORKDIR /workspace
+
+# Cache dependencies layer
+COPY client/Cargo.toml client/Cargo.lock ./
+RUN mkdir src && echo 'fn main(){}' > src/main.rs && \
+    cargo fetch --locked && \
+    rm -rf src
+
+# Copy real source
+COPY client/src ./src
+
+# Install cargo-llvm-cov for coverage measurement
+RUN rustup component add llvm-tools-preview && \
+    cargo install cargo-llvm-cov --locked
+
+# Build release binary
+RUN cargo build --release --locked
+
+# Run unit tests. Tests that mutate process-global env vars are serialized
+# internally by the crate-wide test_support::ENV_LOCK, so the default
+# multi-threaded test runner is safe.
+RUN cargo test --locked
+
+# Measure coverage; fail build if line coverage < 90%
+RUN cargo llvm-cov --locked --summary-only --fail-under-lines 90
+
+# ── Stage 2: minimal runtime image ────────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/target/release/aitrack /usr/local/bin/aitrack
+
+ENTRYPOINT ["aitrack"]

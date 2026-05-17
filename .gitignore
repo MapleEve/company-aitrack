@@ -1,0 +1,58 @@
+# ── Build artefacts ────────────────────────────────────────────────────────────
+client/target/
+server-java/target/
+**/target/
+**/cover.out
+*.class
+*.jar
+*.war
+
+# ── Database files ─────────────────────────────────────────────────────────────
+**/*.db
+**/*.db.bak-*
+server-java/data/
+
+# ── OS / IDE / tool noise ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
+*.log.*
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Vim / Emacs swap files
+*.swp
+*.swo
+*~
+\#*\#
+
+# ── Rust toolchain artefacts (client/) ────────────────────────────────────────
+# client/target/ already covered above by **/target/
+
+# ── Temporary / scratch ────────────────────────────────────────────────────────
+tmp/
+*.tmp
+*.bak
+
+# ── Environment / secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+
+# baoyu image-gen intermediates
+docs/assets/**/prompts/
+docs/assets/**/batch.json

@@ -1,0 +1,35 @@
+# Ensure aitrack text files use LF line endings consistently.
+# Keep repository metadata predictable without introducing repo-specific tooling rules.
+* text eol=lf
+
+*.rs whitespace=error
+*.java whitespace=error
+*.go whitespace=error
+*.toml whitespace=error
+*.json whitespace=error
+*.md whitespace=error
+*.yml whitespace=error
+*.yaml whitespace=error
+*.sh text eol=lf whitespace=error
+*.xml whitespace=error
+*.properties whitespace=error
+*.sql whitespace=error
+*.mod whitespace=error
+*.sum whitespace=error
+
+# Docker
+Dockerfile* text eol=lf whitespace=error
+
+# Binary assets
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.png binary
+*.webp binary
+*.zip binary
+*.tar binary
+*.gz binary
+
+# docs/assets/readme screenshots
+docs/assets/readme/*.png binary
