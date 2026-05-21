@@ -14,9 +14,11 @@ jobs:
     name: Claude AI Review
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: |
-      github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.changed_files, 'claude-code-review.yml')
+    # Non-blocking: requires Claude Code GitHub App installation + custom
+    # ANTHROPIC_BASE_URL supporting app-token auth. Not a required check.
+    # Remove continue-on-error once the GitHub App is installed on this repo.
+    continue-on-error: true
+    if: github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,16 +41,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-4-5
           track_progress: "true"
           use_sticky_comment: "true"
-          allowed_tools: |
-            Bash(cargo fmt --manifest-path client/Cargo.toml -- --check)
-            Bash(cargo clippy --manifest-path client/Cargo.toml -- -D warnings)
-            Bash(cd server-go && go vet ./...)
-            Bash(cd server-go && go build ./...)
-            Bash(cd server-java && mvn verify -q -pl .)
-            Bash(rg:*)
-            Bash(git diff:*)
+          claude_args: "--model claude-sonnet-4-5"
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
