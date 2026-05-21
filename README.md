@@ -264,6 +264,7 @@ bash e2e/run.sh both
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=MapleEve/company-aitrack&type=date)](https://www.star-history.com/#MapleEve/company-aitrack&type=date)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack?ref=badge_shield)
 
 ---
 
@@ -276,3 +277,7 @@ bash e2e/run.sh both
 ---
 
 [MIT License](LICENSE) © 2026 MapleEve
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack?ref=badge_large)
