@@ -190,7 +190,7 @@ canonical_string 字段顺序严格定义于 `CONTRACT.md`，客户端与服务�
 
 | 维度 | Java（Spring Boot 3.3.8） | Go（chi v5.2.5 / Go 1.25）|
 |------|---------------------------|---------------------------|
-| 数据库 | H2（默认）/ ParadeDB（生产） | ParadeDB（生产）/ SQLite（E2E 测试，in-memory）|
+| 数据库 | H2（默认）/ ParadeDB（生产） | ParadeDB / PostgreSQL（生产必须）|
 | 部署模型 | JRE + jar，适合现有 JVM 基础设施 | 单一二进制，distroless 镜像，适合极简容器 |
 | ORM | Spring Data JPA / Hibernate | 原生 database/sql，无 ORM |
 | 适用场景 | 已有 Java 技术栈的团队 | 偏好轻量容器或无 JVM 环境 |
@@ -231,7 +231,7 @@ Java 和 Go 服务端在原有嵌入式数据库基础上，新增 PostgreSQL/Pa
 
 `edit_records` 表新增列：`prompt_summary TEXT` 和 `embedding BYTEA`（均可空，Phase DB-3 回填）。
 
-**Go（chi）**：通过 `DATABASE_URL=postgres://user:pass@host:5432/dbname` 激活 ParadeDB/PostgreSQL 模式。生产部署必须设置此环境变量；`testapp.MemoryConfig` 供 E2E 测试使用（内存 SQLite，仅测试）。
+**Go（chi）**：`DATABASE_URL=postgres://user:pass@host:5432/dbname` 为**必填**环境变量，生产和 E2E 均需要真实 PostgreSQL 实例。`testapp.MemoryConfig` 仅供 Go 本地单元/集成测试在无外部依赖时构造 chi router，不用于 Docker E2E。
 
 **ParadeDB 索引 DDL**（首次部署后执行一次）：
 
@@ -269,7 +269,7 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 #### Docker Compose
 
-`docker/docker-compose.yml` 新增 `db` 服务（`paradedb/paradedb:latest`），含 `pg_isready` 健康检查和 `pgdata` 命名卷。Java/Go 服务容器保持默认 H2/SQLite 配置，通过环境变量按需切换 postgres 模式。
+`docker/docker-compose.yml` 新增 `db` 服务（`paradedb/paradedb:latest`），含 `pg_isready` 健康检查和 `pgdata` 命名卷。Java 服务容器默认使用 H2，通过 `SPRING_PROFILES_ACTIVE=postgres` 切换 PostgreSQL；Go 服务容器**必须**通过 `DATABASE_URL` 指定 PostgreSQL DSN，无内置嵌入式 DB。
 
 ---
 

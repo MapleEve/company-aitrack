@@ -15,7 +15,7 @@
 
 集成测试 (Integration)
   ├── 完整 Spring 上下文 + H2 内存库（Java）
-  ├── 真实 SQLite（Go）
+  ├── 真实 PostgreSQL（Go，需 AITRACK_TEST_DB_URL 或 DATABASE_URL）
   └── HTTP 端到端（mock server / MockMvc）
 
 E2E 测试
@@ -90,9 +90,9 @@ codecov -f target/site/jacoco/jacoco.xml -F server-java
 
 ```bash
 cd server-go
-go test ./... -coverprofile=coverage.out -covermode=atomic
-go tool cover -func coverage.out
-codecov -f coverage.out -F server-go
+go test ./... -coverprofile=cover.out -covermode=atomic -count=1 -coverpkg=./internal/...
+go tool cover -func cover.out
+codecov -f cover.out -F server-go
 ```
 
 ---
@@ -423,7 +423,7 @@ class EditIntegrationTest {
 │  → COPY .jar → eclipse-temurin:17-jre                  │
 └───────────────────────────────────────────────────────┘
 ┌───────────────────────────────────────────────────────┐
-│  Dockerfile.server-go (golang:1.24)                    │
+│  Dockerfile.server-go (golang:1.25)                    │
 │    go mod download                                      │
 │    go test ./... -coverprofile=cover.out               │
 │    go tool cover → check total ≥ 90%                   │
@@ -486,13 +486,26 @@ jobs:
 
   test-server-go:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: paradedb/paradedb:latest
+        env:
+          POSTGRES_USER: aitrack
+          POSTGRES_PASSWORD: aitrack_secret
+          POSTGRES_DB: aitrack_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-      - run: go test ./... -coverprofile=coverage.out
+          go-version: '1.25'
+      - run: go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./internal/...
         working-directory: server-go
+        env:
+          DATABASE_URL: postgres://aitrack:aitrack_secret@localhost:5432/aitrack_test
       - uses: codecov/codecov-action@v4
         with:
           files: server-go/coverage.out
@@ -504,5 +517,5 @@ jobs:
 ## 关键注意事项
 
 - **Java 构建必须在 Docker 内进行**：本机无 JDK 17/Maven，`Dockerfile.server-java` 使用 `maven:3.9-eclipse-temurin-17` 镜像完成全部构建和测试。
-- **Go 测试在 Linux 容器内无 CGO 问题**：`modernc.org/sqlite` 是纯 Go 实现，无需 cgo，`CGO_ENABLED=0` 构建。
+- **Go 测试需要 PostgreSQL 实例**：通过 `DATABASE_URL` 环境变量指定。CI 中使用 `paradedb/paradedb` service container；本地运行需自行启动 PostgreSQL，`CGO_ENABLED=0` 构建（pgx/v5 是纯 Go，无需 cgo）。
 - **E2E 不修改真实编辑器配置**：所有操作在容器隔离环境中进行，不触碰 `~/.aitrack/`、`~/.claude/` 等目录。
