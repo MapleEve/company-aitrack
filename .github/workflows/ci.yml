@@ -172,6 +172,20 @@ jobs:
     name: Coverage · Go
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      paradedb:
+        image: paradedb/paradedb:latest
+        env:
+          POSTGRES_USER: aitrack
+          POSTGRES_PASSWORD: aitrack_secret
+          POSTGRES_DB: aitrack_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aitrack"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,7 +195,9 @@ jobs:
           go-version: "1.25"
           cache-dependency-path: server-go/go.sum
       - name: go test -coverprofile
-        run: cd server-go && go test ./... -coverprofile=go-coverage.out -covermode=atomic
+        env:
+          TEST_DATABASE_URL: postgres://aitrack:aitrack_secret@localhost:5432/aitrack_test?sslmode=disable
+        run: cd server-go && go test ./... -coverprofile=go-coverage.out -covermode=atomic -count=1 -coverpkg=./internal/...
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:

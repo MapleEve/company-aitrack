@@ -1,0 +1,12 @@
+version: 3
+
+# Limit FOSSA analysis to 3 core projects.
+# e2e/ is test-only infrastructure and excluded to stay within project limits.
+targets:
+  only:
+    - type: go
+      path: server-go
+    - type: maven
+      path: server-java
+    - type: cargo
+      path: client

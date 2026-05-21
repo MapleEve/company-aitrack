@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  id-token: write
 
 jobs:
   claude-review:
@@ -28,7 +29,6 @@ jobs:
           model: claude-sonnet-4-5
           track_progress: "true"
           use_sticky_comment: "true"
-          exclude_patterns: "MapleEve,github-actions,codecov,dependabot"
           allowed_tools: |
             Bash(cargo fmt --manifest-path client/Cargo.toml -- --check)
             Bash(cargo clippy --manifest-path client/Cargo.toml -- -D warnings)
