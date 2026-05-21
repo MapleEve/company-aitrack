@@ -76,6 +76,9 @@ jobs:
           cargo install --locked cargo-zigbuild
 
       - name: Build release binary
+        env:
+          # sqlite-vec uses u_int8_t (POSIX/BSD extension); -D_GNU_SOURCE enables it under musl.
+          CFLAGS_x86_64_unknown_linux_musl: "-D_GNU_SOURCE"
         run: |
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
             cargo zigbuild --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
