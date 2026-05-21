@@ -1,12 +1,11 @@
 version: 3
 
-# Limit FOSSA analysis to 3 core projects.
-# e2e/ is test-only infrastructure and excluded to stay within project limits.
+# Limit FOSSA analysis to 2 projects (free-tier limit).
+# Highest-value targets: distributed client binary + Go server.
+# server-java (Maven/Spring Boot) is well-covered by Maven Central provenance.
 targets:
   only:
-    - type: go
-      path: server-go
-    - type: maven
-      path: server-java
     - type: cargo
       path: client
+    - type: go
+      path: server-go

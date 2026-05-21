@@ -22,7 +22,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Skip if API key not configured
+        id: check-key
+        env:
+          _KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$_KEY" ]; then
+            echo "::notice::ANTHROPIC_API_KEY secret not set — Claude review skipped. Set the secret to enable AI code review."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Claude Code Review
+        if: steps.check-key.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
