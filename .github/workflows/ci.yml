@@ -106,7 +106,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://aitrack:aitrack_secret@localhost:5432/aitrack_test?sslmode=disable
         run: |
-          go test ./... -coverprofile=cover.out -covermode=atomic -count=1
+          go test ./... -coverprofile=cover.out -covermode=atomic -count=1 -coverpkg=./internal/...
           go tool cover -func=cover.out | awk '/^total/{val=$NF; sub(/%$/,"",val); if(val+0 < 90.0){ print "Coverage " val "% is below 90% threshold"; exit 1 }}'
         working-directory: server-go
       - name: Build Docker image (smoke test)

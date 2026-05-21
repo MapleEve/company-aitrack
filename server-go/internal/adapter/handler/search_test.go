@@ -57,9 +57,10 @@ func TestSearch_MissingQ(t *testing.T) {
 // Test 3: Search 501 — SQLite mode (isPostgres=false)
 func TestSearch_SQLiteMode_Returns501(t *testing.T) {
 	env := newTestEnv(t)
+	sqliteRouter := newSearchTestRouter(t, env.db, env.cfg.AdminKey, false)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai-track/edits/search?q=foo", nil)
 	req.Header.Set("X-Admin-Key", env.cfg.AdminKey)
-	w := do(env.router, req)
+	w := do(sqliteRouter, req)
 	assertStatus(t, w, http.StatusNotImplemented)
 
 	var body map[string]string
@@ -131,12 +132,13 @@ func TestSimilar_WrongEmbeddingDimension(t *testing.T) {
 // Test 8: Similar 501 — SQLite mode
 func TestSimilar_SQLiteMode_Returns501(t *testing.T) {
 	env := newTestEnv(t)
+	sqliteRouter := newSearchTestRouter(t, env.db, env.cfg.AdminKey, false)
 	body := similarRequestBody(t, 384)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai-track/edits/similar",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Admin-Key", env.cfg.AdminKey)
-	w := do(env.router, req)
+	w := do(sqliteRouter, req)
 	assertStatus(t, w, http.StatusNotImplemented)
 }
 

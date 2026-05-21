@@ -63,7 +63,7 @@ func (h *EditsHandler) QueryEdits(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	tokenKey := q.Get("token_key")
 	repo := q.Get("repo")
-	page := parseInt(q.Get("page"), 0)
+	page := clampInt(parseInt(q.Get("page"), 0), 0, 999999)
 	size := clampInt(parseInt(q.Get("size"), 20), 1, 100)
 
 	result, err := h.ingest.QueryEdits(tokenKey, repo, page, size)

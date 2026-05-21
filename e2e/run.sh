@@ -38,6 +38,36 @@ log "Building server images..."
 log "Building e2e runner image..."
 (cd "$REPO_ROOT" && docker build -f e2e/Dockerfile.e2e -t aitrack-e2e:latest . 2>&1 | tail -5)
 
+E2E_NET="aitrack-e2e-net"
+PG_CONTAINER="aitrack-e2e-postgres"
+
+start_postgres() {
+    log "Starting PostgreSQL for Go server..."
+    docker network create "$E2E_NET" 2>/dev/null || true
+    docker rm -f "$PG_CONTAINER" 2>/dev/null || true
+    docker run -d --name "$PG_CONTAINER" \
+        --network "$E2E_NET" \
+        -e POSTGRES_USER=aitrack \
+        -e POSTGRES_PASSWORD=aitrack_secret \
+        -e POSTGRES_DB=aitrack_e2e \
+        postgres:16-alpine
+    local timeout=30
+    while ! docker exec "$PG_CONTAINER" pg_isready -U aitrack -d aitrack_e2e &>/dev/null; do
+        if [ "$timeout" -le 0 ]; then
+            log "PostgreSQL did not become ready"
+            return 1
+        fi
+        sleep 1
+        timeout=$((timeout - 1))
+    done
+    log "PostgreSQL ready"
+}
+
+stop_postgres() {
+    docker rm -f "$PG_CONTAINER" 2>/dev/null || true
+    docker network rm "$E2E_NET" 2>/dev/null || true
+}
+
 run_e2e() {
     local impl="$1"
     local image="aitrack-server-${impl}:e2e"
@@ -54,12 +84,15 @@ run_e2e() {
         # Wait for Spring to start
         sleep 15
     else
+        # Go server is PostgreSQL-only; start a dedicated PG container
+        start_postgres
         docker run -d --name "$container" \
+            --network "$E2E_NET" \
             -e AITRACK_ADMIN_KEY="$ADMIN_KEY" \
-            -e AITRACK_DB_PATH="/tmp/aitrack_e2e.db" \
+            -e DATABASE_URL="postgres://aitrack:aitrack_secret@${PG_CONTAINER}:5432/aitrack_e2e?sslmode=disable" \
             -p "${port}:8080" \
             "$image"
-        sleep 3
+        sleep 5
     fi
 
     local server_url="http://localhost:${port}"
@@ -76,6 +109,9 @@ run_e2e() {
 
     log "Stopping $impl server..."
     docker rm -f "$container" 2>/dev/null || true
+    if [ "$impl" = "go" ]; then
+        stop_postgres
+    fi
 
     return $exit_code
 }

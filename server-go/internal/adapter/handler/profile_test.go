@@ -17,7 +17,7 @@ func insertToken(t *testing.T, env *testEnv, tokenKey, owner string) {
 	t.Helper()
 	_, err := env.db.Exec(
 		`INSERT INTO tokens (token_hash, token_key, hmac_secret, owner, note, active, created_at)
-		 VALUES (?, ?, ?, ?, ?, 1, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, 1, $6)`,
 		"hash-"+tokenKey, tokenKey, "secret", owner, "test", time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
@@ -34,7 +34,7 @@ func insertEditRecord(t *testing.T, env *testEnv, tokenKey, tool, filePath strin
 		  session_id, repo_url, branch, current_sha, file_path,
 		  added_lines, removed_lines, diff_hunk, metadata,
 		  timestamp, record_sig, status, flags, received_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		tokenKey, "device-1", "host-1", tool, "1.0", "openai", "gpt-4",
 		"sess-1", "https://github.com/test/repo", "main", "abc123", filePath,
 		added, removed, "diff hunk", "{}",
@@ -209,7 +209,7 @@ func TestProfile_RejectedRecordsExcluded(t *testing.T) {
 		  session_id, repo_url, branch, current_sha, file_path,
 		  added_lines, removed_lines, diff_hunk, metadata,
 		  timestamp, record_sig, status, flags, received_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		"aitrack_reject", "device-1", "host-1", "cursor", "1.0", "openai", "gpt-4",
 		"sess-2", "https://github.com/test/repo", "main", "abc123", "src/bad.go",
 		999, 999, "diff", "{}",

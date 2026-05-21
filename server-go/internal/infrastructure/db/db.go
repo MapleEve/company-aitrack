@@ -38,6 +38,11 @@ func Open(databaseURL string, opts ...interface{}) (*sql.DB, error) {
 
 // migrate runs PostgreSQL/ParadeDB schema DDL.
 func migrate(db *sql.DB) error {
+	// Serialize concurrent DDL across parallel test packages.
+	if _, err := db.Exec(`SELECT pg_advisory_lock(8675309)`); err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	defer db.Exec(`SELECT pg_advisory_unlock(8675309)`) //nolint:errcheck
 	for _, stmt := range postgresDDL() {
 		if _, err := db.Exec(stmt); err != nil {
 			truncated := stmt
