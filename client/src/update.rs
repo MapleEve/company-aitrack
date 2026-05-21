@@ -20,7 +20,7 @@ pub const GITHUB_RELEASES_API: &str =
 /// ed25519 public key used to verify release binary signatures.
 /// Corresponds to the RELEASE_SIGNING_KEY secret in the GitHub repository.
 /// Generated 2026-05-21; do not rotate — see CONTRIBUTING.md § 签名密钥管理.
-pub const ED25519_PUBKEY_BASE64: &str = "u52DS9INW/U2cjc0DeJnKz/8Z9Fg0mnhf1DD21ZWDkY=";
+pub const ED25519_PUBKEY_BASE64: &str = "qOpEg8nQAxAst7Cd2styaUXYUyhwr1l048FfCqCqvvI=";
 
 // ---------------------------------------------------------------------------
 // GitHub Releases API response types
