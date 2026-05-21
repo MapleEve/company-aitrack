@@ -61,6 +61,7 @@ start_postgres() {
         timeout=$((timeout - 1))
     done
     log "PostgreSQL ready"
+    sleep 2  # allow PG to complete internal init after socket becomes available
 }
 
 stop_postgres() {
@@ -107,7 +108,12 @@ run_e2e() {
     local exit_code=$?
     set -e
 
-    log "Stopping $impl server..."
+    log "Stopping $impl server (exit_code=$exit_code)..."
+    if [ $exit_code -ne 0 ]; then
+        log "=== $impl server logs ==="
+        docker logs "$container" 2>&1 || true
+        log "=== end $impl server logs ==="
+    fi
     docker rm -f "$container" 2>/dev/null || true
     if [ "$impl" = "go" ]; then
         stop_postgres
