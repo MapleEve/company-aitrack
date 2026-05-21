@@ -77,8 +77,9 @@ jobs:
 
       - name: Build release binary
         env:
-          # sqlite-vec uses u_int8_t (POSIX/BSD extension); -D_GNU_SOURCE enables it under musl.
-          CFLAGS_x86_64_unknown_linux_musl: "-D_GNU_SOURCE"
+          # sqlite-vec uses BSD-style u_int*_t types; musl omits them even with _GNU_SOURCE.
+          # Define them as macros that expand to their standard C99 equivalents.
+          CFLAGS_x86_64_unknown_linux_musl: "-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
         run: |
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
             cargo zigbuild --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
