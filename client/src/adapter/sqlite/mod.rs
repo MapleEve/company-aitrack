@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::fs;
 use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::config::db_path;
@@ -86,11 +87,13 @@ pub fn open_db() -> Result<Connection> {
     fs::create_dir_all(dir).context("create ~/.aitrack")?;
 
     // Create the file atomically with 0o600 before SQLite opens it.
-    let _ = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path);
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        opts.mode(0o600);
+    }
+    let _ = opts.open(&path);
 
     let conn = Connection::open(&path).context("open records.db")?;
 
