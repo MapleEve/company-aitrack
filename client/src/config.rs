@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -54,11 +55,11 @@ pub fn save_config(cfg: &Config) -> Result<()> {
     // then atomically rename it over the destination.
     let tmp_path = path.with_extension("toml.tmp");
     {
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        let mut opts = OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        { opts.mode(0o600); }
+        let mut f = opts
             .open(&tmp_path)
             .context("create config.toml.tmp")?;
         f.write_all(text.as_bytes())
@@ -496,6 +497,7 @@ mod tests {
     // apply_init_args / ensure_device_id against a real tempdir.
     // -------------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn save_config_writes_file_and_sets_permissions() {
         let dir = TempDir::new().unwrap();
