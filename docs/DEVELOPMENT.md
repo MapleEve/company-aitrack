@@ -13,7 +13,7 @@
 | Rust / Cargo | stable（推荐 1.82+） | 客户端构建与测试 |
 | JDK | 17+ | Java 服务端（本机未安装 JDK 时使用 Docker 构建） |
 | Maven | 3.8+ | Java 服务端构建 |
-| Go | 1.24+ | Go 服务端构建与测试 |
+| Go | 1.25+ | Go 服务端构建与测试 |
 | Docker | 20+ | 跨平台构建、Java 构建、E2E 测试 |
 | sqlite3 CLI | 任意版本 | E2E 测试时验证本地数据库 |
 | git | 任意版本 | 客户端 git 元数据提取 |
@@ -205,8 +205,8 @@ cd server-go/
 # 构建
 go build ./...
 
-# 运行（SQLite 默认存储在 ./data/aitrack.db，端口 8080）
-go run .
+# 运行（需 DATABASE_URL 环境变量，端口 8080）
+DATABASE_URL=postgres://aitrack:aitrack_secret@localhost:5432/aitrack go run .
 
 # 运行测试
 go test -ldflags=-linkmode=external ./... -cover
@@ -230,7 +230,7 @@ import "github.com/your-org/aitrack/server-go/testapp"
 
 func TestChainIntegration(t *testing.T) {
     adminKey := "test-admin-key-32chars-xxxxxxxxxx"
-    cfg := testapp.MemoryConfig(adminKey)   // in-memory SQLite, random port
+    cfg := testapp.MemoryConfig(adminKey)   // in-memory test config, random port
     handler, cleanup, _ := testapp.Build(cfg)
     defer cleanup()
 
@@ -240,7 +240,7 @@ func TestChainIntegration(t *testing.T) {
 }
 ```
 
-`MemoryConfig` 返回 `DSN=":memory:"` 和指定 admin key 的 `config.Config`，绕过 Go 的 `internal` 包限制，使 `server-go/internal/` 之外的测试文件也能装配真实服务器。
+`MemoryConfig` 返回仅含 admin key 的 `config.Config`，绕过 Go 的 `internal` 包限制，使 `server-go/internal/` 之外的测试文件也能装配真实服务器。仅供本地单元测试使用，Docker E2E 使用真实 PostgreSQL 容器。
 
 ### Testkit 工厂 / Testkit Factories
 
@@ -262,7 +262,7 @@ big := testkit.OversizedEditDTO()
 ```bash
 DATABASE_URL=postgres://aitrack:aitrack_secret@localhost:5432/aitrack go run .
 ```
-不设置 `DATABASE_URL` 时，服务端回退到内嵌 SQLite（本地开发默认值）。
+`DATABASE_URL` 为必填项，Go 服务端无内置嵌入式数据库回退模式。
 
 ---
 

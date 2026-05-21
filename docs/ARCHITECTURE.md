@@ -330,16 +330,16 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 `server-go/testapp/` 是专为测试设计的公开构建包，绕过 Go `internal/` 访问限制：
 
 - `testapp.Build(cfg Config) (http.Handler, func(), error)`：创建真实 chi router 实例（含所有中间件和路由），返回清理函数
-- `testapp.MemoryConfig(adminKey string) Config`：返回使用内存 SQLite 的测试配置（不落盘），无需外部依赖
+- `testapp.MemoryConfig(adminKey string) Config`：返回仅含 admin key 的测试配置，无需外部依赖，仅供本地单元/集成测试使用
 
-该包专供 E2E 测试和集成测试使用，生产代码不引用。
+该包专供本地集成测试使用，生产代码不引用；Docker E2E 使用真实 PostgreSQL 容器。
 
 #### E2E
 
 `e2e/` 目录包含两类测试，职责明确区分：
 
 1. **`mock_chain_test.go`**（HTTP 形状测试）：使用 mock handler 验证请求/响应的 JSON 结构和 HTTP 状态码，无需真实 credential，Phase 4 新增 3 个场景
-2. **`chain_integration_test.go`**（真实链路测试）：`httptest.NewServer(realChiRouter)` + 内存 SQLite + 真实 HMAC 签名，验证完整 10 步校验链，包含三个场景：
+2. **`chain_integration_test.go`**（真实链路测试）：`httptest.NewServer(realChiRouter)` + testapp 本地路由 + 真实 HMAC 签名，验证完整 10 步校验链，包含三个场景：
    - 正常上报 → `accepted`
    - `record_sig` 被篡改 → `rejected: sig_mismatch`
    - Bearer token 缺失 → `401 未授权`
