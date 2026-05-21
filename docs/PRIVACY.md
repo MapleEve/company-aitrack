@@ -69,7 +69,7 @@
 
 ### 服务端存储 / Server-side storage
 
-- 数据库：PostgreSQL（ParadeDB）或 SQLite，取决于部署模式
+- 数据库：PostgreSQL / ParadeDB（Java 本地开发可用 H2，Go 服务端生产必须使用 PostgreSQL）
 - 仅有直接数据库访问权限的管理员可查询原始记录
 - 所有数据保留在您自己的基础设施内——不涉及外部服务
 

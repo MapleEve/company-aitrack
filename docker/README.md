@@ -97,6 +97,6 @@ See `e2e/README.md` for details.
 | Service | Volume | Path in container |
 |---|---|---|
 | server-java | `aitrack-java-data` | `/app/data` |
-| server-go | `aitrack-go-data` | `/data` |
+| db (ParadeDB) | `pgdata` | `/var/lib/postgresql/data` |
 
 Remove volumes with: `docker compose -f docker/docker-compose.yml down -v`

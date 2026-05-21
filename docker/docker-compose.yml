@@ -54,9 +54,10 @@ services:
     environment:
       AITRACK_ADMIN_KEY: "${AITRACK_ADMIN_KEY:-dev-admin-key-change-in-prod}"
       AITRACK_SECRET_KEY: "${AITRACK_SECRET_KEY:-}"
-      AITRACK_DB_PATH: "/data/aitrack.db"
-    volumes:
-      - aitrack-go-data:/data
+      DATABASE_URL: "postgres://aitrack:aitrack_secret@db:5432/aitrack"
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/ai-track/stats || exit 1"]
       interval: 10s
@@ -67,5 +68,4 @@ services:
 
 volumes:
   aitrack-java-data:
-  aitrack-go-data:
   pgdata: {}

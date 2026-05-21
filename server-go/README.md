@@ -8,8 +8,8 @@ Go implementation of the AiTrack server. Feature-equivalent to `server-java/` an
 # Build
 go build ./...
 
-# Run with defaults (SQLite at ./data/aitrack.db, port 8080)
-go run . [config.yaml]
+# Run with PostgreSQL / ParadeDB (required)
+DATABASE_URL=postgres://aitrack:aitrack_secret@localhost:5432/aitrack go run .
 
 # Run tests
 go test -ldflags=-linkmode=external ./... -cover
@@ -23,34 +23,21 @@ go tool cover -func=cover.out | tail -1
 
 Loaded from `config.yaml` (optional), then overridden by environment variables.
 
-| YAML key | Env var | Default | Description |
-|---|---|---|---|
-| `server.port` | `AITRACK_PORT` | `8080` | HTTP listen port |
-| `db.path` | `AITRACK_DB_PATH` | `./data/aitrack.db` | SQLite file path |
-| `secret_key` | `AITRACK_SECRET_KEY` | `""` | Base64 32-byte AES-256-GCM key for encrypting `hmac_secret` at rest. **Required in production.** Generate: `openssl rand -base64 32` |
-| `admin_key` | `AITRACK_ADMIN_KEY` | `""` | `X-Admin-Key` header value for `POST /admin/tokens`. **Required before deployment.** Generate: `openssl rand -hex 32` |
-| `timestamp_window_seconds` | `AITRACK_TIMESTAMP_WINDOW` | `300` | HMAC replay window (seconds) |
-| `rate_limit_per_hour` | `AITRACK_RATE_LIMIT_PER_HOUR` | `30` | Max edits per (token, file_path) per hour |
-| `max_added_lines` | `AITRACK_MAX_ADDED_LINES` | `5000` | Oversized threshold |
-| `repo_whitelist.enforce` | `AITRACK_REPO_WHITELIST_ENFORCE` | `false` | Hard-reject edits from non-whitelisted repos |
-| `repo_whitelist.urls` | `AITRACK_REPO_WHITELIST_URLS` | `""` | Comma-separated allowed repo URLs |
-| `max_batch_size` | `AITRACK_MAX_BATCH_SIZE` | `500` | Max edits per upload request (400 if exceeded) |
-| `max_request_body_bytes` | `AITRACK_MAX_REQUEST_BODY_BYTES` | `8388608` | Request body size limit in bytes, 8 MiB (413 if exceeded) |
+| Env var | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | *(required)* | PostgreSQL / ParadeDB DSN, e.g. `postgres://user:pass@host:5432/db?sslmode=disable`. **Required.** |
+| `AITRACK_PORT` | `8080` | HTTP listen port |
+| `AITRACK_SECRET_KEY` | `""` | Base64 32-byte AES-256-GCM key for encrypting `hmac_secret` at rest. **Required in production.** Generate: `openssl rand -base64 32` |
+| `AITRACK_ADMIN_KEY` | `""` | `X-Admin-Key` header value for `POST /admin/tokens`. **Required before deployment.** Generate: `openssl rand -hex 32` |
+| `AITRACK_TIMESTAMP_WINDOW` | `300` | HMAC replay window (seconds) |
+| `AITRACK_RATE_LIMIT_PER_HOUR` | `30` | Max edits per (token, file_path) per hour |
+| `AITRACK_MAX_ADDED_LINES` | `5000` | Oversized threshold |
+| `AITRACK_REPO_WHITELIST_ENFORCE` | `false` | Hard-reject edits from non-whitelisted repos |
+| `AITRACK_REPO_WHITELIST_URLS` | `""` | Comma-separated allowed repo URLs |
+| `AITRACK_MAX_BATCH_SIZE` | `500` | Max edits per upload request (400 if exceeded) |
+| `AITRACK_MAX_REQUEST_BODY_BYTES` | `8388608` | Request body size limit in bytes, 8 MiB (413 if exceeded) |
 
-Example `config.yaml`:
-```yaml
-server:
-  port: 8080
-db:
-  path: ./data/aitrack.db
-secret_key: ""       # set via AITRACK_SECRET_KEY
-admin_key: ""        # set via AITRACK_ADMIN_KEY
-rate_limit_per_hour: 30
-max_added_lines: 5000
-repo_whitelist:
-  enforce: false
-  urls: []
-```
+Configuration is environment-variable-only. No `config.yaml` is supported.
 
 ## Endpoints
 
@@ -139,14 +126,16 @@ Field order and `\n` separator are byte-identical to the Rust client and Java se
 
 ## Database
 
-SQLite via `modernc.org/sqlite` (pure Go, no cgo). Schema: `tokens`, `edit_records`, `devices`. WAL mode enabled for concurrent reads.
+PostgreSQL / ParadeDB via `pgx/v5` (pure Go, no cgo). Schema auto-migrated on startup: `tokens`, `edit_records`, `device_heartbeats`. Requires `DATABASE_URL` to be set.
+
+For BM25 full-text search and vector ANN, use [ParadeDB](https://www.paradedb.com/) (PostgreSQL-compatible, pre-installs `pg_search` and `pgvector`).
 
 ## Parity with Java server
 
 | Feature | Java | Go |
 |---|---|---|
 | ORM | Spring Data JPA / Hibernate | Raw `database/sql` |
-| DB | H2 (default) / PostgreSQL | SQLite (pure Go) |
+| DB | H2 (default) / PostgreSQL | PostgreSQL / ParadeDB (pgx/v5) |
 | Router | Spring MVC | chi v5 |
 | Validation chain | `ValidationService` | `service.ValidationService` |
 | HMAC | `SignatureService` | `service.SignatureService` |
@@ -160,7 +149,7 @@ SQLite via `modernc.org/sqlite` (pure Go, no cgo). Schema: `tokens`, `edit_recor
 
 ```
 module github.com/aitrack/server
-go 1.24
+go 1.25
 ```
 
-Key dependencies: `github.com/go-chi/chi/v5` (v5.2.5), `modernc.org/sqlite`, `gopkg.in/yaml.v3`.
+Key dependencies: `github.com/go-chi/chi/v5` (v5.2.5), `github.com/jackc/pgx/v5` (v5.9.x), `gopkg.in/yaml.v3`.
