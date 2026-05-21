@@ -13,6 +13,26 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 
 ---
 
+## [v1.6.1] — 2026-05-21
+
+### Changed
+
+- **Go 服务端迁移为 PostgreSQL-only**：移除 `modernc.org/sqlite` 依赖，生产与 E2E 均需提供 `DATABASE_URL`；`testapp.MemoryConfig` 仅保留用于本地单元测试构造 chi router，不再用于 Docker E2E
+- `docker/docker-compose.yml`：Go 服务容器改为 `DATABASE_URL` 连接 `db`（ParadeDB）服务，移除 `aitrack-go-data` SQLite 卷
+
+### Fixed
+
+- E2E：`e2e/run.sh` Go 路径在 `pg_isready` 通过后新增 `sleep 2`，消除首次镜像拉取场景下 PostgreSQL 内部初始化竞态；新增容器日志抓取，方便排查 Go 服务端启动失败原因
+- Go 服务端：测试占位符统一改为 `$N`（兼容 pgx/PostgreSQL）；覆盖率命令新增 `-coverpkg=./internal/...` 确保跨包覆盖统计准确；`page` 参数加 `clamp ≥ 0` 防止 `OFFSET` 为负
+
+### 覆盖率
+
+| 组件 | 测试数 | 行覆盖率 |
+|------|--------|---------|
+| Go 服务端 | 244 | 95.3% |
+
+---
+
 ## [v1.6.0] — 2026-05-20
 
 ### 发布说明

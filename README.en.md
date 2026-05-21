@@ -67,7 +67,7 @@ aitrack consists of three independent components communicating via Protocol v1.2
 |-----------|-------|----------------|
 | **Rust client** `aitrack` | Rust · single binary · no runtime dependencies · hexagonal architecture (v1.6) | Install hooks, capture edit events, HMAC signing, upload data, auto-update (ed25519) |
 | **Java server** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB (v1.3+) | 10-step validation chain, trusted attribution, effectiveness queries, semantic search (primary implementation) |
-| **Go server** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · SQLite / PostgreSQL · ParadeDB (v1.3+) | Feature-equivalent lightweight alternative implementation with semantic search support |
+| **Go server** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB (required) | Feature-equivalent lightweight alternative implementation with semantic search support |
 
 **Protocol v1.2 key design:**
 

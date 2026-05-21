@@ -67,7 +67,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 |---------|------|------|
 | **Rust 클라이언트** `aitrack` | Rust · 단일 바이너리 · 런타임 의존성 없음 · 헥사고날 아키텍처(v1.6) | 훅 설치, 편집 이벤트 캡처, HMAC 서명, 데이터 업로드, 자동 업데이트(ed25519) |
 | **Java 서버** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB(v1.3+) | 10단계 검증 체인, 신뢰할 수 있는 귀속, 효율 쿼리, 시맨틱 검색(주요 구현) |
-| **Go 서버** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · SQLite / PostgreSQL · ParadeDB(v1.3+) | Java와 기능이 동등한 경량 대안 구현, 시맨틱 검색 지원 |
+| **Go 서버** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB(필수) | Java와 기능이 동등한 경량 대안 구현, 시맨틱 검색 지원 |
 
 **프로토콜 v1.2 핵심 설계:**
 

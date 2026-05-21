@@ -115,7 +115,6 @@ docker compose -f docker/docker-compose.yml --profile java up -d
 | 服务 | 卷名 | 容器内路径 | 说明 |
 |------|------|-----------|------|
 | server-java | `aitrack-java-data` | `/app/data` | H2 数据库文件 |
-| server-go | `aitrack-go-data` | `/data` | SQLite 数据库文件（开发模式；生产环境通过 `DATABASE_URL` 使用 ParadeDB） |
 
 删除卷（谨慎，将丢失所有数据）：
 
@@ -211,7 +210,7 @@ docker run --rm \
 # 3. Go 服务端切换 postgres 模式
 docker run --rm \
   -e DATABASE_URL=postgres://aitrack:aitrack_secret@host.docker.internal:5432/aitrack \
-  -p 8081:8081 \
+  -p 8081:8080 \
   aitrack-server-go:latest
 ```
 
@@ -242,7 +241,7 @@ CREATE INDEX IF NOT EXISTS edits_hnsw ON edit_records
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
-| `DATABASE_URL` | *(空 = SQLite)* | 完整 PostgreSQL DSN，如 `postgres://user:pass@host:5432/db` |
+| `DATABASE_URL` | *(必填)* | PostgreSQL / ParadeDB DSN，如 `postgres://user:pass@host:5432/db?sslmode=disable`。**Go 服务端无内置嵌入式数据库，必须设置。** |
 
 ---
 
