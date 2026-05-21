@@ -1,0 +1,11 @@
+version: 3
+
+# Limit FOSSA analysis to 2 projects (free-tier limit).
+# Highest-value targets: distributed client binary + Go server.
+# server-java (Maven/Spring Boot) is well-covered by Maven Central provenance.
+targets:
+  only:
+    - type: cargo
+      path: client
+    - type: go
+      path: server-go

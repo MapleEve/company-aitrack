@@ -14,6 +14,9 @@ jobs:
   fossa:
     name: FOSSA scan
     runs-on: ubuntu-latest
+    # Non-blocking: FOSSA is informational; required checks are in ci.yml.
+    # Remove continue-on-error once FOSSA account project limit is resolved.
+    continue-on-error: true
     env:
       FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
     steps:
