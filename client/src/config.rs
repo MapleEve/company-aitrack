@@ -58,10 +58,10 @@ pub fn save_config(cfg: &Config) -> Result<()> {
         let mut opts = OpenOptions::new();
         opts.write(true).create(true).truncate(true);
         #[cfg(unix)]
-        { opts.mode(0o600); }
-        let mut f = opts
-            .open(&tmp_path)
-            .context("create config.toml.tmp")?;
+        {
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp_path).context("create config.toml.tmp")?;
         f.write_all(text.as_bytes())
             .context("write config.toml.tmp")?;
         f.flush().context("flush config.toml.tmp")?;
