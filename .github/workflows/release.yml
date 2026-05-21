@@ -7,6 +7,10 @@ on:
         description: "Set to 'true' to actually publish the release (default: dry-run)"
         required: false
         default: "false"
+      tag_name:
+        description: "Tag to publish assets to (e.g. v1.6.1). Required when allow_release=true on workflow_dispatch."
+        required: false
+        default: ""
   push:
     tags:
       - "v*.*.*"
@@ -77,7 +81,7 @@ jobs:
              ${{ matrix.asset_name }}
 
       - name: Install signing dependencies
-        run: pip3 install --quiet cryptography
+        run: python3 -m pip install --quiet cryptography || python3 -m pip install --quiet --break-system-packages cryptography
 
       - name: Sign binary with ed25519
         env:
@@ -147,6 +151,7 @@ jobs:
         if: steps.guard.outputs.allowed == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
           generate_release_notes: true
           files: |
             artifacts/**/*
