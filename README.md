@@ -65,9 +65,9 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 | 组件 | 技术栈 | 职责 |
 |------|--------|------|
-| **Rust 客户端** `aitrack` | Rust · single binary · 无运行时依赖 | 安装钩子、捕获编辑事件、HMAC 签名、上报数据 |
-| **Java 服务端** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL | 10 步校验链、可信归因、效能查询（主推实现） |
-| **Go 服务端** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · SQLite / PostgreSQL | 与 Java 端功能对等的轻量备选实现 |
+| **Rust 客户端** `aitrack` | Rust · single binary · 无运行时依赖 · 六边形架构（v1.6） | 安装钩子、捕获编辑事件、HMAC 签名、上报数据、自动更新（ed25519） |
+| **Java 服务端** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB（v1.3+） | 10 步校验链、可信归因、效能查询、语义检索（主推实现） |
+| **Go 服务端** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · SQLite / PostgreSQL · ParadeDB（v1.3+） | 与 Java 端功能对等的轻量备选实现，支持语义检索 |
 
 **协议 v1.2 关键设计：**
 
@@ -110,6 +110,38 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 ### 按 hostname 维度人工排查
 
 `GET /api/v1/ai-track/devices` 展示每台设备的心跳状态与钩子安装情况。钩子被静默移除时，下次任意命令执行后心跳自动上报异常状态，管理员可主动跟进。
+
+### 服务端向量化存储与语义检索（v1.3+）
+
+服务端数据库升级至 **ParadeDB**（PostgreSQL + pg_search + pgvector），支持：
+
+- `GET /api/v1/ai-track/edits/search?q=` — BM25 全文检索，对 diff_hunk 做相关性排序
+- `POST /api/v1/ai-track/edits/similar` — pgvector HNSW 向量 ANN 相似检索
+- H2/SQLite 模式下两端点返回 HTTP 501，不影响核心上报链路
+- 客户端（v1.3+）集成 sqlite-vec，本地 records.db 新增向量列，支持离线语义存储
+
+### 开发者 AI 工具使用画像（v1.4+）
+
+`GET /api/v1/ai-track/profiles/{token_key}` 返回指定开发者的 AI 工具使用画像，包含三个维度：
+
+- **使用频率**：每日/每周 AI 辅助编辑次数趋势
+- **使用深度**：单次编辑的代码变更规模分布（小幅修改 vs. 大段生成）
+- **语言分布**：按文件扩展名统计的编程语言使用分布
+
+画像数据仅用于了解 AI 工具实际采用效果，不作为个人绩效考核的直接依据。
+
+### Prompt 摘要捕获（v1.5+）
+
+客户端可选安装 `UserPromptSubmit` 钩子（仅限 Claude Code），捕获提示词摘要（≤ 512 字符）并作为 `prompt_summary` 字段随编辑记录上报。画像 API 新增 `prompt_patterns` 意图分类维度（generate / fix_debug / refactor / explain / test / other），从"使用了多少 AI"延伸至"怎么用 AI"的质量分析。
+
+> **默认不启用**：`prompt_summary` 采集默认关闭，需管理员显式配置后才生效。采集的是摘要分类标签与哈希，不采集 prompt 原文。
+
+### 六边形架构与安全自动更新（v1.6+）
+
+- Rust 客户端完成六边形架构重构（domain / port / adapter 三层），所有 I/O 通过 `StoragePort` / `UploadPort` 接口路由，业务逻辑与基础设施彻底解耦
+- `aitrack update` 子命令：从 GitHub Releases 拉取最新版本，ed25519 签名验证通过后原子替换当前二进制
+- 关键词库防篡改：关键词以编译期常量硬编码，`keyword_fingerprint()` 计算 SHA-256 指纹供服务端校验
+- 三端覆盖率均 ≥ 90%（Rust 291 tests / Java 218 tests / Go 244 tests）
 
 ---
 
@@ -208,7 +240,7 @@ bash e2e/run.sh both
 | **token 哈希存储** | 服务端仅存储 `sha256(token)`，明文仅签发时返回一次 |
 | **本地优先** | 所有数据存储于自建服务，不经过任何第三方云服务 |
 | **常量时间比较** | HMAC 验证使用常量时间比较，防止 timing attack |
-| **最小采集** | 仅采集文件路径、diff、行数、repo 元数据，不收集代码内容、对话或键盘输入 |
+| **采集范围透明可控** | 默认采集文件路径、diff、行数、repo 元数据；v1.5 起可选采集 prompt 摘要（非完整 prompt，仅摘要；默认不启用，需管理员显式配置）；不采集完整代码内容、对话历史或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
 
 ---
 

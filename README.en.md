@@ -65,9 +65,9 @@ aitrack consists of three independent components communicating via Protocol v1.2
 
 | Component | Stack | Responsibility |
 |-----------|-------|----------------|
-| **Rust client** `aitrack` | Rust · single binary · no runtime dependencies | Install hooks, capture edit events, HMAC signing, upload data |
-| **Java server** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL | 10-step validation chain, trusted attribution, effectiveness queries (primary implementation) |
-| **Go server** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · SQLite / PostgreSQL | Feature-equivalent lightweight alternative implementation |
+| **Rust client** `aitrack` | Rust · single binary · no runtime dependencies · hexagonal architecture (v1.6) | Install hooks, capture edit events, HMAC signing, upload data, auto-update (ed25519) |
+| **Java server** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB (v1.3+) | 10-step validation chain, trusted attribution, effectiveness queries, semantic search (primary implementation) |
+| **Go server** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · SQLite / PostgreSQL · ParadeDB (v1.3+) | Feature-equivalent lightweight alternative implementation with semantic search support |
 
 **Protocol v1.2 key design:**
 
@@ -110,6 +110,38 @@ Query aggregated stats by developer, repository, or device via `GET /api/v1/ai-t
 ### Per-hostname Manual Review
 
 `GET /api/v1/ai-track/devices` shows each device's heartbeat status and hook installation state. When a hook is silently removed, the next execution of any `aitrack` command automatically reports the anomalous state — administrators can follow up proactively.
+
+### Server-side Vector Storage and Semantic Search (v1.3+)
+
+The server database has been upgraded to **ParadeDB** (PostgreSQL + pg_search + pgvector), supporting:
+
+- `GET /api/v1/ai-track/edits/search?q=` — BM25 full-text search with relevance ranking over diff_hunk
+- `POST /api/v1/ai-track/edits/similar` — pgvector HNSW vector ANN similarity search
+- Both endpoints return HTTP 501 in H2/SQLite mode — core upload pipeline is unaffected
+- Client (v1.3+) integrates sqlite-vec, adding a vector column to the local records.db for offline semantic storage
+
+### Developer AI Usage Profiles (v1.4+)
+
+`GET /api/v1/ai-track/profiles/{token_key}` returns an AI tool usage profile for a given developer across three dimensions:
+
+- **Usage frequency**: daily/weekly AI-assisted edit count trends
+- **Usage depth**: distribution of code change size per edit (small tweaks vs. large generations)
+- **Language distribution**: programming language breakdown by file extension
+
+Profile data is used solely to understand actual AI tool adoption — it is not used as a direct basis for individual performance evaluation.
+
+### Prompt Summary Capture (v1.5+)
+
+The client can optionally install a `UserPromptSubmit` hook (Claude Code only) to capture a prompt summary (≤ 512 characters) and submit it as a `prompt_summary` field alongside edit records. The profile API adds a `prompt_patterns` intent classification dimension (generate / fix_debug / refactor / explain / test / other), extending the analysis from "how much AI" to "how AI is used" quality insights.
+
+> **Off by default**: `prompt_summary` collection is disabled by default and requires explicit admin configuration to activate. Only summary classification labels and hashes are collected — the original prompt text is never captured.
+
+### Hexagonal Architecture and Secure Auto-Update (v1.6+)
+
+- The Rust client has been refactored to hexagonal architecture (domain / port / adapter three-layer), with all I/O routed through `StoragePort` / `UploadPort` interfaces — business logic fully decoupled from infrastructure
+- `aitrack update` subcommand: fetches the latest release from GitHub Releases and atomically replaces the current binary after ed25519 signature verification
+- Keyword library tamper protection: keywords are hardcoded as compile-time constants; `keyword_fingerprint()` computes a SHA-256 fingerprint for server-side verification
+- All three components have coverage ≥ 90% (Rust 291 tests / Java 218 tests / Go 244 tests)
 
 ---
 
@@ -208,7 +240,7 @@ bash e2e/run.sh both
 | **Token hash storage** | Server stores only `sha256(token)` — plaintext returned only once at issuance |
 | **Local-first** | All data stored on self-hosted infrastructure, never passes through any third-party cloud service |
 | **Constant-time comparison** | HMAC verification uses constant-time comparison to prevent timing attacks |
-| **Minimal collection** | Collects only file paths, diffs, line counts, and repo metadata — no code content, conversations, or keyboard input |
+| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; since v1.5, prompt summaries can optionally be collected (summary only, not the full prompt; off by default, requires explicit admin configuration); never collects complete code content, conversation history, or keyboard input; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
 
 ---
 
