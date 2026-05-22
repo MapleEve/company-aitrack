@@ -12,10 +12,8 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
-  issues: read
-  actions: read
-  id-token: write
+  pull-requests: write
+  issues: write
 
 jobs:
   claude-review:
@@ -41,8 +39,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_TOKEN }}
-          claude_args: |
-            --model ${{ env.CLAUDE_MODEL }}
+          model: ${{ env.CLAUDE_MODEL }}
           allowed_tools: "Bash(cargo check *),Bash(cargo clippy *),Bash(cargo test *),Bash(git diff *),Bash(git status *)"
           custom_instructions: |
             You are reviewing company-aitrack, a Rust CLI client + Java/Go server stack for tracking AI coding usage.
