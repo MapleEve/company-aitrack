@@ -15,20 +15,9 @@
 
 ---
 
-## 三镜像构建
+## 服务端镜像构建（两个实现）
 
 每个 Dockerfile 均为多阶段构建：构建阶段运行测试并强制 90% 覆盖率门槛，通过后产出最小运行时镜像。
-
-### Rust 客户端镜像
-
-```bash
-docker build -f docker/Dockerfile.client -t aitrack-client:latest .
-```
-
-- 构建阶段：`rust:1.82`，执行 `cargo build --release` + `cargo test` + `cargo llvm-cov` 覆盖率门槛
-- 运行时镜像：`debian:bookworm-slim`，二进制位于 `/usr/local/bin/aitrack`
-
-客户端镜像主要用于 e2e 测试，生产使用时直接将二进制安装到开发者机器。
 
 ### Java 服务端镜像
 
@@ -290,20 +279,38 @@ cargo build --release
 ### 跨平台构建
 
 ```bash
-# macOS aarch64（Apple Silicon）
+# 推荐：直接从 GitHub Releases 下载预构建二进制
+# https://github.com/MapleEve/company-aitrack/releases/latest
+#
+# 已安装后，使用 aitrack update 自动更新到最新版本
+
+# --- 本地手动构建（贡献者 / 自定义场景）---
+
+# macOS Apple Silicon (aarch64)
 cargo build --release --target aarch64-apple-darwin
 
-# macOS x86_64
+# macOS Intel (x86_64)
 cargo build --release --target x86_64-apple-darwin
 
-# Linux x86_64（服务器 CI 环境）
-cargo build --release --target x86_64-unknown-linux-gnu
+# Linux x86_64 musl（静态链接，无运行时依赖）
+# 需要 cargo-zigbuild + ziglang：pip install ziglang && cargo install cargo-zigbuild
+cargo zigbuild --release --target x86_64-unknown-linux-musl
+
+# Linux aarch64 musl（树莓派 4 / ARM 服务器）
+cargo zigbuild --release --target aarch64-unknown-linux-musl
+
+# Windows x86_64
+cargo build --release --target x86_64-pc-windows-msvc
+
+# Windows ARM64
+cargo build --release --target aarch64-pc-windows-msvc
 ```
 
 ### 安装位置
 
 将 `aitrack` 二进制分发给开发者，建议放在：
 - macOS / Linux：`/usr/local/bin/aitrack`
+- Windows：`%LOCALAPPDATA%\Programs\aitrack\aitrack.exe`（或任意 PATH 目录）
 
 开发者安装完成后执行：
 ```bash

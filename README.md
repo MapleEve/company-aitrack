@@ -208,12 +208,11 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 
 `group_by` 还支持 `repo`（按仓库）、`device`（按设备 UUID）、`hostname`（按机器名）。详见 [docs/API.md](docs/API.md)。
 
-### 5. 覆盖率验证（Docker）
+### 5. 服务端覆盖率验证（Docker）
+
+服务端镜像构建阶段内置覆盖率门槛（≥ 90%），构建失败即阻断发布。
 
 ```bash
-# 客户端（Rust，覆盖率门槛 90%）
-docker build -f docker/Dockerfile.client -t aitrack-client:latest .
-
 # Java 服务端（JaCoCo LINE ≥ 90%）
 docker build -f docker/Dockerfile.server-java -t aitrack-server-java:latest .
 
@@ -223,6 +222,8 @@ docker build -f docker/Dockerfile.server-go -t aitrack-server-go:latest .
 # E2E（Java + Go 各一轮）
 bash e2e/run.sh both
 ```
+
+> **Rust 客户端**通过 GitHub CI 构建，覆盖率在 CI 流水线中验证（非 Docker）。预构建二进制见 [Releases](https://github.com/MapleEve/company-aitrack/releases)，开发者本机安装后可通过 `aitrack update` 自动更新到最新版本。
 
 ---
 
@@ -264,7 +265,6 @@ bash e2e/run.sh both
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=MapleEve/company-aitrack&type=date)](https://www.star-history.com/#MapleEve/company-aitrack&type=date)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack?ref=badge_shield)
 
 ---
 
@@ -278,6 +278,3 @@ bash e2e/run.sh both
 
 [MIT License](LICENSE) © 2026 MapleEve
 
-
-## License
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack?ref=badge_large)
