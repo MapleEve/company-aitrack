@@ -29,8 +29,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: aitrack-client
-            dockerfile: docker/Dockerfile.client
           - image: aitrack-server-java
             dockerfile: docker/Dockerfile.server-java
           - image: aitrack-server-go
