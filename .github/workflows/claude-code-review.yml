@@ -1,12 +1,20 @@
 name: Claude Code Review
 
+env:
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+  GH_TOKEN_VALUE: ${{ secrets.GH_TOKEN }}
+  CLAUDE_MODEL: claude-sonnet-4-6
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
+  issues: read
+  actions: read
   id-token: write
 
 jobs:
@@ -14,35 +22,41 @@ jobs:
     name: Claude AI Review
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Non-blocking: requires Claude Code GitHub App installation + custom
-    # ANTHROPIC_BASE_URL supporting app-token auth. Not a required check.
-    # Remove continue-on-error once the GitHub App is installed on this repo.
-    continue-on-error: true
-    if: github.event.pull_request.draft == false
+    if: ${{ !github.event.pull_request.draft }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Skip when Claude secrets are not configured
+        if: ${{ env.ANTHROPIC_API_KEY == '' || env.ANTHROPIC_BASE_URL == '' || env.GH_TOKEN_VALUE == '' }}
+        run: echo "Claude review secrets not configured; skipping."
+
+      - name: Checkout repository
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && env.GH_TOKEN_VALUE != '' }}
+        uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Skip if API key not configured
-        id: check-key
-        env:
-          _KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "$_KEY" ]; then
-            echo "::notice::ANTHROPIC_API_KEY secret not set — Claude review skipped. Set the secret to enable AI code review."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Claude Code Review
-        if: steps.check-key.outputs.skip != 'true'
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && env.GH_TOKEN_VALUE != '' }}
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: "true"
-          use_sticky_comment: "true"
-          claude_args: "--model claude-sonnet-4-5"
-        env:
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          github_token: ${{ secrets.GH_TOKEN }}
+          claude_args: |
+            --model ${{ env.CLAUDE_MODEL }}
+          allowed_tools: "Bash(cargo check *),Bash(cargo clippy *),Bash(cargo test *),Bash(git diff *),Bash(git status *)"
+          custom_instructions: |
+            You are reviewing company-aitrack, a Rust CLI client + Java/Go server stack for tracking AI coding usage.
+            The Rust client (client/) uses clap, rusqlite, reqwest (rustls-tls), ed25519-dalek, sqlite-vec.
+            The server has two implementations: server-java (Spring Boot) and server-go (chi).
+            Watch for: leaked signing keys or secrets, unsafe unwrap()/expect() in production paths,
+            missing #[cfg(unix)] guards on Unix-specific code, SQL injection in raw queries,
+            breaking changes to the CLIENT ↔ SERVER JSON contract (defined in CONTRACT.md).
+            Treat missing error handling, broken cross-platform compat, and contract regressions as high-signal.
+          prompt: |
+            Review this aitrack pull request and focus on:
+            - Rust safety: unwrap/expect in non-test code, error propagation, cross-platform cfg guards
+            - Contract compatibility: does this change break CLIENT↔SERVER JSON schema (CONTRACT.md)?
+            - Security: no signing keys, no secrets, no internal identifiers in public-facing code
+            - CI correctness: workflow changes that could break builds or skip required checks
+
+            Prefer concrete file/line findings over broad summaries.

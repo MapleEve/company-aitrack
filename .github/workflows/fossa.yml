@@ -14,9 +14,7 @@ jobs:
   fossa:
     name: FOSSA scan
     runs-on: ubuntu-latest
-    # Non-blocking: FOSSA is informational; required checks are in ci.yml.
-    # Remove continue-on-error once FOSSA account project limit is resolved.
-    continue-on-error: true
+    # Non-blocking: FOSSA is informational only; not a required PR check.
     env:
       FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
     steps:
@@ -29,12 +27,14 @@ jobs:
           persist-credentials: false
       - name: Run FOSSA scan
         if: ${{ env.FOSSA_API_KEY != '' }}
+        continue-on-error: true
         uses: fossas/fossa-action@v1.9.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
           pinned-cli-version: v3.17.1
       - name: Run FOSSA diff test
         if: ${{ env.FOSSA_API_KEY != '' && github.event_name == 'pull_request' }}
+        continue-on-error: true
         env:
           FOSSA_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -52,6 +52,7 @@ jobs:
           exit "$status"
       - name: Run FOSSA policy test
         if: ${{ env.FOSSA_API_KEY != '' && github.event_name != 'pull_request' }}
+        continue-on-error: true
         uses: fossas/fossa-action@v1.9.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
