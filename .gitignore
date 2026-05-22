@@ -48,7 +48,6 @@ tmp/
 *.bak
 
 # ── Internal-only files (Codeup only) ──
-CLAUDE.md
 STATUS.md
 CONTEXT.md
 CONTEXT-MAP.md
