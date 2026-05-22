@@ -4,15 +4,6 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 
 ---
 
-## [CI] — 2026-05-21
-
-### Added
-
-- `.github/workflows/fossa.yml`: FOSSA license compliance scan, runs on push to `main` and weekly schedule
-- `.github/workflows/stale.yml`: disabled placeholder for stale issue/PR management (no-op until configured)
-
----
-
 ## [v1.6.1] — 2026-05-21
 
 ### Changed
@@ -30,6 +21,12 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 | 组件 | 测试数 | 行覆盖率 |
 |------|--------|---------|
 | Go 服务端 | 244 | 95.3% |
+
+### 发行 / CI
+
+- **多平台预构建二进制**：GitHub Release v1.6.1 发布全部 6 个平台的签名二进制：`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`、`x86_64-apple-darwin`、`aarch64-apple-darwin`、`x86_64-pc-windows-msvc`、`aarch64-pc-windows-msvc`；每个二进制附带 `.sha256` 校验和和 ed25519 `.sig` 签名，供 `aitrack update` 验证
+- **Claude AI Review 工作流**：修复 `claude-code-action@v1` post-step 错误，采用 GH_TOKEN PAT 鉴权，移除 `continue-on-error`；PR 提交后自动触发 AI 代码审查
+- **移除 FOSSA 工作流**：免费账号已达项目数量上限，`.github/workflows/fossa.yml` 已删除
 
 ---
 
