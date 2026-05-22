@@ -40,6 +40,10 @@ jobs:
             target: x86_64-unknown-linux-musl
             artifact_name: aitrack
             asset_name: aitrack-x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            artifact_name: aitrack
+            asset_name: aitrack-aarch64-unknown-linux-musl
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: aitrack
@@ -52,6 +56,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: aitrack.exe
             asset_name: aitrack-x86_64-pc-windows-msvc.exe
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact_name: aitrack.exe
+            asset_name: aitrack-aarch64-pc-windows-msvc.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +88,7 @@ jobs:
           # sqlite-vec uses BSD-style u_int*_t types; musl omits them even with _GNU_SOURCE.
           # Define them as macros that expand to their standard C99 equivalents.
           CFLAGS_x86_64_unknown_linux_musl: "-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
+          CFLAGS_aarch64_unknown_linux_musl: "-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
         run: |
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
             cargo zigbuild --release --manifest-path client/Cargo.toml --target ${{ matrix.target }}
