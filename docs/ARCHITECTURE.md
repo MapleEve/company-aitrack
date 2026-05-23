@@ -190,7 +190,7 @@ canonical_string 字段顺序严格定义于 `CONTRACT.md`，客户端与服务�
 
 | 维度 | Java（Spring Boot 3.3.8） | Go（chi v5.2.5 / Go 1.25）|
 |------|---------------------------|---------------------------|
-| 数据库 | H2（默认）/ ParadeDB（生产） | ParadeDB / PostgreSQL（生产必须）|
+| 数据库 | H2（默认）/ ParadeDB（postgres profile） | PostgreSQL / ParadeDB（必须，v1.6.1 起无 SQLite 回退）|
 | 部署模型 | JRE + jar，适合现有 JVM 基础设施 | 单一二进制，distroless 镜像，适合极简容器 |
 | ORM | Spring Data JPA / Hibernate | 原生 database/sql，无 ORM |
 | 适用场景 | 已有 Java 技术栈的团队 | 偏好轻量容器或无 JVM 环境 |

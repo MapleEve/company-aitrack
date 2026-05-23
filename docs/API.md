@@ -30,8 +30,8 @@
 export AITRACK_SECRET_KEY=$(openssl rand -base64 32)
 export AITRACK_ADMIN_KEY=$(openssl rand -hex 32)
 
-# 用 Docker Compose 启动（H2 嵌入式数据库，适合快速体验）
-docker-compose up -d --build
+# 用 Docker Compose 启动 Java 服务端（H2 嵌入式数据库，适合快速体验）
+docker compose -f docker/docker-compose.yml --profile java up -d
 
 # 验证服务健康
 curl http://localhost:8080/actuator/health

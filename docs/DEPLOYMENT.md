@@ -55,6 +55,8 @@ docker compose -f docker/docker-compose.yml --profile java up -d
 docker compose -f docker/docker-compose.yml --profile go up -d
 ```
 
+> Go 服务端依赖 `db`（ParadeDB）服务，`--profile go` 会自动启动 ParadeDB 容器（健康检查通过后再启动 Go 服务）。
+
 ---
 
 ## 配置项
@@ -104,6 +106,7 @@ docker compose -f docker/docker-compose.yml --profile java up -d
 | 服务 | 卷名 | 容器内路径 | 说明 |
 |------|------|-----------|------|
 | server-java | `aitrack-java-data` | `/app/data` | H2 数据库文件 |
+| db (ParadeDB) | `pgdata` | `/var/lib/postgresql/data` | ParadeDB / PostgreSQL 数据 |
 
 删除卷（谨慎，将丢失所有数据）：
 
@@ -113,109 +116,42 @@ docker compose -f docker/docker-compose.yml down -v
 
 ---
 
-## Java 服务端切换 PostgreSQL
+## Java 服务端切换 ParadeDB/PostgreSQL
 
-在 `application.yml` 中替换 datasource 配置：
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/aitrack
-    driver-class-name: org.postgresql.Driver
-    username: aitrack
-    password: secret
-  jpa:
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
-```
-
-同时在 `pom.xml` 添加 PostgreSQL 驱动：
-
-```xml
-<dependency>
-    <groupId>org.postgresql</groupId>
-    <artifactId>postgresql</artifactId>
-</dependency>
-```
-
-docker compose 方式切换（`docker-compose.prod.yml` 扩展配置）：
-
-```yaml
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: aitrack
-      POSTGRES_USER: aitrack
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aitrack"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  aitrack-server:
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/aitrack
-      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
-      - SPRING_DATASOURCE_USERNAME=aitrack
-      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
-      - SPRING_JPA_DATABASE_PLATFORM=org.hibernate.dialect.PostgreSQLDialect
-
-volumes:
-  postgres-data:
-```
-
-运行：
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml --profile java up -d
-```
-
-### ParadeDB 模式（Phase DB-1）
-
-`docker/docker-compose.yml` 内置 `db` 服务（`paradedb/paradedb:latest`）。ParadeDB 是 PostgreSQL 兼容镜像，预装 `pg_search`（BM25 全文检索）和 `pgvector`（向量 ANN），无需手动安装扩展。
-
-**快速启动：**
+Java 服务端默认使用 H2 嵌入式数据库（适合评估和小团队）。切换为 ParadeDB/PostgreSQL：
 
 ```bash
-# 1. 启动 ParadeDB（健康检查：pg_isready，通过后继续）
-docker compose up db -d
+# 确保 ParadeDB 已启动
+docker compose -f docker/docker-compose.yml up db -d
 
-# 2. Java 服务端切换 postgres 模式
-docker run --rm \
-  -e SPRING_PROFILES_ACTIVE=postgres \
-  -e AITRACK_DB_HOST=host.docker.internal \
-  -e AITRACK_DB_PORT=5432 \
-  -e AITRACK_DB_NAME=aitrack \
-  -e AITRACK_DB_USER=aitrack \
-  -e AITRACK_DB_PASSWORD=aitrack_secret \
-  -p 8080:8080 \
-  aitrack-server-java:latest
-
-# 3. Go 服务端切换 postgres 模式
-docker run --rm \
-  -e DATABASE_URL=postgres://aitrack:aitrack_secret@host.docker.internal:5432/aitrack \
-  -p 8081:8080 \
-  aitrack-server-go:latest
+# 以 postgres profile 启动 Java 服务端
+SPRING_PROFILES_ACTIVE=postgres \
+AITRACK_DB_HOST=localhost \
+AITRACK_DB_PORT=5432 \
+AITRACK_DB_NAME=aitrack \
+AITRACK_DB_USER=aitrack \
+AITRACK_DB_PASSWORD=aitrack_secret \
+docker compose -f docker/docker-compose.yml --profile java up -d
 ```
 
-**首次部署后一次性执行**（BM25 + HNSW 索引创建，供 Phase DB-3 使用）：
+或在 `.env` 中配置后启动：
 
-```sql
-CREATE INDEX IF NOT EXISTS edits_bm25 ON edit_records
-  USING bm25 (id, diff_hunk, prompt_summary) WITH (key_field = 'id');
+```bash
+# .env
+AITRACK_ADMIN_KEY=your-secure-admin-key
+AITRACK_SECRET_KEY=your-base64-32-byte-key
+SPRING_PROFILES_ACTIVE=postgres
+AITRACK_DB_HOST=localhost
+AITRACK_DB_PORT=5432
+AITRACK_DB_NAME=aitrack
+AITRACK_DB_USER=aitrack
+AITRACK_DB_PASSWORD=aitrack_secret
 
-CREATE INDEX IF NOT EXISTS edits_hnsw ON edit_records
-  USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL;
+export $(cat .env | xargs)
+docker compose -f docker/docker-compose.yml --profile java up -d
 ```
 
-参考：`server-java/src/main/resources/db-postgres-init.sql`。
-
-**新增环境变量（Java postgres profile）：**
+新增环境变量（Java postgres profile）：
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
@@ -230,7 +166,7 @@ CREATE INDEX IF NOT EXISTS edits_hnsw ON edit_records
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
-| `DATABASE_URL` | *(必填)* | PostgreSQL / ParadeDB DSN，如 `postgres://user:pass@host:5432/db?sslmode=disable`。**Go 服务端无内置嵌入式数据库，必须设置。** |
+| `DATABASE_URL` | *(必填)* | PostgreSQL / ParadeDB DSN，如 `postgres://user:pass@host:5432/db?sslmode=disable`。**Go 服务端 v1.6.1 起完全移除 SQLite 回退，必须提供 PostgreSQL/ParadeDB DSN。** |
 
 ---
 
@@ -369,7 +305,24 @@ docker run --rm -v aitrack-java-data:/data -v $(pwd):/backup \
 docker compose -f docker/docker-compose.yml start aitrack-server
 ```
 
-PostgreSQL 使用标准 `pg_dump`。
+### 数据备份（ParadeDB / PostgreSQL）
+
+```bash
+# pg_dump 方式备份（Go 服务端或 Java postgres 模式）
+docker exec <paradedb-container-name> pg_dump -U aitrack aitrack > aitrack-$(date +%Y%m%d).sql
+
+# 恢复
+docker exec -i <paradedb-container-name> psql -U aitrack aitrack < aitrack-20260101.sql
+```
+
+`pgdata` 卷备份（整个数据目录）：
+
+```bash
+docker compose -f docker/docker-compose.yml stop db
+docker run --rm -v pgdata:/data -v $(pwd):/backup \
+  alpine tar czf /backup/pgdata-$(date +%Y%m%d).tar.gz /data
+docker compose -f docker/docker-compose.yml start db
+```
 
 ### 升级流程
 
