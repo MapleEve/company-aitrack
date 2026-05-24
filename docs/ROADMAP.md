@@ -20,20 +20,20 @@ AiTrack 是一款面向企业的 **AI 编码行为治理工具**，以私有化�
 
 ---
 
-## 已交付版本（v1.0.0 – v1.6.0）
+## 已交付版本（v1.0.0 – v1.6.1）
 
 ### 核心功能概览
 
 | 版本 | 主要能力 | 状态 |
 |------|----------|------|
 | v1.0–v1.2 | Rust CLI 客户端；Claude Code / Codex CLI / Cursor 钩子管理；Myers/LCS 精确 diff；HMAC-SHA256 双层签名；Java + Go 双服务端；10 步服务端校验链；心跳机制；统计查询 API；Docker 一键部署；CI 覆盖率 ≥ 90% | 已交付 |
-| v1.3 | 服务端数据库升级为 ParadeDB（PostgreSQL + pg_search + pgvector）；向量列与全文索引基础设施 | 已交付 |
-| v1.4 | 全文检索 API（BM25）；向量 ANN 检索 API；客户端 sqlite-vec 本地嵌入存储 | 已交付 |
-| v1.4.0 | 开发者 AI 工具使用画像（使用频率 / 使用深度 / 场景分布）；每日聚合 Job；Java + Go 等价实现 | 已交付 |
-| v1.5.0 | prompt 捕获前置：UserPromptSubmit hook + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
+| v1.3 | 服务端数据库升级为 ParadeDB（PostgreSQL + pg_search + pgvector）；向量列与全文索引基础设施；全文检索 API（BM25）；向量 ANN 检索 API；客户端 sqlite-vec 本地嵌入存储 | 已交付 |
+| v1.4 | 开发者 AI 工具使用画像（使用频率 / 使用深度 / 语言分布）；每日聚合 Job；Java + Go 等价实现 | 已交付 |
+| v1.5 | prompt 捕获前置：UserPromptSubmit hook + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
 | v1.6.0 | 六边形架构重构（domain / port / adapter）；`aitrack update` 子命令（ed25519 签名验证）；关键词完整性指纹（SHA-256）；testapp 端到端真实链路 | 已交付 |
+| v1.6.1 | Go 服务端完全迁移为 PostgreSQL-only（移除 SQLite 回退）；E2E 竞态修复；CI 改用原生工具链（llvm-cov / mvn verify）替代 Docker 构建验证 | 已交付 |
 
-### 当前成功指标（v1.6.0 基线）
+### 当前成功指标（v1.6.1 基线）
 
 - 捕获成功率 ≥ 99%
 - 误拒率 < 0.1%

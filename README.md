@@ -67,7 +67,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 |------|--------|------|
 | **Rust 客户端** `aitrack` | Rust · single binary · 无运行时依赖 · 六边形架构（v1.6） | 安装钩子、捕获编辑事件、HMAC 签名、上报数据、自动更新（ed25519） |
 | **Java 服务端** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB（v1.3+） | 10 步校验链、可信归因、效能查询、语义检索（主推实现） |
-| **Go 服务端** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB（生产必须） | 与 Java 端功能对等的轻量备选实现，支持语义检索 |
+| **Go 服务端** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB（必须，v1.6.1 起无 SQLite 回退） | 与 Java 端功能对等的轻量备选实现，支持语义检索 |
 
 **协议 v1.2 关键设计：**
 
@@ -154,8 +154,8 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 export AITRACK_SECRET_KEY=$(openssl rand -base64 32)
 export AITRACK_ADMIN_KEY=$(openssl rand -hex 32)
 
-# 构建并启动（H2 嵌入式数据库，适合快速体验）
-docker-compose up -d --build
+# 启动 Java 服务端（H2 嵌入式数据库，适合快速体验）
+docker compose -f docker/docker-compose.yml --profile java up -d
 
 # 验证服务
 curl http://localhost:8080/actuator/health
@@ -265,7 +265,6 @@ bash e2e/run.sh both
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=MapleEve/company-aitrack&type=date)](https://www.star-history.com/#MapleEve/company-aitrack&type=date)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack?ref=badge_shield)
 
 ---
 
@@ -278,8 +277,4 @@ bash e2e/run.sh both
 ---
 
 [MIT License](LICENSE) © 2026 MapleEve
-
-
-## License
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fcompany-aitrack?ref=badge_large)
 
