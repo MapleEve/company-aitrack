@@ -4,7 +4,6 @@ env:
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
   GH_TOKEN_VALUE: ${{ secrets.GH_TOKEN }}
-  CLAUDE_MODEL: claude-sonnet-4-6
 
 on:
   pull_request:
@@ -39,9 +38,8 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_TOKEN }}
-          model: ${{ env.CLAUDE_MODEL }}
-          allowed_tools: "Bash(cargo check *),Bash(cargo clippy *),Bash(cargo test *),Bash(git diff *),Bash(git status *)"
-          custom_instructions: |
+          claude_args: "--model claude-sonnet-4-6"
+          prompt: |
             You are reviewing company-aitrack, a Rust CLI client + Java/Go server stack for tracking AI coding usage.
             The Rust client (client/) uses clap, rusqlite, reqwest (rustls-tls), ed25519-dalek, sqlite-vec.
             The server has two implementations: server-java (Spring Boot) and server-go (chi).
@@ -49,7 +47,7 @@ jobs:
             missing #[cfg(unix)] guards on Unix-specific code, SQL injection in raw queries,
             breaking changes to the CLIENT ↔ SERVER JSON contract (defined in CONTRACT.md).
             Treat missing error handling, broken cross-platform compat, and contract regressions as high-signal.
-          prompt: |
+
             Review this aitrack pull request and focus on:
             - Rust safety: unwrap/expect in non-test code, error propagation, cross-platform cfg guards
             - Contract compatibility: does this change break CLIENT↔SERVER JSON schema (CONTRACT.md)?
