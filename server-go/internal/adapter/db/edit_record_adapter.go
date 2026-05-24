@@ -95,14 +95,24 @@ func (r *EditRecordAdapter) Query(tokenKey, repoURL string, page, size int) ([]m
 	for rows.Next() {
 		var rec model.EditRecord
 		var receivedAt string
+		var toolVersion, modelNS, diffHunk, metadata, flags, promptSummary sql.NullString
 		if err := rows.Scan(
-			&rec.ID, &rec.TokenKey, &rec.DeviceID, &rec.Hostname, &rec.Tool, &rec.ToolVersion,
-			&rec.Provider, &rec.Model, &rec.SessionID, &rec.RepoURL, &rec.Branch,
+			&rec.ID, &rec.TokenKey, &rec.DeviceID, &rec.Hostname, &rec.Tool, &toolVersion,
+			&rec.Provider, &modelNS, &rec.SessionID, &rec.RepoURL, &rec.Branch,
 			&rec.CurrentSHA, &rec.FilePath, &rec.AddedLines, &rec.RemovedLines,
-			&rec.DiffHunk, &rec.Metadata, &rec.Timestamp, &rec.RecordSig,
-			&rec.Status, &rec.Flags, &receivedAt, &rec.PromptSummary,
+			&diffHunk, &metadata, &rec.Timestamp, &rec.RecordSig,
+			&rec.Status, &flags, &receivedAt, &promptSummary,
 		); err != nil {
 			return nil, 0, err
+		}
+		rec.ToolVersion = toolVersion.String
+		rec.Model = modelNS.String
+		rec.DiffHunk = diffHunk.String
+		rec.Metadata = metadata.String
+		rec.Flags = flags.String
+		if promptSummary.Valid {
+			s := promptSummary.String
+			rec.PromptSummary = &s
 		}
 		rec.ReceivedAt, _ = time.Parse(time.RFC3339, receivedAt)
 		records = append(records, rec)

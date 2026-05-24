@@ -39,6 +39,14 @@ func openTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
+	// Truncate all tables so each test starts with a clean slate.
+	// RESTART IDENTITY resets serial sequences; CASCADE handles FK order.
+	if _, err := database.Exec(
+		`TRUNCATE TABLE devices, edit_records, tokens RESTART IDENTITY CASCADE`,
+	); err != nil {
+		database.Close()
+		t.Fatalf("truncate tables: %v", err)
+	}
 	t.Cleanup(func() { database.Close() })
 	return database
 }
