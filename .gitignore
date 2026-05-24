@@ -66,3 +66,22 @@ docs/README.md
 # baoyu image-gen intermediates
 docs/assets/**/prompts/
 docs/assets/**/batch.json
+
+# ── Internal-only local overrides (never push to GitHub) ──────────────────────
+CLAUDE.LOCAL.md
+internal/
+
+# ============================================================
+# COMPANY FORK ISOLATION — v1.6.2+
+# ============================================================
+# Company-specific source files exist in Codeup but MUST NOT
+# appear in this public GitHub mirror.
+#
+# Rule: any file under client/src/company/ is company-internal.
+# The Cargo feature "company" gates all compilation of these files.
+# Disabling the feature (default) means GitHub builds compile fine
+# even though the source files don't exist here.
+# ============================================================
+client/src/company/
+server-java/src/main/java/com/aitrack/server/company/
+server-go/internal/company/
