@@ -1,57 +1,90 @@
 name: Claude Code Review
 
-env:
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-  GH_TOKEN_VALUE: ${{ secrets.GH_TOKEN }}
-
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
 
 permissions:
   contents: read
+  id-token: write
   pull-requests: write
   issues: write
 
 jobs:
-  claude-review:
-    name: Claude AI Review
+  review:
+    name: claude-code-review
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    if: ${{ !github.event.pull_request.draft }}
+    if: >-
+      ${{
+        github.event.pull_request.draft == false &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+      }}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+      CLAUDE_MODEL: claude-sonnet-4-6
     steps:
       - name: Skip when Claude secrets are not configured
-        if: ${{ env.ANTHROPIC_API_KEY == '' || env.ANTHROPIC_BASE_URL == '' || env.GH_TOKEN_VALUE == '' }}
-        run: echo "Claude review secrets not configured; skipping."
+        if: ${{ env.ANTHROPIC_API_KEY == '' || env.ANTHROPIC_BASE_URL == '' }}
+        run: echo "Claude Code review secrets are not configured; skipping Claude Code review."
+
+      - name: Detect Claude review workflow changes
+        id: claude-workflow-change
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const selfChanged = files.some(
+              (file) => file.filename === ".github/workflows/claude-code-review.yml",
+            );
+            core.setOutput("self_changed", selfChanged ? "true" : "false");
+
+      - name: Skip Claude review for workflow self-change
+        if: ${{ steps.claude-workflow-change.outputs.self_changed == 'true' }}
+        run: echo "Skipping Claude Code Review because this PR changes the review workflow itself."
 
       - name: Checkout repository
-        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && env.GH_TOKEN_VALUE != '' }}
-        uses: actions/checkout@v4
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && steps.claude-workflow-change.outputs.self_changed != 'true' }}
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Claude Code Review
-        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && env.GH_TOKEN_VALUE != '' }}
+      - name: Run Claude Code review
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && steps.claude-workflow-change.outputs.self_changed != 'true' }}
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GH_TOKEN }}
-          claude_args: "--model claude-sonnet-4-6"
+          track_progress: true
+          use_sticky_comment: true
+          exclude_comments_by_actor: MapleEve,github-actions,codecov
           prompt: |
-            You are reviewing company-aitrack, a Rust CLI client + Java/Go server stack for tracking AI coding usage.
-            The Rust client (client/) uses clap, rusqlite, reqwest (rustls-tls), ed25519-dalek, sqlite-vec.
-            The server has two implementations: server-java (Spring Boot) and server-go (chi).
-            Watch for: leaked signing keys or secrets, unsafe unwrap()/expect() in production paths,
-            missing #[cfg(unix)] guards on Unix-specific code, SQL injection in raw queries,
-            breaking changes to the CLIENT ↔ SERVER JSON contract (defined in CONTRACT.md).
-            Treat missing error handling, broken cross-platform compat, and contract regressions as high-signal.
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Review this aitrack pull request and focus on:
-            - Rust safety: unwrap/expect in non-test code, error propagation, cross-platform cfg guards
-            - Contract compatibility: does this change break CLIENT↔SERVER JSON schema (CONTRACT.md)?
-            - Security: no signing keys, no secrets, no internal identifiers in public-facing code
-            - CI correctness: workflow changes that could break builds or skip required checks
+            Review this aitrack pull request. aitrack is a Rust CLI client + Java/Go server stack
+            for tracking AI coding usage (CONTRACT.md is the wire protocol SSoT).
 
-            Prefer concrete file/line findings over broad summaries.
+            Focus on actionable risks:
+            - Rust safety: unwrap/expect in non-test paths, error propagation, cross-platform cfg guards
+            - Contract compatibility: does this break CLIENT↔SERVER JSON schema (CONTRACT.md)?
+            - Security: no signing keys, no secrets, no internal identifiers in public code
+            - Three-way sync: protocol changes must appear in client/, server-java/, server-go/ simultaneously
+            - CI correctness: workflow changes that break builds or skip required checks
+
+            The PR branch is already checked out in the current working directory.
+            Post feedback only through the official Claude Code Action GitHub integration.
+            Do not use the GitHub CLI and do not use a user-owned GitHub token.
+            If there are no actionable findings, post the standard no-findings confirmation.
+            Avoid formatting-only comments.
+
+          claude_args: |
+            --model ${{ env.CLAUDE_MODEL }}
+            --max-turns 30
