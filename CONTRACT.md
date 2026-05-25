@@ -277,61 +277,25 @@ timeout = 10
 ```json
 {
   "hooks": {
+    "postToolUse": [
+      {
+        "command": "<abs aitrack path> capture --tool cursor",
+        "matcher": "Write",
+        "timeout": 10
+      }
+    ],
     "afterFileEdit": [
       {
-        "command": "<abs aitrack path> capture --tool cursor"
+        "command": "<abs aitrack path> capture --tool cursor",
+        "matcher": "Write",
+        "timeout": 10
       }
     ]
   }
 }
 ```
 
-**Note:** Cursor hook has NO `timeout` field. Claude and Codex have `timeout = 10`.
-
-All install/remove operations MUST be idempotent (dedup on install, clean empty containers on remove).
-
----
-
-## Capture Flow
-
-1. Read stdin JSON
-2. Select adapter by `--tool` (claude/codex/cursor)
-3. Parse payload per adapter struct
-4. Compute diff using `similar` (Myers LCS)
-5. Spawn `git` for repo metadata: `rev-parse --git-dir`, `remote get-url origin`, `branch --show-current`, `rev-parse HEAD`
-6. Resolve `hostname` (OS hostname of the reporting machine)
-7. Compute `record_sig`
-8. Insert with 2-second dedup window
-9. Flush unsynced rows to server
-10. Throttled heartbeat
-
-On adapter parse failure: write a local log line (hardening point H6, do NOT silently swallow).
-
----
-
-## Hardening Points Summary
-
-| # | Point | What we fix |
-|---|-------|-------------|
-| H1 | record_sig HMAC | Prevents local DB record tampering |
-| H2 | record_sig binding device_id+token | Prevents cross-device record forgery |
-| H3 | Heartbeat with hook status | Detects silent hook uninstall |
-| H4 | Myers/LCS diff (similar crate) | Prevents inflated line count gaming |
-| H5 | Server rate limit per (token, file_path)/hour | Prevents flooding / edit count inflation |
-| H6 | Parse failure logging | No silent swallowing of adapter errors |
-| H7 | repo_url whitelist (enforce=true) | Prevents repo spoofing |
-| H8 | file_path plausibility check (no `..`) | Prevents path injection |
-
----
-
-## 4. Semantic Search Endpoints (Phase DB-3)
-
-These endpoints are active only when the server runs in PostgreSQL/ParadeDB mode (`SPRING_PROFILES_ACTIVE=postgres` for Java; `DATABASE_URL` set for Go). Both return **HTTP 501 Not Implemented** when using embedded H2/SQLite.
-
-Auth: **`X-Admin-Key`** header (same as `/admin/**` endpoints).
-
----
-
+**Note:** Cursor registers in both `postToolUse` and `afterFileEdit` to cover all trigger paths. Both entries carry `matcher: "Write"` and `timeout: 10`.
 ### 4.1 `GET /api/v1/ai-track/edits/search` — BM25 Full-Text Search
 
 Search edit records by relevance using ParadeDB BM25 full-text index on `diff_hunk` and `prompt_summary`.

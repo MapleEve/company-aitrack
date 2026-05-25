@@ -4,6 +4,33 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 
 ---
 
+## [1.6.3] - 2026-05-25
+
+### Fixed
+
+- **Rust client — `provider` field semantics**: `provider` now records the agent framework name directly (same as `tool` field: `claude`/`codex`/`cursor`); removed URL-based LLM backend inference; provider is now consistent with the `tool` field
+- **UTC date bucketing consistency**: Rust (`chrono::Utc`), Java (`Instant.now()`), and Go (`time.Now().UTC()`) all use UTC for daily bucketing, eliminating cross-timezone drift
+
+### Added
+
+- **Rust client — `backfill_repo_info`**: after each successful `capture` insert, UPDATE all unsynced records with empty `repo_url` to current git context; allows records captured outside a git repo to eventually be uploaded
+- **Rust client — `init` auto-detect mode**: `aitrack init` without tool flags auto-detects installed tools by checking `~/.claude`, `~/.codex`, `~/.cursor` directories
+- **Rust client — Claude PostToolUse conflict detection**: on `init --claude`, warns via stderr if a non-aitrack PostToolUse hook already exists in `~/.claude/settings.json`; install proceeds regardless
+- **Rust client — Cursor dual registration**: Cursor hook now registered in both `hooks.postToolUse` and `hooks.afterFileEdit`; each entry includes `"matcher": "Write"` and `"timeout": 10`; `remove_cursor_hook` cleans both arrays
+- **[company] CodexManager report integration**: `aitrack capture` triggers `maybe_upload()` after flush with 1-hour throttle; reports to `POST /api/v1/company/codex-report`; failure is non-fatal
+- **[company] `POST /api/v1/company/codex-report` endpoint** (Java + Go): receives company CodexManager data, upserts into `company_daily_token_usage` and `company_project_code_stats` tables
+
+### Coverage
+
+| Component | Tests | Line Coverage |
+|-----------|-------|---------------|
+| Rust client (default) | 252 | ≥ 90% |
+| Rust client (+company) | 281 | ≥ 90% |
+| Java server | 226 | ≥ 90% |
+| Go server | 244 | ≥ 90% |
+
+---
+
 ## [v1.6.1] — 2026-05-21
 
 ### Changed

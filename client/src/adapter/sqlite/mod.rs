@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::fs;
 use std::fs::OpenOptions;
-#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::config::db_path;
@@ -19,10 +18,10 @@ use crate::port::storage::StoragePort;
 // all other callers need no changes.
 // ---------------------------------------------------------------------------
 pub use queries::{
-    clean_all, clean_synced, ensure_kv_table, ensure_prompt_context_table, fetch_unsynced,
-    get_last_heartbeat, get_recent_prompt, increment_retry, insert_prompt_context, insert_record,
-    inspect_records, mark_synced, pending_count, pending_count_all, set_last_heartbeat,
-    token_breakdown,
+    backfill_repo_info, clean_all, clean_synced, ensure_kv_table, ensure_prompt_context_table,
+    fetch_unsynced, get_kv, get_last_heartbeat, get_recent_prompt, increment_retry,
+    insert_prompt_context, insert_record, inspect_records, mark_synced, pending_count,
+    pending_count_all, set_kv, set_last_heartbeat, token_breakdown,
 };
 
 /// SQLite-backed storage adapter.
@@ -87,13 +86,11 @@ pub fn open_db() -> Result<Connection> {
     fs::create_dir_all(dir).context("create ~/.aitrack")?;
 
     // Create the file atomically with 0o600 before SQLite opens it.
-    let mut opts = OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        opts.mode(0o600);
-    }
-    let _ = opts.open(&path);
+    let _ = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path);
 
     let conn = Connection::open(&path).context("open records.db")?;
 

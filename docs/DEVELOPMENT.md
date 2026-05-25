@@ -1,195 +1,201 @@
-# 开发指南 / Development Guide
+# 开发指南
 
-## 适用读者 / Who This Is For
+## 适用对象
 
-本指南面向参与 AiTrack 开发的工程师。内容涵盖本地环境配置、各组件的构建与测试命令、覆盖率工具、E2E 测试执行，以及协议变更时的三端同步要求。
+这篇面向参与 AiTrack 开发的工程师。它覆盖本地环境搭建、各组件的构建与测试命令、覆盖率工具、e2e 测试运行方式，以及协议变更时的三端同步要求。
 
 ---
 
-## 本地环境要求 / Local Environment Requirements
+## 本地环境要求
 
-| 工具 | 版本 | 用途 |
-|------|------|------|
-| Rust / Cargo | stable（推荐 1.82+） | 客户端构建与测试 |
-| JDK | 17+ | Java 服务端（本机未安装 JDK 时使用 Docker 构建） |
+| 工具 | 版本要求 | 用途 |
+|------|----------|------|
+| Rust / Cargo | 稳定版（推荐 1.82+） | 客户端构建与测试 |
+| JDK | 17+ | Java 服务端（若本机无 JDK，用 Docker 构建） |
 | Maven | 3.8+ | Java 服务端构建 |
-| Go | 1.25+ | Go 服务端构建与测试 |
-| Docker | 20+ | 跨平台构建、Java 构建、E2E 测试 |
-| sqlite3 CLI | 任意版本 | E2E 测试时验证本地数据库 |
-| git | 任意版本 | 客户端 git 元数据提取 |
+| Go | 1.24+ | Go 服务端构建与测试 |
+| Docker | 20+ | 跨平台构建、Java 构建、e2e 测试 |
+| sqlite3 CLI | 任意 | e2e 测试验证本地 DB |
+| git | 任意 | 客户端 git 元数据提取 |
 
-**注意**：Java 服务端（Spring Boot 3.3.8）要求 JDK 17。若本机未安装 JDK，所有 Java 相关操作须在 Docker 内完成（见下文"通过 Docker 构建"）。
+**注意**：Java 服务端构建依赖 JDK 17，若本机未安装，所有 Java 相关操作均需在 Docker 内进行（见下方"通过 Docker 构建"）。
 
 ---
 
-## 客户端（Rust）/ Client (Rust)
+## 客户端（Rust）
 
 ```bash
 cd client/
 
-# Debug 构建
+# 构建（debug）
 cargo build
 
-# Release 构建
+# 构建（release）
 cargo build --release
 
 # 运行测试
 cargo test
 
-# 覆盖率测量（需先安装 cargo-llvm-cov）
+# 覆盖率测量（首次需安装 cargo-llvm-cov）
 cargo install cargo-llvm-cov
 cargo llvm-cov --summary-only
 
-# 覆盖率详情（HTML 报告）
+# 覆盖率明细（HTML 报告）
 cargo llvm-cov --open
+
+# 检查并安装最新版本（ed25519 签名验证）
+./target/debug/aitrack update
 ```
 
-覆盖率门槛：行覆盖 ≥ 90%。Docker 构建未达标时失败。
+覆盖率门槛：LINE ≥ 90%，低于此值 Docker 构建会失败。
 
-### CLI 命令 / CLI Commands
+### 模块结构（Sprint 2 六边形架构）
 
-| 命令 | 说明 |
-|------|------|
-| `aitrack capture` | 从 stdin 解析钩子事件并记录编辑 |
-| `aitrack prompt-capture` | 从 stdin 记录 UserPromptSubmit 事件 |
-| `aitrack heartbeat` | 立即强制发送一次心跳 |
-| `aitrack status` | 打印配置、device_id 和同步统计 |
-| `aitrack inspect` | 查询本地 records.db |
-| `aitrack init` | 初始化 config.toml 并安装钩子 |
-| `aitrack update` | 下载并验证最新二进制（ed25519 签名） |
-
-#### `aitrack update` — 自更新命令 / Self-Update Command
-
-`aitrack update` 获取最新版本二进制并在替换当前运行的二进制前进行验证：
-
-```
-1. GET <api_url>/api/v1/ai-track/release/latest  → { version, download_url, signature_url }
-2. Download binary to <tempfile>
-3. Download detached ed25519 signature (.sig file)
-4. Verify: ed25519::verify(PUBLIC_KEY_BYTES, sha256(binary), signature)
-   → abort with error if verification fails
-5. Atomic rename: tempfile → current binary path (via std::fs::rename)
-```
-
-ed25519 公钥在构建时编译进二进制（`include_bytes!`）。二进制被篡改或签名不匹配时直接中止，旧二进制不会被替换。
-
-### Rust 客户端模块结构（Sprint 2 六边形）/ Rust Client Module Structure (Sprint 2 Hexagonal)
+Sprint 2 重构后，旧 `db/`、`adapters/`、顶层 `crypto.rs`、顶层 `diff.rs` 已删除，全部逻辑迁入以下三层：
 
 ```
 client/src/
-├── main.rs / cli.rs / config.rs / lib.rs   — command dispatch, config, entry point
-├── git.rs / init.rs / uploader.rs / heartbeat.rs / update.rs
-│
-├── domain/        ← 纯领域逻辑，零基础设施依赖
-│   ├── model.rs   ← EditRecord, ApiConfig and other core domain models
-│   ├── crypto.rs  ← HMAC-SHA256, record_sig, request signing
-│   ├── diff.rs    ← Myers/LCS diff (similar crate)
-│   └── keywords.rs ← Hardcoded keywords + SHA256 fingerprint
-│
+├── domain/          ← 纯领域逻辑，零基础设施依赖
+│   ├── model.rs     ← InspectRow, Record（含 StatsRow）
+│   ├── crypto.rs    ← HMAC-SHA256 签名
+│   ├── diff.rs      ← Myers diff 解析
+│   └── keywords.rs  ← 硬编码关键词 + classify_prompt() + keyword_fingerprint()
 ├── port/
-│   ├── storage.rs ← StoragePort trait
-│   └── upload.rs  ← UploadPort trait
-│
+│   ├── storage.rs   ← StoragePort trait
+│   └── upload.rs    ← UploadPort trait
 ├── adapter/
-│   ├── sqlite/    ← SqliteStorage impl StoragePort
-│   │   └── mod.rs / schema.rs / models.rs / queries.rs / vec.rs / keyword_store.rs
-│   ├── http/      ← HttpUploader impl UploadPort (real HTTP POST)
-│   │   └── mod.rs / upload.rs
-│   └── event/     ← claude/codex/cursor adapters
-│       └── mod.rs / claude.rs / codex.rs / cursor.rs
-│
-└── testkit/factories.rs   ← 种子确定性测试工厂
+│   ├── sqlite/      ← SqliteStorage implements StoragePort
+│   ├── http/        ← HttpUploader implements UploadPort（真实 POST 逻辑）
+│   └── event/       ← claude/codex/cursor 事件适配
+├── update.rs        ← aitrack update 子命令（ed25519 签名验证）
+└── testkit/         ← factories.rs（测试工厂，使用 domain::model）
 ```
 
-### 各模块测试覆盖率 / Test Coverage by Module
+### 测试模块覆盖情况
 
 | 模块 | 测试数（Sprint 2） | 行覆盖率 |
-|------|---------|---------|
+|------|--------|----------|
 | `domain/` | — | ≥ 90% |
 | `port/` | — | ≥ 90% |
-| `adapter/sqlite/`、`adapter/http/`、`adapter/event/` | — | ≥ 90% |
-| `config.rs` / `git.rs` / `init.rs` / `uploader.rs` / `update.rs` / ... | — | ≥ 90% |
-| **合计** | **291** | **90.71% 行覆盖** |
+| `adapter/` | — | ≥ 90% |
+| **TOTAL** | **291** | **90.71%** |
 
-> Sprint 2 六边形架构重构后，测试随领域模块重新组织。总测试数从 143 增至 291。运行 `cargo llvm-cov --summary-only` 查看最新的各模块明细。
+> Sprint 2 六边形架构重构后，测试随领域模块重组，总测试数从 143 增至 291，整体行覆盖率提升至 90.71%。
 
-所有测试均为 `#[cfg(test)]` 内联模块。HTTP mock 使用 `wiremock`，临时文件使用 `tempfile`。
+测试均为 `#[cfg(test)]` 内联模块。HTTP mock 使用 `wiremock`，临时文件使用 `tempfile`。
 
-#### sqlite-vec（可选向量扩展）/ sqlite-vec (Optional Vector Extension)
+### Testkit 工厂
 
-`client/src/db/vec.rs` 模块在数据库打开时通过 `sqlite3_auto_extension` 注册 sqlite-vec。若扩展探针（`SELECT vec_version()`）失败，全局 `VEC_DISABLED` 置为 true，所有向量操作跳过——核心捕获流程不受影响。
-
-验证 sqlite-vec 是否正常加载：
-```bash
-./target/debug/aitrack status   # 在 DEBUG 级别打印 "sqlite-vec loaded: v0.1.x"
-```
-
-`vec_records` 虚拟表（`vec0`，`float[384]`）在 vec 启用时自动创建。向量在 Phase DB-3 之前不会填充。
-
-### Testkit 工厂 / Testkit Factories
-
-`src/testkit/factories.rs` 提供种子确定性构建器：
+`src/testkit/factories.rs` 提供种子确定性的构建器（基于 `domain::model` 类型）：
 
 ```rust
-// Valid instances
+// 合法实例
 let rec = EditRecordFactory::new(42).with_tool("claude").build();
 let cfg = ApiConfigFactory::new(42).with_hmac_secret("secret").build();
 
 // Payload JSON
 let json = ClaudeHookPayloadFactory::new(1).build_json();
 
-// Negative cases (for anti-validation tests)
-let bad = tampered_record_sig(1);        // record_sig zeroed
+// 负例（用于反验证测试）
+let bad = tampered_record_sig(1);       // record_sig 置零
 let exp = tampered_expired_timestamp(1); // timestamp = 2000-01-01
 let big = tampered_oversized_lines(1);  // added_lines = 99,999,999
 ```
 
+### 关键词防篡改机制
+
+`domain/keywords.rs` 中的关键词列表为硬编码，不可在本地修改。`keyword_fingerprint()` 返回当前关键词表的 SHA-256 摘要，上报时服务端可验证指纹一致性，防止本地关键词篡改影响分类准确性。
+
+### update 子命令
+
+```bash
+./target/debug/aitrack update
+```
+
+从配置的更新服务器拉取最新版本元数据，验证 ed25519 签名后执行就地更新。签名验证失败时中止并报错，不执行替换。
+
+### sqlite-vec（可选向量扩展）
+
+`client/src/adapter/sqlite/vec.rs` 在 DB 打开时通过 `sqlite3_auto_extension` 注册 sqlite-vec 扩展。若探测（`SELECT vec_version()`）失败，`VEC_DISABLED` 全局标志置为 `true`，所有向量操作跳过——核心捕获流程不受影响。
+
+验证是否加载成功：
+```bash
+RUST_LOG=debug ./target/debug/aitrack status
+# 应输出: sqlite-vec loaded: v0.1.x
+```
+
+`vec_records` 虚拟表（`vec0`，`float[384]`）在 vec 启用时自动创建。Embedding 填充在 Phase DB-3 完成。
+
 ---
 
-## Java 服务端 / Java Server
+## 公司构建（company feature gate）
+
+`client/src/company/` 目录包含公司内部功能，通过 Cargo feature `company` 控制编译，GitHub 镜像中已 gitignore。
+
+构建命令：
+
+```bash
+# 开发构建（含 company 功能）
+cargo build --features company
+
+# 发布构建
+cargo build --release --features company
+
+# 测试（含 company 功能）
+cargo test --features company
+```
+
+**主要功能**：
+
+- `codexmanager`：读取 `~/.codex/state_5.sqlite`（只读）和 `~/.codex/sessions/*.jsonl`，生成每日 token 用量和代码量统计
+- `codexmanager_upload`：`aitrack capture` 完成 flush 后触发，1 小时节流（`last_codexmanager_sync` KV 键），上报至 `POST /api/v1/company/codex-report`，失败非致命
+
+**注意**：`~/.codex/` 目录只读，不写入任何数据。
+
+---
+
+## Java 服务端
 
 ```bash
 cd server-java/
 
-# 运行测试（单元 + 集成，H2 内存库）
+# 运行测试（unit + integration，H2 内存库）
 mvn test
 
-# 运行测试 + 覆盖率验证（行覆盖 ≥ 90% 门槛）
+# 运行测试 + 覆盖率验证（LINE ≥ 90% 门槛）
 mvn verify
 
 # 启动开发服务器
 mvn spring-boot:run
 # → http://localhost:8080
-# → H2 控制台: http://localhost:8080/h2-console
+# → H2 控制台：http://localhost:8080/h2-console
+```
+
+```bash
+# 以 postgres profile 启动（需本地 ParadeDB/PostgreSQL）
+SPRING_PROFILES_ACTIVE=postgres mvn spring-boot:run
 ```
 
 JaCoCo HTML 报告：`target/site/jacoco/index.html`
 
-#### PostgreSQL / ParadeDB profile
+### 通过 Docker 构建（无本机 JDK 时）
 
 ```bash
-# 使用 postgres profile 运行（需要 ParadeDB 在 localhost:5432 运行）
-SPRING_PROFILES_ACTIVE=postgres mvn spring-boot:run
-```
-
-### 通过 Docker 构建（本机未安装 JDK 时）/ Building via Docker (when JDK is not installed locally)
-
-```bash
-# 从项目根目录运行
+# 从项目根目录执行
 docker build -f docker/Dockerfile.server-java -t aitrack-server-java:latest .
 ```
 
-构建过程中自动运行 `mvn verify`；覆盖率不足时构建失败。
+构建过程中自动执行 `mvn verify`，覆盖率不足则构建失败。
 
-### Testkit 工厂 / Testkit Factories
+### Testkit 工厂
 
 ```java
-// Valid instances
+// 合法实例
 EditDto dto = EditDtoFactory.build();
 EditDto dto = EditDtoFactory.with(e -> e.setTool("codex"));
 EditDto dto = EditDtoFactory.buildForTool("cursor");
 
-// Negative cases
+// 负例
 EditDto bad = TamperedFactory.badRecordSig();
 EditDto bad = TamperedFactory.oversizedAddedLines();
 EditDto bad = TamperedFactory.nullTool();
@@ -197,7 +203,7 @@ EditDto bad = TamperedFactory.nullTool();
 
 ---
 
-## Go 服务端 / Go Server
+## Go 服务端
 
 ```bash
 cd server-go/
@@ -205,13 +211,13 @@ cd server-go/
 # 构建
 go build ./...
 
-# 运行（需 DATABASE_URL 环境变量，端口 8080）
+# 运行（需设置 DATABASE_URL，端口 8080）
 DATABASE_URL=postgres://aitrack:aitrack_secret@localhost:5432/aitrack go run .
 
 # 运行测试
 go test -ldflags=-linkmode=external ./... -cover
 
-# Linux/Docker 上运行（无 Darwin dyld 问题）
+# 在 Linux/Docker 内（无 Darwin dyld 问题）
 go test ./... -coverprofile=cover.out
 go tool cover -func=cover.out | tail -1
 
@@ -219,30 +225,25 @@ go tool cover -func=cover.out | tail -1
 docker build -f docker/Dockerfile.server-go -t aitrack-server-go:latest .
 ```
 
-覆盖率门槛：total ≥ 90%。Docker 构建未达标时失败。当前覆盖率：**95.3%**。
+覆盖率门槛：total ≥ 90%，低于此值 Docker 构建会失败。当前覆盖率：**95.3%**。
 
-### testapp 包 — 进程内集成测试 / testapp Package — In-Process Integration Testing
+### testapp 包（E2E 和集成测试专用）
 
-`server-go/testapp/` 为需要真实 HTTP router 而不使用 Docker 的集成测试提供轻量级装配层：
+`server-go/testapp/` 提供内存 SQLite 配置与真实 chi router，供 E2E 和集成测试使用，无需真实数据库：
 
 ```go
-import "github.com/your-org/aitrack/server-go/testapp"
+// 返回内存 SQLite 配置（无外部依赖）
+cfg := testapp.MemoryConfig("test-hmac-key")
 
-func TestChainIntegration(t *testing.T) {
-    adminKey := "test-admin-key-32chars-xxxxxxxxxx"
-    cfg := testapp.MemoryConfig(adminKey)   // in-memory test config, random port
-    handler, cleanup, _ := testapp.Build(cfg)
-    defer cleanup()
-
-    srv := httptest.NewServer(handler)
-    defer srv.Close()
-    // ... hit srv.URL endpoints with http.DefaultClient
-}
+// 返回真实 chi router，可直接传给 httptest.NewServer
+router := testapp.Build(cfg)
+srv := httptest.NewServer(router)
+defer srv.Close()
 ```
 
-`MemoryConfig` 返回仅含 admin key 的 `config.Config`，绕过 Go 的 `internal` 包限制，使 `server-go/internal/` 之外的测试文件也能装配真实服务器。仅供本地单元测试使用，Docker E2E 使用真实 PostgreSQL 容器。
+`testapp.Build(cfg)` 与生产路径 `app.Build(cfg)` 使用相同组合根，区别仅在于数据库后端为内存 SQLite。这使得 E2E 测试可以验证真实 HTTP 链路行为，而无需外部进程或持久化文件。
 
-### Testkit 工厂 / Testkit Factories
+### Testkit 工厂
 
 ```go
 tok := testkit.BuildToken()
@@ -250,47 +251,64 @@ dto := testkit.BuildEditDTO()
 req := testkit.BuildUploadRequest(tok, dto)
 hb  := testkit.BuildHeartbeatRequest()
 
-// Negative cases
+// 负例
 bad := testkit.TamperedEditDTO()
 exp := testkit.ExpiredTimestampEditDTO()
 big := testkit.OversizedEditDTO()
 ```
 
-#### 本地 ParadeDB 开发 / ParadeDB local dev
+#### ParadeDB 本地开发
 
-运行 Go 服务端对接本地 ParadeDB 实例：
 ```bash
+# 以 postgres 模式启动 Go 服务端（需本地已运行 ParadeDB/PostgreSQL）
 DATABASE_URL=postgres://aitrack:aitrack_secret@localhost:5432/aitrack go run .
 ```
-`DATABASE_URL` 为必填项，Go 服务端无内置嵌入式数据库回退模式。
+
+Go 服务端需设置 `DATABASE_URL`，无内嵌 SQLite 回退（v1.6.1 已移除）。本地开发可通过 `docker-compose up db` 启动 ParadeDB，或仅用 `testapp.MemoryConfig` 做单元测试（不启动真实服务进程）。
 
 ---
 
-## E2E 测试 / E2E Tests
+## E2E 测试
 
-E2E 测试套件位于 `e2e/`，分别针对 Java 和 Go 实现各运行一轮，验证协议兼容性。
+e2e 测试套件位于 `e2e/`，对 Java 和 Go 两套实现各跑一轮，证明协议兼容性。Sprint 2 新增基于 `testapp` 的真实链路 E2E 测试，无需外部服务进程。
 
-### Go runner（模拟客户端）/ Go runner (simulated client)
+### Go runner（模拟客户端）
 
 ```bash
-# 从项目根目录运行
+# 从项目根目录
 bash e2e/run.sh both   # Java + Go
 bash e2e/run.sh java   # 仅 Java
 bash e2e/run.sh go     # 仅 Go
 ```
 
-脚本自动构建三个 Docker 镜像，启动服务端容器，运行测试，最后销毁容器。
+脚本自动构建三个 Docker 镜像，启动服务端容器，运行测试，清理容器。
 
-### 真实 Rust 二进制 E2E / Real Rust Binary E2E
+### 基于 testapp 的真实链路 E2E（推荐用于 Go 服务端）
+
+`server-go/testapp/` 包提供内存 SQLite 配置与真实 chi router，E2E 测试直接启动真实服务端（无 Docker、无外部进程）：
 
 ```bash
-# 需要本地安装：cargo、sqlite3、curl、git、python3、uuidgen
+# 在 server-go/ 目录运行所有测试（含 testapp E2E）
+go test ./... -coverprofile=cover.out
+```
+
+典型 E2E 场景（`e2e/mock_chain_test.go`）：
+- 正常 accepted：sig_match → POST /edits → 200 accepted=1
+- sig_mismatch 拒绝：篡改 record_sig → rejected
+- 未授权 401：无效 token → 401
+
+所有场景均使用 `testapp.MemoryConfig("key")` + `testapp.Build(cfg)`，不要求真实 credential 或外部数据库。
+
+### 真实 Rust 二进制 E2E
+
+```bash
+# 需要本机有 cargo、sqlite3、curl、git、python3、uuidgen
 bash e2e/run-client-e2e.sh both
 ```
 
-测试使用临时 `AITRACK_HOME` 目录，不会触碰 `~/.aitrack/` 或 `~/.claude/`。
+测试使用临时 `AITRACK_HOME` 目录，不触碰 `~/.aitrack/` 和 `~/.claude/`。
 
-### docker-compose E2E（用于 CI）/ docker-compose E2E (for CI)
+### docker-compose E2E（CI 用）
 
 ```bash
 docker compose -f docker/docker-compose.e2e.yml --profile java up --abort-on-container-exit
@@ -299,27 +317,67 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 
 ---
 
-## 覆盖率汇总 / Coverage Summary
+## 代码覆盖率汇总
 
-| 组件 | 工具 | 命令 | 门槛 | 当前值（v1.6.0） |
-|------|------|------|------|-----------------|
-| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | 行覆盖 ≥ 90% | **90.71%** |
-| Java 服务端 | JaCoCo | `mvn verify` | 行覆盖 ≥ 90% | **LINE ≥ 90%** |
+| 组件 | 工具 | 命令 | 门槛 | 当前覆盖率 |
+|------|------|------|------|------------|
+| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **90.71%** |
+| Java 服务端 | JaCoCo | `mvn verify` | LINE ≥ 90% | **LINE ≥ 90%** |
 | Go 服务端 | go cover | `go tool cover -func cover.out` | total ≥ 90% | **95.3%** |
 
 三个组件的 Docker 构建均内嵌覆盖率检查，不达标则构建失败。
 
 ---
 
-## 协议变更规则 / Protocol Change Rules
+## 本地钩子配置更新（重新激活）
 
-`CONTRACT.md` 是 Rust 客户端、Java 服务端和 Go 服务端共同遵守的单一可信来源（SSoT）。任何协议变更必须同步更新三端：
+`aitrack init --claude` 会将 aitrack 的钩子配置写入 `~/.claude/settings.json`（`hooks` 字段）。当 aitrack 发布新版本并更新了钩子配置（例如 Phase 4 新增了 `UserPromptSubmit` 钩子用于提示词捕获）时，**已安装旧版本的用户必须重新执行 init 命令**，才能激活新版钩子。
 
-1. **更新 `CONTRACT.md`**：升级版本号，描述变更内容
-2. **更新 Rust 客户端**：`crypto.rs`（record_sig 规范字符串）、对应适配器、uploader
-3. **更新 Java 服务端**：`SignatureService`（规范字符串）、`EditDto`（字段）、相关测试
-4. **更新 Go 服务端**：`service/signature.go`（规范字符串）、`model`（字段）、相关测试
-5. **更新 E2E 工厂**：`e2e/factory/factory.go` 中的 `ComputeRecordSig`
-6. **运行 E2E 套件**，验证三端兼容性
+```bash
+# 重新激活最新钩子配置（安全：只写入 ~/.claude/settings.json，不影响本地代码库）
+aitrack init --claude \
+  --api-url <your-server-url> \
+  --credential <your-credential>
+```
 
-`record_sig` 规范字符串中的字段顺序和 `\n` 分隔符必须在三端字节完全一致。详见 `CONTRACT.md` 的记录签名章节。
+**何时需要重新运行 init**：
+
+| 变更类型 | 是否需要重新 init |
+|----------|-----------------|
+| 新增钩子事件类型（如 UserPromptSubmit） | 是 |
+| 更新钩子命令模板 | 是 |
+| 仅更新服务端代码 | 否 |
+| 仅更新 CONTRACT.md 协议字段 | 否（除非 record_sig 规范变更） |
+
+**验证钩子已激活**：
+
+```bash
+# 确认 ~/.claude/settings.json 中存在 UserPromptSubmit 钩子
+grep -A 5 '"UserPromptSubmit"' ~/.claude/settings.json
+
+# 检查 aitrack 当前配置与钩子状态
+aitrack status
+```
+
+> 注意：`aitrack init --claude` 会覆盖 `~/.claude/settings.json` 中已有的 aitrack 钩子条目，但不会删除其他（如 vibe-island 等）工具写入的钩子。
+
+**自动检测模式**：不传任何工具 flag 时，`aitrack init` 会检测 `~/.claude`、`~/.codex`、`~/.cursor` 目录是否存在，对检测到的工具自动安装钩子。若均未检测到，打印提示并退出。
+
+**第三方冲突告警**：Claude 安装时若发现 `settings.json` 中已存在非 aitrack 的 PostToolUse hook command，通过 stderr 警告用户，但不中止安装。
+
+**Cursor 双注册**：Cursor 钩子同时写入 `hooks.postToolUse` 和 `hooks.afterFileEdit`，每个 entry 带 `matcher: "Write"` 和 `timeout: 10`，覆盖所有触发路径。
+
+---
+
+## 协议变更规则
+
+`CONTRACT.md` 是客户端（Rust）、Java 服务端、Go 服务端三者共享的唯一真实来源。任何协议变更必须同步更新三端：
+
+1. **更新 `CONTRACT.md`**：修改版本号，描述变更内容
+2. **更新 Rust 客户端**：`crypto.rs`（record_sig canonical string）、对应 adapter、uploader
+3. **更新 Java 服务端**：`SignatureService`（canonical string）、`EditDto`（字段）、相关测试
+4. **更新 Go 服务端**：`service/signature.go`（canonical string）、`model`（字段）、相关测试
+5. **更新 e2e 工厂**：`e2e/factory/factory.go` 中的 `ComputeRecordSig`
+6. **运行 e2e 套件**验证三端兼容性
+
+`record_sig` canonical string 的字段顺序和 `\n` 分隔符必须在三端字节一致。详见 `CONTRACT.md` 的 Record Signature 章节。
