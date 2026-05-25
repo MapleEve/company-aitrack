@@ -864,4 +864,95 @@ mod tests {
         assert!(!codex);
         assert!(!cursor);
     }
+
+    // ---------------------------------------------------------------------------
+    // detect_installed_tools tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn detect_installed_tools_finds_present_dirs() {
+        let home = setup_home();
+        // Create .claude and .cursor dirs but not .codex
+        std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+        std::fs::create_dir_all(home.path().join(".cursor")).unwrap();
+
+        let tools = detect_installed_tools(home.path());
+        assert!(tools.contains(&"claude"), "claude dir present → detected");
+        assert!(tools.contains(&"cursor"), "cursor dir present → detected");
+        assert!(!tools.contains(&"codex"), "codex dir absent → not detected");
+    }
+
+    #[test]
+    fn detect_installed_tools_empty_when_no_dirs() {
+        let home = setup_home();
+        let tools = detect_installed_tools(home.path());
+        assert!(tools.is_empty(), "no tool dirs → empty list");
+    }
+
+    #[test]
+    fn detect_tool_statuses_returns_false_when_no_hooks() {
+        let home = setup_home();
+        let (claude, codex, cursor) = detect_tool_statuses(home.path());
+        assert!(!claude);
+        assert!(!codex);
+        assert!(!cursor);
+    }
+
+    #[test]
+    fn detect_tool_statuses_returns_true_after_install() {
+        let home = setup_home();
+        install_hooks(&["claude"], "/usr/bin/aitrack", home.path()).unwrap();
+        let (claude, codex, cursor) = detect_tool_statuses(home.path());
+        assert!(claude);
+        assert!(!codex);
+        assert!(!cursor);
+    }
+
+    // ---------------------------------------------------------------------------
+    // check_claude_third_party_conflict tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn no_conflict_when_file_missing() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        assert!(!check_claude_third_party_conflict(&path));
+    }
+
+    #[test]
+    fn no_conflict_when_only_aitrack_hook() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        install_claude_hook(&path, "/usr/local/bin/aitrack").unwrap();
+        assert!(!check_claude_third_party_conflict(&path));
+    }
+
+    #[test]
+    fn conflict_detected_when_third_party_hook_present() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Write settings with a non-aitrack PostToolUse hook
+        let settings = serde_json::json!({
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Edit",
+                        "hooks": [{"type": "command", "command": "/usr/local/bin/some-other-tool capture"}]
+                    }
+                ]
+            }
+        });
+        std::fs::write(&path, settings.to_string()).unwrap();
+        assert!(check_claude_third_party_conflict(&path));
+    }
+
+    #[test]
+    fn no_conflict_when_settings_json_is_invalid() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "not valid json {{").unwrap();
+        assert!(!check_claude_third_party_conflict(&path));
+    }
 }

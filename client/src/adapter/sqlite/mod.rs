@@ -355,4 +355,70 @@ mod tests {
         mark_synced(&conn, &[]).unwrap();
         increment_retry(&conn, &[]).unwrap();
     }
+
+    // ---------------------------------------------------------------------------
+    // backfill_repo_info tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn backfill_updates_empty_repo_url_records() {
+        let conn = open_test_db();
+        // Insert a record with empty repo_url (simulates capture outside git repo)
+        let mut r = make_record("claude", "src/lib.rs", "tok-bf");
+        r.repo_url = "".to_string();
+        r.branch = "".to_string();
+        r.current_sha = "".to_string();
+        insert_record(&conn, &r).unwrap();
+
+        backfill_repo_info(&conn, "git@github.com:org/repo.git", "main", "abc123").unwrap();
+
+        let rows = fetch_unsynced(&conn, "tok-bf", 100).unwrap();
+        assert_eq!(rows[0].repo_url, "git@github.com:org/repo.git");
+        assert_eq!(rows[0].branch, "main");
+        assert_eq!(rows[0].current_sha, "abc123");
+    }
+
+    #[test]
+    fn backfill_does_not_touch_synced_records() {
+        let conn = open_test_db();
+        let mut r = make_record("claude", "src/main.rs", "tok-syn");
+        r.repo_url = "".to_string();
+        insert_record(&conn, &r).unwrap();
+        // Directly mark the inserted record as synced via SQL so we bypass
+        // the fetch_unsynced filter that excludes empty-repo_url records.
+        conn.execute("UPDATE records SET synced = 1", []).unwrap();
+
+        backfill_repo_info(&conn, "git@github.com:org/other.git", "dev", "def456").unwrap();
+
+        // Query directly — synced records should NOT be updated
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM records WHERE repo_url = 'git@github.com:org/other.git'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "synced records must not be backfilled");
+    }
+
+    #[test]
+    fn backfill_skips_records_with_nonempty_repo_url() {
+        let conn = open_test_db();
+        let r = make_record("claude", "src/config.rs", "tok-noemp");
+        // r.repo_url is already "git@github.com:org/repo.git" from make_record
+        insert_record(&conn, &r).unwrap();
+
+        backfill_repo_info(&conn, "git@github.com:org/NEW.git", "feature", "999").unwrap();
+
+        let rows = fetch_unsynced(&conn, "tok-noemp", 100).unwrap();
+        // Should remain unchanged
+        assert_eq!(rows[0].repo_url, "git@github.com:org/repo.git");
+    }
+
+    #[test]
+    fn backfill_empty_database_is_noop() {
+        let conn = open_test_db();
+        // No records — must not error
+        backfill_repo_info(&conn, "git@github.com:org/repo.git", "main", "abc").unwrap();
+    }
 }
