@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::fs;
 use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
 use crate::config::db_path;
@@ -86,11 +87,13 @@ pub fn open_db() -> Result<Connection> {
     fs::create_dir_all(dir).context("create ~/.aitrack")?;
 
     // Create the file atomically with 0o600 before SQLite opens it.
-    let _ = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path);
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        opts.mode(0o600);
+    }
+    let _ = opts.open(&path);
 
     let conn = Connection::open(&path).context("open records.db")?;
 
@@ -370,7 +373,14 @@ mod tests {
         r.current_sha = "".to_string();
         insert_record(&conn, &r).unwrap();
 
-        backfill_repo_info(&conn, "git@github.com:org/repo.git", "main", "abc123").unwrap();
+        backfill_repo_info(
+            &conn,
+            "git@github.com:org/repo.git",
+            "main",
+            "abc123",
+            "tok-bf",
+        )
+        .unwrap();
 
         let rows = fetch_unsynced(&conn, "tok-bf", 100).unwrap();
         assert_eq!(rows[0].repo_url, "git@github.com:org/repo.git");
@@ -388,7 +398,14 @@ mod tests {
         // the fetch_unsynced filter that excludes empty-repo_url records.
         conn.execute("UPDATE records SET synced = 1", []).unwrap();
 
-        backfill_repo_info(&conn, "git@github.com:org/other.git", "dev", "def456").unwrap();
+        backfill_repo_info(
+            &conn,
+            "git@github.com:org/other.git",
+            "dev",
+            "def456",
+            "tok-syn",
+        )
+        .unwrap();
 
         // Query directly — synced records should NOT be updated
         let count: i64 = conn
@@ -408,7 +425,14 @@ mod tests {
         // r.repo_url is already "git@github.com:org/repo.git" from make_record
         insert_record(&conn, &r).unwrap();
 
-        backfill_repo_info(&conn, "git@github.com:org/NEW.git", "feature", "999").unwrap();
+        backfill_repo_info(
+            &conn,
+            "git@github.com:org/NEW.git",
+            "feature",
+            "999",
+            "tok-noemp",
+        )
+        .unwrap();
 
         let rows = fetch_unsynced(&conn, "tok-noemp", 100).unwrap();
         // Should remain unchanged
@@ -419,6 +443,6 @@ mod tests {
     fn backfill_empty_database_is_noop() {
         let conn = open_test_db();
         // No records — must not error
-        backfill_repo_info(&conn, "git@github.com:org/repo.git", "main", "abc").unwrap();
+        backfill_repo_info(&conn, "git@github.com:org/repo.git", "main", "abc", "").unwrap();
     }
 }

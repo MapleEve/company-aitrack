@@ -263,6 +263,7 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
             &record.repo_url,
             &record.branch,
             &record.current_sha,
+            &record.token_key,
         ) {
             eprintln!("[aitrack] backfill_repo_info warning: {e}");
         }

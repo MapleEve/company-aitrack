@@ -111,11 +111,12 @@ pub fn backfill_repo_info(
     repo_url: &str,
     branch: &str,
     current_sha: &str,
+    token_key: &str,
 ) -> Result<()> {
     conn.execute(
         "UPDATE records SET repo_url = ?1, branch = ?2, current_sha = ?3
-         WHERE synced = 0 AND (repo_url = '' OR repo_url IS NULL)",
-        params![repo_url, branch, current_sha],
+         WHERE synced = 0 AND (repo_url = '' OR repo_url IS NULL) AND token_key = ?4",
+        params![repo_url, branch, current_sha, token_key],
     )?;
     Ok(())
 }
