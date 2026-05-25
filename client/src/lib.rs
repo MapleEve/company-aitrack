@@ -83,7 +83,7 @@ async fn handle_init(args: cli::InitArgs) -> Result<()> {
 
     let tools: Vec<&str> = if tools.is_empty() {
         // No flags passed — auto-detect installed AI tools by config dir presence.
-        let detected = init::detect_installed_tools(&home);
+        let detected = detect_installed_tools(&home);
         if detected.is_empty() {
             println!(
                 "No AI tools detected. Use --claude, --codex, or --cursor to install manually."
