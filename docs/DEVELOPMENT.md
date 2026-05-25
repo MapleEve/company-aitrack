@@ -323,3 +323,20 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 6. **运行 E2E 套件**，验证三端兼容性
 
 `record_sig` 规范字符串中的字段顺序和 `\n` 分隔符必须在三端字节完全一致。详见 `CONTRACT.md` 的记录签名章节。
+
+### Init Auto-Detect Mode
+
+When `aitrack init` is run without any tool flags (`--claude`, `--codex`, `--cursor`), it automatically detects installed tools by checking for the presence of `~/.claude`, `~/.codex`, and `~/.cursor` directories. All detected tools are registered in one pass.
+
+### Third-Party Claude Hook Conflict Warning
+
+During `aitrack init --claude`, the installer checks the existing `PostToolUse` array in `~/.claude/settings.json`. If another hook entry (non-aitrack) is already registered, a warning is printed to stderr:
+```
+[aitrack] WARNING: existing PostToolUse hook detected in ~/.claude/settings.json — verify no conflict
+```
+The installation proceeds regardless; the warning is advisory only.
+
+### Cursor Dual Registration
+
+The Cursor hook is registered in both `postToolUse` and `afterFileEdit` arrays in `~/.cursor/hooks.json`. Both entries carry `matcher: "Write"` and `timeout: 10`. This ensures `capture` fires regardless of which Cursor trigger path activates.
+
