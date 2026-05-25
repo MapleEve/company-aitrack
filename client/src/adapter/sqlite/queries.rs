@@ -213,11 +213,9 @@ pub fn ensure_kv_table(conn: &Connection) -> Result<()> {
 
 /// Get an integer timestamp from the KV store by key.
 pub fn get_kv(conn: &Connection, key: &str) -> Option<i64> {
-    conn.query_row(
-        "SELECT value FROM kv WHERE key = ?1",
-        params![key],
-        |row| row.get(0),
-    )
+    conn.query_row("SELECT value FROM kv WHERE key = ?1", params![key], |row| {
+        row.get(0)
+    })
     .ok()
 }
 

@@ -85,7 +85,9 @@ async fn handle_init(args: cli::InitArgs) -> Result<()> {
         // No flags passed — auto-detect installed AI tools by config dir presence.
         let detected = init::detect_installed_tools(&home);
         if detected.is_empty() {
-            println!("No AI tools detected. Use --claude, --codex, or --cursor to install manually.");
+            println!(
+                "No AI tools detected. Use --claude, --codex, or --cursor to install manually."
+            );
             return Ok(());
         }
         println!("Auto-detected tools: {}", detected.join(", "));
@@ -273,7 +275,6 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
 
         // Throttled heartbeat
         heartbeat::send_heartbeat(&conn, &api_url, &credential, false).await?;
-
     }
 
     Ok(())
