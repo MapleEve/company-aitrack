@@ -154,7 +154,7 @@ Headers:
     {
       "tool": "claude",
       "tool_version": "claude-code",
-      "provider": "anthropic",
+      "provider": "claude",
       "model": null,
       "session_id": "...",
       "repo_url": "git@github.com:org/repo.git",
@@ -277,16 +277,25 @@ timeout = 10
 ```json
 {
   "hooks": {
+    "postToolUse": [
+      {
+        "command": "<abs aitrack path> capture --tool cursor",
+        "matcher": "Write",
+        "timeout": 10
+      }
+    ],
     "afterFileEdit": [
       {
-        "command": "<abs aitrack path> capture --tool cursor"
+        "command": "<abs aitrack path> capture --tool cursor",
+        "matcher": "Write",
+        "timeout": 10
       }
     ]
   }
 }
 ```
 
-**Note:** Cursor hook has NO `timeout` field. Claude and Codex have `timeout = 10`.
+**Note:** Cursor registers both `postToolUse` and `afterFileEdit` to cover all trigger paths. Both entries carry `matcher: "Write"` and `timeout: 10`.
 
 All install/remove operations MUST be idempotent (dedup on install, clean empty containers on remove).
 
@@ -302,6 +311,7 @@ All install/remove operations MUST be idempotent (dedup on install, clean empty 
 6. Resolve `hostname` (OS hostname of the reporting machine)
 7. Compute `record_sig`
 8. Insert with 2-second dedup window
+8b. backfill_repo_info — UPDATE all unsynced records where `repo_url` is empty to the current git context (non-fatal; allows records captured outside a git directory to eventually be uploaded)
 9. Flush unsynced rows to server
 10. Throttled heartbeat
 

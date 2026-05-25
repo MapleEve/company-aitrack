@@ -34,7 +34,7 @@ pub fn parse(stdin_json: &str) -> Option<Record> {
         id: 0,
         tool: "cursor".to_string(),
         tool_version: payload.cursor_version,
-        provider: "anthropic".to_string(),
+        provider: "cursor".to_string(),
         model: None,
         session_id: payload.session_id.unwrap_or_default(),
         repo_url: String::new(),
@@ -81,7 +81,7 @@ mod tests {
         // old has 1 line, new has 2 lines → removed=1, added=2
         assert_eq!(rec.added_lines, 2);
         assert_eq!(rec.removed_lines, 1);
-        assert_eq!(rec.provider, "anthropic");
+        assert_eq!(rec.provider, "cursor");
     }
 
     #[test]

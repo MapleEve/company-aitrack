@@ -45,6 +45,11 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 src/
   main.rs / cli.rs / config.rs / lib.rs   — 命令分发、配置、入口
   git.rs / init.rs / uploader.rs / heartbeat.rs / update.rs
+  (init.rs 说明：`aitrack init` 不带任何工具标志时进入自动探测模式，
+   依次检测 ~/.claude、~/.codex、~/.cursor 目录，对发现的工具全量安装钩子；
+   旧版本不带标志时直接退出并提示"no tools selected"；
+   `init --claude` 安装前检测 ~/.claude/settings.json 中是否已存在非 aitrack 的
+   PostToolUse 钩子，若存在则向 stderr 输出冲突警告，但安装流程不中止)
 
   domain/                   — 纯领域逻辑，无框架依赖
     mod.rs
@@ -106,6 +111,8 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 ### 编辑事件流（PostToolUse / afterFileEdit）
 
+> **Cursor 双注册**：Cursor 钩子同时注册到 `postToolUse` 和 `afterFileEdit` 两个数组，每项携带 `matcher: "Write"` 和 `timeout: 10`。`remove_cursor_hook` 同样清理两个数组。
+
 1. AI 工具触发 PostToolUse/afterFileEdit 钩子
 2. aitrack capture 从 stdin 读取 JSON
 3. 按 --tool 选择适配器（claude/codex/cursor）解析 payload
@@ -117,6 +124,10 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 7. 从 prompt_context 表查询最近一次提示词 → prompt_summary（可选，仅 claude）
 8. 计算 record_sig
    → HMAC_SHA256(hmac_secret, canonical_string)（不包含 prompt_summary）
+8b. 执行 backfill_repo_info（queries.rs）
+    → UPDATE records SET repo_url=?, branch=?, current_sha=?
+      WHERE synced=0 AND (repo_url='' OR repo_url IS NULL)
+    → 补填当前 capture 之前因 git 不可用而未填 repo 信息的历史未同步记录
 9. 2 秒去重窗口检查（同 session_id + file_path）
 10. INSERT INTO records（synced=0）
 11. flush_unsynced → POST /api/v1/ai-track/edits
@@ -190,7 +201,7 @@ canonical_string 字段顺序严格定义于 `CONTRACT.md`，客户端与服务�
 
 | 维度 | Java（Spring Boot 3.3.8） | Go（chi v5.2.5 / Go 1.25）|
 |------|---------------------------|---------------------------|
-| 数据库 | H2（默认）/ ParadeDB（postgres profile） | PostgreSQL / ParadeDB（必须，v1.6.1 起无 SQLite 回退）|
+| 数据库 | H2（默认）/ ParadeDB（生产） | ParadeDB（生产 + E2E）/ SQLite in-memory（单元测试）|
 | 部署模型 | JRE + jar，适合现有 JVM 基础设施 | 单一二进制，distroless 镜像，适合极简容器 |
 | ORM | Spring Data JPA / Hibernate | 原生 database/sql，无 ORM |
 | 适用场景 | 已有 Java 技术栈的团队 | 偏好轻量容器或无 JVM 环境 |
@@ -231,7 +242,7 @@ Java 和 Go 服务端在原有嵌入式数据库基础上，新增 PostgreSQL/Pa
 
 `edit_records` 表新增列：`prompt_summary TEXT` 和 `embedding BYTEA`（均可空，Phase DB-3 回填）。
 
-**Go（chi）**：`DATABASE_URL=postgres://user:pass@host:5432/dbname` 为**必填**环境变量，生产和 E2E 均需要真实 PostgreSQL 实例。`testapp.MemoryConfig` 仅供 Go 本地单元/集成测试在无外部依赖时构造 chi router，不用于 Docker E2E。
+**Go（chi）**：通过 `DATABASE_URL=postgres://user:pass@host:5432/dbname` 激活 ParadeDB/PostgreSQL 模式。生产部署必须设置此环境变量；`testapp.MemoryConfig` 供 E2E 测试使用（内存 SQLite，仅测试）。
 
 **ParadeDB 索引 DDL**（首次部署后执行一次）：
 
@@ -259,9 +270,9 @@ CREATE INDEX IF NOT EXISTS edits_hnsw ON edit_records
 
 接收 384 维查询向量，通过 `embedding <=> CAST($1 AS vector)` 余弦距离检索最近邻。仅 `embedding IS NOT NULL` 的记录参与检索，返回 `{"hits": [..., "distance": float]}`。
 
-#### H2 / SQLite 降级
+#### H2 降级（Java）
 
-两端均在请求时检查 `isPostgres()` 标志，嵌入式数据库模式返回 HTTP 501。
+Java 服务端在请求时检查 `isPostgres()` 标志，H2 模式下 BM25/ANN 端点返回 HTTP 501。Go 服务端已在 v1.6.1 移除嵌入式数据库支持，`DATABASE_URL` 为必填；未设置时服务无法启动。
 
 #### Embedding 回填
 
@@ -269,7 +280,7 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 #### Docker Compose
 
-`docker/docker-compose.yml` 新增 `db` 服务（`paradedb/paradedb:latest`），含 `pg_isready` 健康检查和 `pgdata` 命名卷。Java 服务容器默认使用 H2，通过 `SPRING_PROFILES_ACTIVE=postgres` 切换 PostgreSQL；Go 服务容器**必须**通过 `DATABASE_URL` 指定 PostgreSQL DSN，无内置嵌入式 DB。
+`docker/docker-compose.yml` 新增 `db` 服务（`paradedb/paradedb:latest`），含 `pg_isready` 健康检查和 `pgdata` 命名卷。Java 服务容器默认使用 H2，通过 `SPRING_PROFILES_ACTIVE=postgres` 切换至 ParadeDB。Go 服务容器必须设置 `DATABASE_URL` 方可启动。
 
 ---
 
@@ -295,7 +306,7 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 - **开发者使用画像 API**：`GET /api/v1/ai-track/profiles/{token_key}`，Java + Go 双端实现
 - **多维画像计算**：使用频率（daily/weekly 趋势）、使用深度（行数分布、p50/p90、comment_density）、languages（按 23 种文件扩展名统计编程语言分布）、prompt_patterns（意图分类：generate/fix_debug/refactor/explain/test/other）、工具分布（claude/codex/cursor）
 - **日常聚合 Job**：Java `ProfileAggregationJob`（@Scheduled 每日 02:00）；Go 同等实现
-- **鉴权**：X-Admin-Key，403/404/200，不依赖 ParadeDB（H2/SQLite 均支持）
+- **鉴权**：X-Admin-Key，403/404/200，不依赖 ParadeDB（Java H2 模式亦支持）
 
 ### Sprint 2 — 六边形架构重构（2026-05-20，已交付）
 
@@ -330,16 +341,16 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 `server-go/testapp/` 是专为测试设计的公开构建包，绕过 Go `internal/` 访问限制：
 
 - `testapp.Build(cfg Config) (http.Handler, func(), error)`：创建真实 chi router 实例（含所有中间件和路由），返回清理函数
-- `testapp.MemoryConfig(adminKey string) Config`：返回仅含 admin key 的测试配置，无需外部依赖，仅供本地单元/集成测试使用
+- `testapp.MemoryConfig(adminKey string) Config`：返回使用内存 SQLite 的测试配置（不落盘），无需外部依赖
 
-该包专供本地集成测试使用，生产代码不引用；Docker E2E 使用真实 PostgreSQL 容器。
+该包专供 E2E 测试和集成测试使用，生产代码不引用。
 
 #### E2E
 
 `e2e/` 目录包含两类测试，职责明确区分：
 
 1. **`mock_chain_test.go`**（HTTP 形状测试）：使用 mock handler 验证请求/响应的 JSON 结构和 HTTP 状态码，无需真实 credential，Phase 4 新增 3 个场景
-2. **`chain_integration_test.go`**（真实链路测试）：`httptest.NewServer(realChiRouter)` + testapp 本地路由 + 真实 HMAC 签名，验证完整 10 步校验链，包含三个场景：
+2. **`chain_integration_test.go`**（真实链路测试）：`httptest.NewServer(realChiRouter)` + 内存 SQLite + 真实 HMAC 签名，验证完整 10 步校验链，包含三个场景：
    - 正常上报 → `accepted`
    - `record_sig` 被篡改 → `rejected: sig_mismatch`
    - Bearer token 缺失 → `401 未授权`
