@@ -4,6 +4,33 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 
 ---
 
+## [v1.6.3] — 2026-05-25
+
+### Fixed
+
+- **Rust 客户端 — `provider` 字段语义修正**：`provider` 字段现在直接记录 agent 框架名（与 `tool` 字段相同，如 `claude` / `codex` / `cursor`）；移除了基于 base URL 推断 LLM 后端的逻辑，provider 与 tool 字段保持一致
+- **Rust 客户端 — Codex 适配器 `file_paths[]` 向后兼容**：`CodexToolInput` 新增 `file_paths: Option<Vec<String>>` 字段，优先取 `file_paths[0]`，无则回退 `file_path` 单数字段
+- **服务端 — dedup 重复检测**：`ValidationService` 新增步骤 2.5，60 秒窗口内 `(token_key, file_path, repo_url)` 相同记录标记为 `flagged("duplicate")`；Java 与 Go 两端同步实现
+- **UTC 日期分桶统一**：客户端（Rust `chrono::Utc`）、Java 服务端（`Instant.now()`）、Go 服务端（`time.Now().UTC()`）三端统一使用 UTC 作为日期分桶基准
+
+### Added
+
+- **Rust 客户端 — `backfill_repo_info`**：每次 `capture` 成功插入后，自动将当前 git 元数据（`repo_url`/`branch`/`current_sha`）回填到所有 `synced=0` 且 `repo_url` 为空的历史记录；使在 git 仓库外捕获的记录在后续有 git 上下文时能进入 flush 队列
+- **Rust 客户端 — `init` 自动检测模式**：`aitrack init` 不传工具 flag 时自动检测 `~/.claude`、`~/.codex`、`~/.cursor` 目录存在性并安装对应钩子
+- **Rust 客户端 — Claude 第三方 hook 冲突检测**：安装 Claude 钩子时若检测到 `settings.json` 中已有非 aitrack 的 PostToolUse hook command，通过 stderr 告警（安装不中止）
+- **Rust 客户端 — Cursor 双注册**：Cursor 钩子现在同时写入 `hooks.postToolUse` 和 `hooks.afterFileEdit`；每个 entry 增加 `"matcher": "Write"` 和 `"timeout": 10` 字段；`remove_cursor_hook` 同步清理两个数组
+- **`domain/provider.rs`**：新增 `infer_provider()` 函数统一 provider 字段赋值，直接返回 tool 名称
+
+### 覆盖率
+
+| 组件 | 测试数 | 行覆盖率 |
+|------|--------|---------|
+| Rust 客户端 | 252 | ≥ 90% |
+| Java 服务端 | 226 | ≥ 90% |
+| Go 服务端 | 244 | ≥ 90% |
+
+---
+
 ## [v1.6.1] — 2026-05-21
 
 ### Changed

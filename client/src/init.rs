@@ -94,6 +94,13 @@ pub fn install_claude_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
         return Ok(());
     }
 
+    // Warn if another tool has already registered a PostToolUse hook.
+    if path.exists() && check_claude_third_party_conflict(path) {
+        eprintln!(
+            "[aitrack] warning: ~/.claude/settings.json already contains a PostToolUse hook from another tool; aitrack will be added alongside it"
+        );
+    }
+
     let mut val = if path.exists() {
         let text = fs::read_to_string(path).context("read settings.json")?;
         serde_json::from_str::<Value>(&text).unwrap_or_else(|_| serde_json::json!({}))
@@ -330,17 +337,21 @@ pub fn has_cursor_hook(path: &Path) -> bool {
     let Ok(val) = serde_json::from_str::<Value>(&text) else {
         return false;
     };
-    val["hooks"]["afterFileEdit"]
-        .as_array()
-        .map(|arr| {
-            arr.iter().any(|entry| {
-                entry["command"]
-                    .as_str()
-                    .map(|c| c.contains("aitrack"))
-                    .unwrap_or(false)
+    // Check either registration point — both are installed together
+    let check_array = |key: &str| -> bool {
+        val["hooks"][key]
+            .as_array()
+            .map(|arr| {
+                arr.iter().any(|entry| {
+                    entry["command"]
+                        .as_str()
+                        .map(|c| c.contains("aitrack"))
+                        .unwrap_or(false)
+                })
             })
-        })
-        .unwrap_or(false)
+            .unwrap_or(false)
+    };
+    check_array("afterFileEdit") || check_array("postToolUse")
 }
 
 pub fn install_cursor_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
@@ -359,22 +370,38 @@ pub fn install_cursor_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
     };
 
     let new_entry = serde_json::json!({
-        "command": format!("{aitrack_bin} capture --tool cursor")
+        "command": format!("{aitrack_bin} capture --tool cursor"),
+        "matcher": "Write",
+        "timeout": 10
     });
 
-    let hooks = val
-        .as_object_mut()
-        .unwrap()
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-    let after_file_edit = hooks
-        .as_object_mut()
-        .unwrap()
-        .entry("afterFileEdit")
-        .or_insert_with(|| serde_json::json!([]));
+    // Ensure hooks object exists
+    if val.as_object_mut().unwrap().get("hooks").is_none() {
+        val["hooks"] = serde_json::json!({});
+    }
 
-    if let Some(arr) = after_file_edit.as_array_mut() {
-        arr.push(new_entry);
+    // Register in postToolUse (catches tool-use events)
+    {
+        let post_tool_use = val["hooks"]
+            .as_object_mut()
+            .unwrap()
+            .entry("postToolUse")
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(arr) = post_tool_use.as_array_mut() {
+            arr.push(new_entry.clone());
+        }
+    }
+
+    // Register in afterFileEdit (catches file-edit events)
+    {
+        let after_file_edit = val["hooks"]
+            .as_object_mut()
+            .unwrap()
+            .entry("afterFileEdit")
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(arr) = after_file_edit.as_array_mut() {
+            arr.push(new_entry);
+        }
     }
 
     let text = serde_json::to_string_pretty(&val)?;
@@ -403,6 +430,20 @@ pub fn remove_cursor_hook(path: &Path) -> Result<()> {
         }
     }
 
+    if let Some(arr) = val["hooks"]["postToolUse"].as_array_mut() {
+        arr.retain(|entry| {
+            !entry["command"]
+                .as_str()
+                .map(|c| c.contains("aitrack"))
+                .unwrap_or(false)
+        });
+        if arr.is_empty() {
+            if let Some(hooks) = val["hooks"].as_object_mut() {
+                hooks.remove("postToolUse");
+            }
+        }
+    }
+
     let text = serde_json::to_string_pretty(&val)?;
     fs::write(path, text)?;
     Ok(())
@@ -414,6 +455,58 @@ pub fn detect_tool_statuses(home: &Path) -> (bool, bool, bool) {
         has_codex_hook(&home.join(".codex").join("config.toml")),
         has_cursor_hook(&home.join(".cursor").join("hooks.json")),
     )
+}
+
+/// Detect which AI coding tools appear to be installed on this machine.
+///
+/// Uses presence of the tool's config *directory* as the signal — more reliable
+/// than checking for the hook itself (which may not be installed yet).
+///
+/// Returns a list of tool name strings that can be passed to `install_hooks`.
+pub fn detect_installed_tools(home: &Path) -> Vec<&'static str> {
+    let mut tools = Vec::new();
+    if home.join(".claude").exists() {
+        tools.push("claude");
+    }
+    if home.join(".codex").exists() {
+        tools.push("codex");
+    }
+    if home.join(".cursor").exists() {
+        tools.push("cursor");
+    }
+    tools
+}
+
+/// Returns `true` if `settings.json` already contains a PostToolUse hook command
+/// that does NOT belong to aitrack.
+///
+/// Used to warn the user that a third-party tool has registered a conflicting
+/// hook before aitrack installs its own entry.
+pub fn check_claude_third_party_conflict(path: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(val) = serde_json::from_str::<Value>(&text) else {
+        return false;
+    };
+    val["hooks"]["PostToolUse"]
+        .as_array()
+        .map(|arr| {
+            arr.iter().any(|entry| {
+                entry["hooks"]
+                    .as_array()
+                    .map(|hooks| {
+                        hooks.iter().any(|h| {
+                            h["command"]
+                                .as_str()
+                                .map(|c| !c.contains("aitrack"))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -642,6 +735,24 @@ mod tests {
         let path = home.path().join(".cursor").join("hooks.json");
         install_cursor_hook(&path, "/usr/local/bin/aitrack").unwrap();
         assert!(has_cursor_hook(&path));
+        // Verify both registration points are populated
+        let text = std::fs::read_to_string(&path).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(
+            val["hooks"]["postToolUse"].as_array().is_some(),
+            "postToolUse array should exist"
+        );
+        assert!(
+            val["hooks"]["afterFileEdit"].as_array().is_some(),
+            "afterFileEdit array should exist"
+        );
+        // Verify matcher and timeout fields are present
+        let entry = &val["hooks"]["afterFileEdit"][0];
+        assert_eq!(entry["matcher"], "Write", "matcher field should be Write");
+        assert_eq!(entry["timeout"], 10, "timeout field should be 10");
+        let entry = &val["hooks"]["postToolUse"][0];
+        assert_eq!(entry["matcher"], "Write", "matcher field should be Write");
+        assert_eq!(entry["timeout"], 10, "timeout field should be 10");
     }
 
     #[test]
@@ -653,7 +764,9 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let val: serde_json::Value = serde_json::from_str(&text).unwrap();
         let arr = val["hooks"]["afterFileEdit"].as_array().unwrap();
-        assert_eq!(arr.len(), 1, "idempotent: only 1 cursor hook entry");
+        assert_eq!(arr.len(), 1, "idempotent: only 1 afterFileEdit hook entry");
+        let arr = val["hooks"]["postToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "idempotent: only 1 postToolUse hook entry");
     }
 
     #[test]
@@ -674,7 +787,14 @@ mod tests {
         remove_cursor_hook(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         let val: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert!(val["hooks"]["afterFileEdit"].is_null());
+        assert!(
+            val["hooks"]["afterFileEdit"].is_null(),
+            "empty afterFileEdit should be removed"
+        );
+        assert!(
+            val["hooks"]["postToolUse"].is_null(),
+            "empty postToolUse should be removed"
+        );
     }
 
     #[test]
@@ -743,5 +863,96 @@ mod tests {
         assert!(!claude);
         assert!(!codex);
         assert!(!cursor);
+    }
+
+    // ---------------------------------------------------------------------------
+    // detect_installed_tools tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn detect_installed_tools_finds_present_dirs() {
+        let home = setup_home();
+        // Create .claude and .cursor dirs but not .codex
+        std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+        std::fs::create_dir_all(home.path().join(".cursor")).unwrap();
+
+        let tools = detect_installed_tools(home.path());
+        assert!(tools.contains(&"claude"), "claude dir present → detected");
+        assert!(tools.contains(&"cursor"), "cursor dir present → detected");
+        assert!(!tools.contains(&"codex"), "codex dir absent → not detected");
+    }
+
+    #[test]
+    fn detect_installed_tools_empty_when_no_dirs() {
+        let home = setup_home();
+        let tools = detect_installed_tools(home.path());
+        assert!(tools.is_empty(), "no tool dirs → empty list");
+    }
+
+    #[test]
+    fn detect_tool_statuses_returns_false_when_no_hooks() {
+        let home = setup_home();
+        let (claude, codex, cursor) = detect_tool_statuses(home.path());
+        assert!(!claude);
+        assert!(!codex);
+        assert!(!cursor);
+    }
+
+    #[test]
+    fn detect_tool_statuses_returns_true_after_install() {
+        let home = setup_home();
+        install_hooks(&["claude"], "/usr/bin/aitrack", home.path()).unwrap();
+        let (claude, codex, cursor) = detect_tool_statuses(home.path());
+        assert!(claude);
+        assert!(!codex);
+        assert!(!cursor);
+    }
+
+    // ---------------------------------------------------------------------------
+    // check_claude_third_party_conflict tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn no_conflict_when_file_missing() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        assert!(!check_claude_third_party_conflict(&path));
+    }
+
+    #[test]
+    fn no_conflict_when_only_aitrack_hook() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        install_claude_hook(&path, "/usr/local/bin/aitrack").unwrap();
+        assert!(!check_claude_third_party_conflict(&path));
+    }
+
+    #[test]
+    fn conflict_detected_when_third_party_hook_present() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Write settings with a non-aitrack PostToolUse hook
+        let settings = serde_json::json!({
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Edit",
+                        "hooks": [{"type": "command", "command": "/usr/local/bin/some-other-tool capture"}]
+                    }
+                ]
+            }
+        });
+        std::fs::write(&path, settings.to_string()).unwrap();
+        assert!(check_claude_third_party_conflict(&path));
+    }
+
+    #[test]
+    fn no_conflict_when_settings_json_is_invalid() {
+        let home = setup_home();
+        let path = home.path().join(".claude").join("settings.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "not valid json {{").unwrap();
+        assert!(!check_claude_third_party_conflict(&path));
     }
 }

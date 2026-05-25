@@ -60,14 +60,6 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(func() { database.Close() })
 
-	// Truncate for test isolation
-	if _, err := database.Exec(
-		`TRUNCATE TABLE devices, edit_records, tokens RESTART IDENTITY CASCADE`,
-	); err != nil {
-		database.Close()
-		t.Fatalf("truncate tables: %v", err)
-	}
-
 	cfg := &config.Config{}
 	cfg.Server.Port = 8080
 	cfg.TimestampWindowSeconds = 300

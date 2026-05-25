@@ -44,7 +44,7 @@ use adapter::sqlite::{
     pending_count, token_breakdown,
 };
 use config::{apply_init_args, load_config, mask_token, resolve_api_config, split_credential};
-use init::{detect_tool_statuses, install_hooks, remove_hooks};
+use init::{detect_installed_tools, detect_tool_statuses, install_hooks, remove_hooks};
 
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
@@ -79,12 +79,23 @@ async fn handle_init(args: cli::InitArgs) -> Result<()> {
         t
     };
 
-    if tools.is_empty() {
-        println!("No tools selected. Use --claude, --codex, or --cursor.");
-        return Ok(());
-    }
-
     let home = dirs::home_dir().expect("cannot find home directory");
+
+    let tools: Vec<&str> = if tools.is_empty() {
+        // No flags passed — auto-detect installed AI tools by config dir presence.
+        let detected = detect_installed_tools(&home);
+        if detected.is_empty() {
+            println!(
+                "No AI tools detected. Use --claude, --codex, or --cursor to install manually."
+            );
+            return Ok(());
+        }
+        println!("Auto-detected tools: {}", detected.join(", "));
+        detected
+    } else {
+        tools
+    };
+
     let aitrack_bin = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "aitrack".to_string());
@@ -243,6 +254,20 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
     record.prompt_summary = get_recent_prompt(&conn, &record.session_id);
 
     let inserted = adapter::sqlite::insert_record(&conn, &record)?;
+
+    // Non-fatal backfill: propagate current git info to any previously-inserted
+    // records that had empty repo_url (captured outside a git repo).
+    if !record.repo_url.is_empty() {
+        if let Err(e) = adapter::sqlite::backfill_repo_info(
+            &conn,
+            &record.repo_url,
+            &record.branch,
+            &record.current_sha,
+            &record.token_key,
+        ) {
+            eprintln!("[aitrack] backfill_repo_info warning: {e}");
+        }
+    }
 
     if inserted && !api_url.is_empty() && !credential.is_empty() {
         let http_uploader =
@@ -478,7 +503,6 @@ mod tests {
     /// Async variant: sets AITRACK_HOME for the duration of an async block,
     /// holding the env lock while the block executes synchronously via
     /// `tokio::task::block_in_place`.
-    #[allow(clippy::await_holding_lock)]
     async fn with_home_async<F, Fut>(dir: &TempDir, f: F)
     where
         F: FnOnce() -> Fut,

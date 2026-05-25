@@ -68,6 +68,5 @@ func Build(cfg *config.Config) (http.Handler, func(), error) {
 	searchH := handler.NewSearchHandler(database, cfg.AdminKey, true)
 	similarH := handler.NewSimilarHandler(database, cfg.AdminKey, true)
 	profileH := handler.NewProfileHandler(database, cfg.AdminKey)
-
 	return handler.NewRouter(adminH, editsH, hbH, statsH, searchH, similarH, profileH), cleanup, nil
 }

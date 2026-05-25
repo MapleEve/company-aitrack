@@ -13,7 +13,7 @@
 
     <groupId>com.aitrack</groupId>
     <artifactId>aitrack-server</artifactId>
-    <version>1.0.0</version>
+    <version>1.6.3</version>
     <packaging>jar</packaging>
     <name>aitrack-server</name>
     <description>Hardened AI coding edit telemetry server</description>

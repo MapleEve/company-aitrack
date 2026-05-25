@@ -44,10 +44,7 @@ pub fn parse(stdin_json: &str) -> Option<Record> {
 
     let diff = compute_diff(&old_string, &new_string);
 
-    let provider = match std::env::var("ANTHROPIC_BASE_URL") {
-        Ok(url) if url.contains("bigmodel.cn") => "bigmodel.cn".to_string(),
-        _ => "anthropic".to_string(),
-    };
+    let provider = "claude".to_string();
 
     let model = payload
         .model
@@ -110,7 +107,7 @@ mod tests {
         // old has 1 line, new has 2 lines → removed=1, added=2
         assert_eq!(rec.added_lines, 2);
         assert_eq!(rec.removed_lines, 1);
-        assert_eq!(rec.provider, "anthropic");
+        assert_eq!(rec.provider, "claude");
     }
 
     #[test]

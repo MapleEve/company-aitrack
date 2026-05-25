@@ -99,6 +99,28 @@ pub fn increment_retry(conn: &Connection, ids: &[i64]) -> Result<()> {
     Ok(())
 }
 
+/// Backfill repo metadata into unsynced records whose `repo_url` is empty.
+///
+/// Called after every capture when the current git context is valid.
+/// Unsynced records with an empty `repo_url` were captured before git info
+/// was available (e.g. outside a repo, or git shelled out and returned "").
+/// Backfilling allows them to be picked up by `fetch_unsynced` which filters
+/// `repo_url != ''`. Synced records are never touched.
+pub fn backfill_repo_info(
+    conn: &Connection,
+    repo_url: &str,
+    branch: &str,
+    current_sha: &str,
+    token_key: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE records SET repo_url = ?1, branch = ?2, current_sha = ?3
+         WHERE synced = 0 AND (repo_url = '' OR repo_url IS NULL) AND token_key = ?4",
+        params![repo_url, branch, current_sha, token_key],
+    )?;
+    Ok(())
+}
+
 pub fn pending_count(conn: &Connection, token_key: &str) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM records WHERE synced = 0 AND token_key = ?1",
@@ -187,6 +209,23 @@ pub fn set_last_heartbeat(conn: &Connection, ts: i64) -> Result<()> {
 
 pub fn ensure_kv_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(super::schema::CREATE_KV_TABLE_SQL)?;
+    Ok(())
+}
+
+/// Get an integer timestamp from the KV store by key.
+pub fn get_kv(conn: &Connection, key: &str) -> Option<i64> {
+    conn.query_row("SELECT value FROM kv WHERE key = ?1", params![key], |row| {
+        row.get(0)
+    })
+    .ok()
+}
+
+/// Set an integer timestamp in the KV store (upsert).
+pub fn set_kv(conn: &Connection, key: &str, value: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO kv (key, value) VALUES (?1, ?2)",
+        params![key, value],
+    )?;
     Ok(())
 }
 

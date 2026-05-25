@@ -15,7 +15,7 @@
 
 集成测试 (Integration)
   ├── 完整 Spring 上下文 + H2 内存库（Java）
-  ├── 真实 PostgreSQL（Go，需 AITRACK_TEST_DB_URL 或 DATABASE_URL）
+  ├── testapp + in-memory SQLite（Go 单元/集成测试）
   └── HTTP 端到端（mock server / MockMvc）
 
 E2E 测试
@@ -31,7 +31,7 @@ E2E 测试
 
 | 组件 | 测量方式 | 当前覆盖率（2026-05-20） | 失败行为 |
 |---|---|---|---|
-| **Rust 客户端** | `cargo llvm-cov --summary-only` → 解析 `TOTAL` 行 | **90.71% 行覆盖** | 低于 90% 构建失败 |
+| **Rust 客户端** | `cargo llvm-cov --summary-only` → 解析 `TOTAL` 行 | **90.71% 行覆盖**（v1.6.3：252 测试） | 低于 90% 构建失败 |
 | **Java 服务端** | JaCoCo `LINE COVEREDRATIO >= 0.90`（pom.xml `verify` 阶段） | **LINE ≥ 90%**（mvn verify） | 低于 90% 构建失败 |
 | **Go 服务端** | `go tool cover -func cover.out` → 解析 `total` 行 | **95.3% total** | 低于 90% 构建失败 |
 
@@ -90,9 +90,9 @@ codecov -f target/site/jacoco/jacoco.xml -F server-java
 
 ```bash
 cd server-go
-go test ./... -coverprofile=cover.out -covermode=atomic -count=1 -coverpkg=./internal/...
-go tool cover -func cover.out
-codecov -f cover.out -F server-go
+go test ./... -coverprofile=coverage.out -covermode=atomic
+go tool cover -func coverage.out
+codecov -f coverage.out -F server-go
 ```
 
 ---
@@ -287,6 +287,9 @@ cd e2e && go test ./... -run TestReal -v
 | `test_synced_flag_update` | 上传后 synced=1, synced_at 非空 |
 | `test_retry_count_increment` | rejected 后 retry_count+1 |
 | `test_upload_filter_retry_limit` | retry_count≥5 的记录不参与上传 |
+| `test_backfill_repo_info_fills_empty` | backfill_repo_info 补填 repo_url 为空的未同步记录 |
+| `test_backfill_repo_info_skips_synced` | backfill_repo_info 不修改 synced=1 的已上报记录 |
+| `test_backfill_repo_info_skips_nonempty` | backfill_repo_info 不覆盖已有 repo_url 的记录 |
 
 ### 客户端 init 模块
 
@@ -297,6 +300,11 @@ cd e2e && go test ./... -run TestReal -v
 | `test_remove_claude_hook` | remove 后钩子条目不存在 |
 | `test_remove_nonexistent_hook_ok` | 钩子不存在时 remove 不报错 |
 | `test_remove_cleans_empty_container` | 移除后空容器被清理 |
+| `test_auto_detect_installs_found_tools` | 无工具标志时自动检测 ~/.claude/~/.codex/~/.cursor 并安装所有已找到的工具钩子 |
+| `test_auto_detect_no_tools_found` | 未检测到任何工具目录时报错退出（不静默成功） |
+| `test_claude_posttooluse_conflict_warning` | `init --claude` 检测到已有非 aitrack PostToolUse 钩子时向 stderr 输出警告 |
+| `test_cursor_dual_registration` | Cursor 钩子同时写入 `postToolUse` 和 `afterFileEdit` 两个数组 |
+| `test_remove_cursor_hook_cleans_both_arrays` | `remove_cursor_hook` 同时清理 `postToolUse` 和 `afterFileEdit` 两个数组 |
 
 ### Java HmacUtil
 
@@ -423,7 +431,7 @@ class EditIntegrationTest {
 │  → COPY .jar → eclipse-temurin:17-jre                  │
 └───────────────────────────────────────────────────────┘
 ┌───────────────────────────────────────────────────────┐
-│  Dockerfile.server-go (golang:1.25)                    │
+│  Dockerfile.server-go (golang:1.24)                    │
 │    go mod download                                      │
 │    go test ./... -coverprofile=cover.out               │
 │    go tool cover → check total ≥ 90%                   │
@@ -435,7 +443,7 @@ class EditIntegrationTest {
 ### 本机验证命令
 
 ```bash
-cd company-aitrack
+cd aitrack
 
 # 客户端
 docker build -f docker/Dockerfile.client -t aitrack-client:latest . 2>&1 | tail -20
@@ -486,26 +494,13 @@ jobs:
 
   test-server-go:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: paradedb/paradedb:latest
-        env:
-          POSTGRES_USER: aitrack
-          POSTGRES_PASSWORD: aitrack_secret
-          POSTGRES_DB: aitrack_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
-      - run: go test ./... -coverprofile=cover.out -covermode=atomic -coverpkg=./internal/...
+          go-version: '1.24'
+      - run: go test ./... -coverprofile=coverage.out
         working-directory: server-go
-        env:
-          DATABASE_URL: postgres://aitrack:aitrack_secret@localhost:5432/aitrack_test
       - uses: codecov/codecov-action@v4
         with:
           files: server-go/coverage.out
@@ -517,5 +512,5 @@ jobs:
 ## 关键注意事项
 
 - **Java 构建必须在 Docker 内进行**：本机无 JDK 17/Maven，`Dockerfile.server-java` 使用 `maven:3.9-eclipse-temurin-17` 镜像完成全部构建和测试。
-- **Go 测试需要 PostgreSQL 实例**：通过 `DATABASE_URL` 环境变量指定。CI 中使用 `paradedb/paradedb` service container；本地运行需自行启动 PostgreSQL，`CGO_ENABLED=0` 构建（pgx/v5 是纯 Go，无需 cgo）。
+- **Go 服务端无 CGO 依赖**：`modernc.org/sqlite` 已于 v1.6.1 移除，PostgreSQL 驱动 pgx 为纯 Go 实现；`CGO_ENABLED=0` 构建，无跨平台链接问题。
 - **E2E 不修改真实编辑器配置**：所有操作在容器隔离环境中进行，不触碰 `~/.aitrack/`、`~/.claude/` 等目录。

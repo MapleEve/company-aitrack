@@ -21,7 +21,6 @@
 | **管理员** | 查看团队 AI 用量 | `GET /api/v1/ai-track/stats` — 按维度统计 |
 | **管理员** | 排查可疑设备 / 钩子状态 | `GET /api/v1/ai-track/devices` — 设备心跳列表 |
 | **管理员** | 原始记录审计 | `GET /api/v1/ai-track/edits` — 分页查询 |
-| **管理员** | 查看开发者 AI 使用画像 | `GET /api/v1/ai-track/profiles/{token_key}` — 开发者使用画像 |
 
 ### 步骤一：启动服务端
 
@@ -30,8 +29,8 @@
 export AITRACK_SECRET_KEY=$(openssl rand -base64 32)
 export AITRACK_ADMIN_KEY=$(openssl rand -hex 32)
 
-# 用 Docker Compose 启动 Java 服务端（H2 嵌入式数据库，适合快速体验）
-docker compose -f docker/docker-compose.yml --profile java up -d
+# 用 Docker Compose 启动（H2 嵌入式数据库，适合快速体验）
+docker-compose up -d --build
 
 # 验证服务健康
 curl http://localhost:8080/actuator/health
@@ -130,8 +129,8 @@ X-AiTrack-Signature = lowercase_hex(
 | 管理 | POST | `/admin/tokens` | 签发新 token |
 | 编辑 | POST | `/api/v1/ai-track/edits` | 批量上报编辑记录 |
 | 编辑 | GET | `/api/v1/ai-track/edits` | 分页查询编辑记录 |
-| 编辑 | GET | `/api/v1/ai-track/edits/search` | BM25 full-text search (ParadeDB mode only) |
-| 编辑 | POST | `/api/v1/ai-track/edits/similar` | Vector ANN similarity search (ParadeDB mode only) |
+| 编辑 | GET | `/api/v1/ai-track/edits/search` | BM25 全文检索（仅 PostgreSQL/ParadeDB） |
+| 编辑 | POST | `/api/v1/ai-track/edits/similar` | 向量 ANN 相似搜索（仅 PostgreSQL/ParadeDB） |
 | 心跳 | POST | `/api/v1/ai-track/heartbeat` | 设备心跳上报 |
 | 统计 | GET | `/api/v1/ai-track/stats` | 聚合统计 |
 | 设备 | GET | `/api/v1/ai-track/devices` | 设备列表 |
@@ -240,7 +239,7 @@ curl -s -X POST http://localhost:8080/admin/tokens \
     {
       "tool": "claude",
       "tool_version": "claude-code",
-      "provider": "anthropic",
+      "provider": "claude",
       "model": null,
       "session_id": "sess-abc123",
       "repo_url": "git@github.com:org/repo.git",
@@ -266,7 +265,7 @@ curl -s -X POST http://localhost:8080/admin/tokens \
 |------|------|------|------|
 | `tool` | string | 否 | `claude` \| `codex` \| `cursor` |
 | `tool_version` | string | 是 | 如 `claude-code` |
-| `provider` | string | 否 | 如 `anthropic` |
+| `provider` | string | 否 | agent 框架名，与 tool 字段相同（如 `claude` / `codex` / `cursor`） |
 | `model` | string | 是 | 模型名称，客户端自报，不可信 |
 | `session_id` | string | 否 | AI 工具的会话标识 |
 | `repo_url` | string | 否 | git remote origin URL |
@@ -350,7 +349,7 @@ echo "record_sig: $RECORD_SIG"
 ```bash
 # 先计算签名所需的时间戳和请求体哈希
 TS=$(date +%s)
-BODY='{"device_id":"550e8400-e29b-41d4-a716-446655440000","client_version":"1.0.0","edits":[{"tool":"claude","tool_version":"claude-code","provider":"anthropic","model":null,"session_id":"sess-abc123","repo_url":"git@github.com:org/repo.git","branch":"main","current_sha":"a1b2c3d4e5f6","file_path":"src/main.rs","added_lines":12,"removed_lines":3,"diff_hunk":"@@ -10,7 +10,16 @@\n ...","metadata":null,"timestamp":"2026-05-17T10:21:00Z","device_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"MacBook-Pro.local","record_sig":"<用上方脚本预先计算>"}]}'
+BODY='{"device_id":"550e8400-e29b-41d4-a716-446655440000","client_version":"1.0.0","edits":[{"tool":"claude","tool_version":"claude-code","provider":"claude","model":null,"session_id":"sess-abc123","repo_url":"git@github.com:org/repo.git","branch":"main","current_sha":"a1b2c3d4e5f6","file_path":"src/main.rs","added_lines":12,"removed_lines":3,"diff_hunk":"@@ -10,7 +10,16 @@\n ...","metadata":null,"timestamp":"2026-05-17T10:21:00Z","device_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"MacBook-Pro.local","record_sig":"<用上方脚本预先计算>"}]}'
 
 BODY_SHA256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hex | awk '{print $2}')
 # credential = POST /admin/tokens 返回的 credential 字段值
@@ -622,7 +621,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=hostname" \
 ]
 ```
 
-> 同一 `token_key` 出现多个不同 `hostname` 是正常情况（CONTRACT.md v1.1 明确支持一个 token 用于多台机器）。若某个 hostname 数据量异常偏高，可通过 `/devices` 进一步核查该设备的钩子状态。
+> 同一 `token_key` 出现多个不同 `hostname` 是正常情况（CONTRACT.md v1.2 明确支持一个 credential 用于多台机器）。若某个 hostname 数据量异常偏高，可通过 `/devices` 进一步核查该设备的钩子状态。
 
 ---
 
@@ -702,21 +701,21 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 
 ---
 
-## `GET /api/v1/ai-track/edits/search` — BM25 Full-Text Search
+## `GET /api/v1/ai-track/edits/search` — BM25 全文检索
 
-**Auth**: `X-Admin-Key` header  
-**Availability**: PostgreSQL/ParadeDB mode only. Returns `501 Not Implemented` in H2/SQLite mode.
+**鉴权**：`X-Admin-Key` 请求头  
+**可用性**：仅 PostgreSQL/ParadeDB 模式。H2/SQLite 模式返回 `501 Not Implemented`。
 
-### Query Parameters
+### 查询参数
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `q` | string | ✓ | — | Search query text |
-| `limit` | int | ✗ | 20 | Max results (max 100) |
-| `token_key` | string | ✗ | — | Filter to a specific developer |
-| `repo` | string | ✗ | — | Filter to a specific repository |
+| 参数 | 类型 | 是否必填 | 默认值 | 说明 |
+|------|------|----------|--------|------|
+| `q` | string | ✓ | — | 检索文本 |
+| `limit` | int | ✗ | 20 | 最大结果数（上限 100） |
+| `token_key` | string | ✗ | — | 按开发者过滤 |
+| `repo` | string | ✗ | — | 按仓库过滤 |
 
-### Response `200 OK`
+### 响应 `200 OK`
 
 ```json
 {
@@ -738,42 +737,42 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 }
 ```
 
-`score` is the BM25 relevance score (higher = more relevant). Results are returned in descending score order.
+`score` 为 BM25 相关性分数（越高越相关），结果按分数降序返回。
 
-### Errors
+### 错误码
 
-| Status | Condition |
-|--------|-----------|
-| 400 | `q` is missing or blank |
-| 403 | Missing or invalid `X-Admin-Key` |
-| 501 | Server not running in PostgreSQL/ParadeDB mode |
+| 状态码 | 触发条件 |
+|--------|----------|
+| 400 | `q` 缺失或为空 |
+| 403 | `X-Admin-Key` 缺失或无效 |
+| 501 | 服务端未使用 PostgreSQL/ParadeDB 模式 |
 
 ---
 
-## `POST /api/v1/ai-track/edits/similar` — Vector ANN Similarity Search
+## `POST /api/v1/ai-track/edits/similar` — 向量 ANN 相似搜索
 
-**Auth**: `X-Admin-Key` header  
-**Availability**: PostgreSQL/ParadeDB mode only. Returns `501 Not Implemented` in H2/SQLite mode.
+**鉴权**：`X-Admin-Key` 请求头  
+**可用性**：仅 PostgreSQL/ParadeDB 模式。H2/SQLite 模式返回 `501 Not Implemented`。
 
-### Request Body
+### 请求体
 
 ```json
 {
-  "embedding": [0.023, -0.147, 0.891, "... 381 more floats"],
+  "embedding": [0.023, -0.147, 0.891, "...共 384 个浮点数"],
   "limit": 10,
   "token_key": "tk_xxxx",
   "repo": "my-org/backend"
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `embedding` | float[384] | ✓ | Query vector in all-MiniLM-L6-v2 space (384 dimensions) |
-| `limit` | int | ✗ | Max results (default 10, max 50) |
-| `token_key` | string | ✗ | Filter to a specific developer |
-| `repo` | string | ✗ | Filter to a specific repository |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `embedding` | float[384] | ✓ | 查询向量（all-MiniLM-L6-v2，384 维） |
+| `limit` | int | ✗ | 最大结果数（默认 10，上限 50） |
+| `token_key` | string | ✗ | 按开发者过滤 |
+| `repo` | string | ✗ | 按仓库过滤 |
 
-### Response `200 OK`
+### 响应 `200 OK`
 
 ```json
 {
@@ -793,35 +792,38 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 }
 ```
 
-`distance` is cosine distance [0, 2]. Lower means more similar. Only records with non-null `embedding` column are returned.
+`distance` 为余弦距离 [0, 2]，越小越相似。仅 `embedding` 列非空的记录参与检索。
 
-### Errors
+### 错误码
 
-| Status | Condition |
-|--------|-----------|
-| 400 | `embedding` missing, not 384-dimensional, or `limit` > 50 |
-| 403 | Missing or invalid `X-Admin-Key` |
-| 501 | Server not in PostgreSQL/ParadeDB mode, or no embeddings stored |
+| 状态码 | 触发条件 |
+|--------|----------|
+| 400 | `embedding` 缺失、维度非 384，或 `limit` > 50 |
+| 403 | `X-Admin-Key` 缺失或无效 |
+| 501 | 非 PostgreSQL/ParadeDB 模式，或 embedding 列为空 |
 
 ---
 
-## Phase 3: Developer Usage Profiles
+## Phase 3：开发者使用画像
 
 ### GET /api/v1/ai-track/profiles/{token_key}
 
-Returns the AI tool usage profile for a developer, computed on-demand from `edit_records`.
+返回指定开发者的 AI 工具使用画像，按需从 `edit_records` 表计算。
 
-**Auth**: `X-Admin-Key` header.
+**鉴权**：`X-Admin-Key` 请求头（与其他 admin 端点一致）。
 
-**Path parameter**: `token_key` (string) — token identifier, format `aitrack_XXXXX`
+**路径参数**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `token_key` | string | 凭据的 token 标识，格式 `aitrack_XXXXX` |
 
-**Example**:
+**请求示例**：
 ```bash
 curl -H "X-Admin-Key: $AITRACK_ADMIN_KEY" \
   http://localhost:8080/api/v1/ai-track/profiles/aitrack_abc12ef90
 ```
 
-**Response (200)**:
+**响应（200 OK）**：
 ```json
 {
   "token_key": "aitrack_abc12…ef90",
@@ -835,11 +837,18 @@ curl -H "X-Admin-Key: $AITRACK_ADMIN_KEY" \
   "frequency": {
     "daily_avg_30d": 8.3,
     "weekly_avg_12w": 41.2,
-    "daily_trend": [{"date": "2026-05-13", "count": 12}]
+    "daily_trend": [
+      {"date": "2026-05-13", "count": 12},
+      {"date": "2026-05-14", "count": 5}
+    ]
   },
   "depth": {
-    "avg_lines": 47.2, "p50_lines": 18, "p90_lines": 142,
-    "small_count": 89, "medium_count": 112, "large_count": 46,
+    "avg_lines": 47.2,
+    "p50_lines": 18,
+    "p90_lines": 142,
+    "small_count": 89,
+    "medium_count": 112,
+    "large_count": 46,
     "comment_density": 0.12
   },
   "languages": {"Python": 120, "TypeScript": 80, "Go": 35, "Java": 12},
@@ -848,4 +857,23 @@ curl -H "X-Admin-Key: $AITRACK_ADMIN_KEY" \
 }
 ```
 
-**Errors**: 403 (bad key), 404 (token not found)
+**字段说明**：
+| 字段 | 说明 |
+|------|------|
+| `frequency.daily_avg_30d` | 过去 30 天每日平均编辑次数 |
+| `frequency.weekly_avg_12w` | 过去 12 周每周平均编辑次数 |
+| `frequency.daily_trend` | 过去 30 天各日编辑次数列表（无编辑的日期不包含） |
+| `depth.avg_lines` | 每次编辑变更行数均值 |
+| `depth.p50_lines` | 变更行数中位数 |
+| `depth.p90_lines` | 变更行数 90 百分位 |
+| `depth.small_count` | 单次编辑总变更行数 < 10 的记录数 |
+| `depth.medium_count` | 10 ≤ 总变更行数 ≤ 100 的记录数 |
+| `depth.large_count` | 总变更行数 > 100 的记录数 |
+| `scenarios` | 按 `file_path` 启发式分类的场景分布（test/docs/config/feature/other） |
+| `tools` | 按 AI 工具类型统计的使用次数 |
+
+**错误响应**：
+| 状态码 | 条件 |
+|--------|------|
+| 403 | `X-Admin-Key` 缺失或不匹配 |
+| 404 | 该 `token_key` 无任何记录 |

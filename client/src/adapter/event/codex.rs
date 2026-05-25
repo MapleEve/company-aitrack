@@ -7,6 +7,9 @@ use serde_json::Value;
 struct CodexToolInput {
     old_string: Option<String>,
     new_string: Option<String>,
+    /// Plural array form sent by real Codex hooks (preferred).
+    file_paths: Option<Vec<String>>,
+    /// Singular form for backward compatibility with older hook payloads.
     file_path: Option<String>,
 }
 
@@ -45,7 +48,12 @@ pub fn parse(stdin_json: &str) -> Option<Record> {
     let ti = payload.tool_input?;
     let old_string = ti.old_string.unwrap_or_default();
     let new_string = ti.new_string.unwrap_or_default();
-    let file_path = ti.file_path.unwrap_or_default();
+    // Prefer plural file_paths[0] (real Codex hook format); fall back to singular.
+    let file_path = ti
+        .file_paths
+        .and_then(|fps| fps.into_iter().next())
+        .or(ti.file_path)
+        .unwrap_or_default();
 
     let diff = compute_diff(&old_string, &new_string);
 
@@ -59,7 +67,7 @@ pub fn parse(stdin_json: &str) -> Option<Record> {
         id: 0,
         tool: "codex".to_string(),
         tool_version: Some("codex-cli".to_string()),
-        provider: "openai".to_string(),
+        provider: "codex".to_string(),
         model: payload.model,
         session_id: payload.session_id.unwrap_or_default(),
         repo_url: String::new(),
@@ -125,7 +133,7 @@ mod tests {
             .build_json();
         let rec = parse(&json).expect("valid codex Edit should parse");
         assert_eq!(rec.tool, "codex");
-        assert_eq!(rec.provider, "openai");
+        assert_eq!(rec.provider, "codex");
         assert_eq!(rec.file_path, "src/lib.rs");
         assert_eq!(rec.added_lines, 1);
         assert_eq!(rec.removed_lines, 1);
@@ -161,6 +169,46 @@ mod tests {
             .build_json();
         let rec = parse(&json).expect("apply_patch tool should be accepted");
         assert_eq!(rec.tool, "codex");
+    }
+
+    #[test]
+    fn parse_plural_file_paths_preferred_over_singular() {
+        // Real Codex hook sends file_paths[] array; adapter must use first element.
+        let json = serde_json::json!({
+            "hook_event_name": "postToolUse",
+            "tool_name": "Edit",
+            "conversation_id": "sess-plural",
+            "model": "gpt-4o",
+            "tool_input": {
+                "old_string": "a\n",
+                "new_string": "b\n",
+                "file_paths": ["src/plural.rs", "src/other.rs"],
+                "file_path": "src/singular.rs"
+            }
+        })
+        .to_string();
+        let rec = parse(&json).expect("should parse with file_paths plural");
+        // Plural form takes priority; first element is used.
+        assert_eq!(rec.file_path, "src/plural.rs");
+    }
+
+    #[test]
+    fn parse_singular_file_path_fallback_when_no_plural() {
+        // When only singular file_path is present, it should still work.
+        let json = serde_json::json!({
+            "hook_event_name": "postToolUse",
+            "tool_name": "Edit",
+            "conversation_id": "sess-singular",
+            "model": "gpt-4o",
+            "tool_input": {
+                "old_string": "a\n",
+                "new_string": "b\n",
+                "file_path": "src/singular-only.rs"
+            }
+        })
+        .to_string();
+        let rec = parse(&json).expect("should parse with singular file_path fallback");
+        assert_eq!(rec.file_path, "src/singular-only.rs");
     }
 
     #[test]

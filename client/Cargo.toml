@@ -1,6 +1,6 @@
 [package]
 name = "aitrack"
-version = "1.6.1"
+version = "1.6.3"
 edition = "2021"
 
 [lib]
@@ -10,6 +10,9 @@ path = "src/lib.rs"
 [[bin]]
 name = "aitrack"
 path = "src/main.rs"
+
+[features]
+default = []
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
