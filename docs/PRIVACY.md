@@ -1,6 +1,6 @@
 # aitrack 隐私说明 / aitrack Privacy Notice
 
-版本：v1.1 · 最后更新：2026-05-19
+版本：v1.6 · 最后更新：2026-06-16
 
 ---
 
@@ -8,7 +8,7 @@
 
 本文档说明 aitrack 收集哪些数据、收集原因、存储位置、可见范围，以及您对数据的控制权。
 
-**aitrack 是什么**：一个自托管的 AI 编码治理平台。它钩入来自 AI 编码工具（Claude Code、Codex CLI、Cursor）的文件编辑事件，记录这些工具对代码库所做的变更。目标是为团队提供 AI 工具在开发中实际使用情况的客观数据。
+**aitrack 是什么**：一个通用、自托管、开源的员工 AI 编码监控与治理平台。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可记录这些工具对代码库所做的变更。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线；只有在对应本地事件能力落地后才会生成编辑证据。
 
 **本文档的目的**：任何记录开发者行为的工具都应当对其行为保持透明。这不是法律免责声明——而是对"我的数据去哪了？"这一问题的直接回答。
 
@@ -31,12 +31,16 @@
 | **分支（branch）** | 当前 Git 分支名 | 区分主干与功能分支 | 本地 SQLite + 服务端数据库 |
 | **提交哈希（current_sha）** | 编辑时的 HEAD commit SHA | 将编辑关联到特定代码快照 | 本地 SQLite + 服务端数据库 |
 | **主机名（hostname）** | 机器的操作系统 hostname，如 `MacBook-Pro.local` | 在同一凭证跨多台机器使用时识别来源机器；不用于访问控制 | 本地 SQLite + 服务端数据库 |
-| **AI 工具类型（tool）** | `claude`、`codex`、`cursor` 之一 | 按工具区分使用模式 | 本地 SQLite + 服务端数据库 |
+| **AI 工具类型（tool）** | EditRecord 中当前来自 `claude`、`codex`、`cursor` native edit adapter；heartbeat/status 可包含其他注册 agent key | 按工具区分使用模式 | 本地 SQLite + 服务端数据库 |
 | **Token 标识符（token_key）** | 管理员分配的凭证中的 token 部分，格式 `aitrack_<hex>` | 将记录归因到特定开发者席位 | 仅本地 SQLite（用于本地过滤，不随上传 payload 发送） |
 | **设备 ID（device_id）** | 首次运行时生成的 UUIDv4，持久化至本地配置 | 区分使用同一凭证的多台设备 | 本地 SQLite + 服务端数据库 |
 | **记录签名（record_sig）** | 绑定以上所有字段的 HMAC-SHA256 签名 | 检测本地记录是否被篡改或伪造 | 本地 SQLite + 服务端数据库 |
 
 **关于 diff_hunk 的说明**：这是变更部分的差异，不是完整文件。如果 AI 修改了一个函数，您得到的是该函数的前后对比——文件中的其他内容不会被包含。差异算法使用 Myers/LCS 最小编辑距离，因此 diff 尽可能小。
+
+**数据域边界**：上表描述的是 `EditRecord` 编辑证据域。usage rollup / snapshot 属于标量用量域，可包含请求数、token 数、成本估算或本地客户端活跃统计。token-only 或 usage-only 数据不能伪装成 `EditRecord`，也不会生成 diff、行数或 `record_sig` 编辑证据。
+
+**本地用量来源**：aitrack 可从本机日志、JSONL、SQLite、缓存和本地客户端状态中发现用量来源，并在本地状态允许时自动发现凭证或入口。用户不需要手动粘贴第三方 token 才能接入本地用量来源。
 
 ---
 
@@ -47,7 +51,7 @@
 | 不收集的数据 | 技术保障方式 |
 |-------------|-------------|
 | **完整文件内容** | 仅存储 `diff_hunk`（变更部分）。捕获流程不读取或存储工具钩子 payload 之外的任何内容。 |
-| **Prompt 文本** | v1.1 至 Phase 3：完全不收集。捕获入口仅处理文件编辑事件 JSON；prompt 不出现在此 payload 中。 |
+| **完整 Prompt 文本** | `prompt_summary` 仅在对应本地 prompt hook 已安装时产生；只保存内容无关的意图标签，不保存 prompt 原文、prompt 摘要或 response 内容。 |
 | **密码、私钥、证书** | 捕获流程包含文件路径合理性检查，自动跳过匹配以下模式的文件：`*.key`、`*.pem`、`*.pfx`、`*.p12`、`*.env`、`*secret*`、`*password*` 等敏感文件名。这些路径不会生成任何记录。 |
 | **AI 对话历史** | aitrack 仅钩入文件编辑事件。Claude Code、Codex 或 Cursor 的对话历史不经过 aitrack。 |
 | **凭证中的 HMAC secret 部分** | 凭证由 `<token>-<hmac_secret>` 组成。`hmac_secret` 仅在本地用于计算签名，从不通过网络发送。 |
@@ -62,7 +66,7 @@
 - 目录：`~/.aitrack/`
 - 数据库：`~/.aitrack/records.db`（SQLite）
   - 文件权限：0600——仅文件所有者可读
-  - 所有记录在上传前写入此处；可通过 `aitrack inspect` 查看
+  - `EditRecord` 在上传前写入此处；可通过 `aitrack inspect` 查看
 - 配置文件：`~/.aitrack/config.toml`
   - 文件权限：0600
   - 包含：API URL、凭证（token + hmac_secret 合并值）、设备 ID
@@ -96,7 +100,7 @@
 
 ## 6. 数据保留 / Data Retention
 
-**当前版本（v1.1）没有自动过期机制。** 上传到服务端的记录会一直保留，直到显式删除。
+**当前版本没有自动过期机制。** 上传到服务端的记录会一直保留，直到显式删除。
 
 清理方法：
 
@@ -130,17 +134,15 @@ aitrack remove --cursor          # 移除 Cursor 钩子
 
 **删除数据 / Delete your data：** 作为自托管运营方，您对本地 SQLite 文件（`~/.aitrack/records.db`）和服务端数据库均有完全访问权限。您可以直接删除记录，或请管理员执行。没有锁定，也没有数据保留在您的基础设施之外。
 
-**完全停止采集 / Stop collection entirely：** 卸载所有钩子（`aitrack remove --claude --codex --cursor`）或删除 aitrack 二进制文件。数据库中已有的记录不受影响，需手动删除。
+**完全停止采集 / Stop collection entirely：** 卸载已安装钩子（`aitrack remove --claude --codex --cursor`，或对注册工具使用 `aitrack remove --tool <name>`）或删除 aitrack 二进制文件。数据库中已有的记录不受影响，需手动删除。
 
 ---
 
 ## 8. 关于 Prompt 数据的说明 / A Note on Prompt Data
 
-**当前版本（v1.1，Phase 1–3）：完全不收集 prompt。**
+`prompt_summary` 仅在对应本地 prompt hook 已安装时产生。当前 native 能力仅覆盖 Claude Code 的 `UserPromptSubmit` 钩子：客户端只保存内容无关的意图标签，并将其作为可选字段附加到编辑记录，用于 `prompt_patterns` 画像维度。
 
-aitrack 捕获钩子在文件编辑事件完成后触发。此时 prompt 已不在处理流程中。客户端代码不读取或存储任何 prompt 文本。
-
-**Phase 4（尚未实现）：** 计划收集 prompt 摘要哈希——一种用于语义去重分析的单向指纹——而非 prompt 文本本身。这尚未包含在任何已发布版本中。在实现之前，本文档将提前更新，并提前通知用户。
+aitrack 不采集完整 AI 对话历史，不把完整 prompt 文本作为默认数据面。其他 agent 的 prompt 或用量指标如只能提供 token-only / usage-only 信号，应进入 usage rollup / snapshot 域，而不是编辑证据域。
 
 ---
 
@@ -160,7 +162,7 @@ aitrack 捕获钩子在文件编辑事件完成后触发。此时 prompt 已不�
 
 **限流 / Rate limiting：** 服务端对每个（token, file_path）对每小时限制 30 条记录，防止通过编辑次数虚增来刷数据。
 
-**心跳 / Heartbeat：** 客户端定期向服务端上报钩子安装状态，让管理员可以检测钩子是否被悄悄移除（强化点 H3）。
+**心跳 / Heartbeat：** 客户端定期向服务端上报 native hook 与注册 agent 状态，让管理员可以检测钩子被移除或本地 agent 状态异常（强化点 H3）。
 
 **本地数据库权限 / Local database permissions：** `~/.aitrack/records.db` 和 `~/.aitrack/config.toml` 均以 0600 权限创建。在多用户机器上，其他操作系统用户无法读取这些文件。
 
@@ -177,4 +179,4 @@ aitrack 捕获钩子在文件编辑事件完成后触发。此时 prompt 已不�
 
 ---
 
-*本文档随软件版本一同维护。如果采集范围发生变更——尤其是计划中的 Phase 4 prompt 摘要哈希——本文档将在版本发布前更新。*
+*本文档随软件版本一同维护。如果采集范围发生变更，本文档将在版本发布前更新。*

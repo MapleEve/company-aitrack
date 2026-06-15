@@ -89,6 +89,13 @@ public interface EditRecordRepository extends JpaRepository<EditRecordEntity, Lo
            "MAX(e.receivedAt) FROM EditRecordEntity e GROUP BY e.hostname")
     java.util.List<Object[]> aggregateByHostname();
 
+    @Query("SELECT e.tool, COUNT(e), SUM(e.addedLines), SUM(e.removedLines), " +
+           "SUM(CASE WHEN e.status = 'ACCEPTED' THEN 1 ELSE 0 END), " +
+           "SUM(CASE WHEN e.status = 'FLAGGED' THEN 1 ELSE 0 END), " +
+           "SUM(CASE WHEN e.status = 'REJECTED' THEN 1 ELSE 0 END), " +
+           "MAX(e.receivedAt) FROM EditRecordEntity e GROUP BY e.tool")
+    java.util.List<Object[]> aggregateByTool();
+
     // BM25 full-text search via ParadeDB — only functional on the postgres profile.
     // Will fail if invoked against H2; not wired to any controller yet (Phase DB-2).
     @Query(value = "SELECT * FROM edit_records WHERE diff_hunk ||| :query ORDER BY paradedb.score(id) DESC LIMIT :limit", nativeQuery = true)

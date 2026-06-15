@@ -83,7 +83,7 @@ func TestBuildHeartbeatRequest(t *testing.T) {
 	if hb.Hooks == nil {
 		t.Error("default hooks should not be nil")
 	}
-	if !hb.Hooks.Claude {
+	if !hb.Hooks["claude"] {
 		t.Error("default hook claude=true")
 	}
 }

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# aitrack 🛡️
+# aitrack self-hosted AI coding governance 🛡️
 
 > *「Bring AI coding behavior into trusted auditing — give your engineering effectiveness team real data.」*
 
@@ -19,7 +19,7 @@
 
 <br>
 
-aitrack installs lightweight hooks into Claude Code, Codex CLI, and Cursor,<br>generating HMAC-signed records at every edit event,<br>filtering noise and tampering through a 10-step server validation chain,<br>so engineering effectiveness teams get trustworthy, auditable, quantifiable AI usage data.
+aitrack is a general, self-hosted, open-source monitoring and governance tool for employee AI coding activity.<br>It provides native edit hook adapters for Claude Code, Codex CLI, and Cursor,<br>generates HMAC-signed edit evidence at every supported edit event,<br>and manages additional AI coding tools through a dynamic agent registry, heartbeat status, and local usage sources.
 
 <br>
 
@@ -35,7 +35,7 @@ aitrack installs lightweight hooks into Claude Code, Codex CLI, and Cursor,<br>g
   <img src="./docs/assets/readme/problem.en.png" alt="Problem" width="100%" />
 </p>
 
-AI coding tools (Claude Code, Codex CLI, Cursor) have entered engineering teams at scale, creating three governance challenges that are hard to ignore:
+AI coding tools have entered engineering teams at scale, creating three governance challenges that are hard to ignore:
 
 | Pain Point | Reality |
 |------------|---------|
@@ -54,7 +54,7 @@ AI coding tools (Claude Code, Codex CLI, Cursor) have entered engineering teams 
 | Role | Core Need |
 |------|-----------|
 | **Engineering Effectiveness Teams** | Objectively quantify actual AI tool output, identify low-efficiency usage patterns, support monthly effectiveness reports |
-| **Engineering Managers** | Real-time visibility into hook installation status and suspicious data flags — no longer dependent on developer self-reporting |
+| **Engineering Managers** | Real-time visibility into native hook and registered agent status plus suspicious data flags — no longer dependent on developer self-reporting |
 | **Privacy-conscious · Self-hosting Teams** | All data stays on self-hosted infrastructure, never passes through any third-party cloud service, meeting compliance requirements |
 
 ---
@@ -75,6 +75,13 @@ aitrack consists of three independent components communicating via Protocol v1.2
 - `POST /admin/tokens` returns a single `credential` field (`<token>-<hmac_secret>`), simplifying issuance and client configuration
 - `hostname` field (new in v1.1) makes activity from a single token across multiple machines reviewable per device
 - Local client database `~/.aitrack/records.db` permissions 0600, `hmac_secret` encrypted with AES-256-GCM at rest
+
+**Agent and data-domain boundaries:**
+
+- Claude Code, Codex CLI, and Cursor currently have native edit hook adapters that can produce `EditRecord` payloads with diff, line counts, repository metadata, and `record_sig`
+- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; they produce `EditRecord` payloads only after an agent-specific native edit adapter can reconstruct local file-edit events
+- `EditRecord` is the edit evidence domain; usage rollups and snapshots are scalar usage domains, so token-only or usage-only data cannot be represented as edit records
+- Local usage sources include local logs, JSONL files, SQLite databases, caches, and local client state; aitrack discovers available local credentials or entry points where possible and does not require users to paste third-party service tokens
 
 ---
 
@@ -105,11 +112,11 @@ Every edit record generates a `record_sig` at local database insert time, coveri
 
 ### Engineering Effectiveness Metrics
 
-Query aggregated stats by developer, repository, or device via `GET /api/v1/ai-track/stats?group_by=token|repo|device` to support effectiveness reports.
+Query aggregated stats by developer, repository, device, hostname, or agent/tool via `GET /api/v1/ai-track/stats?group_by=token|repo|device|hostname|tool` to support effectiveness reports.
 
 ### Per-hostname Manual Review
 
-`GET /api/v1/ai-track/devices` shows each device's heartbeat status and hook installation state. When a hook is silently removed, the next execution of any `aitrack` command automatically reports the anomalous state — administrators can follow up proactively.
+`GET /api/v1/ai-track/devices` shows each device's heartbeat status and dynamic agent hooks map. When a hook is silently removed, the next execution of any `aitrack` command automatically reports the anomalous state — administrators can follow up proactively.
 
 ### Server-side Vector Storage and Semantic Search (v1.3+)
 
@@ -130,11 +137,11 @@ The server database has been upgraded to **ParadeDB** (PostgreSQL + pg_search + 
 
 Profile data is used solely to understand actual AI tool adoption — it is not used as a direct basis for individual performance evaluation.
 
-### Prompt Summary Capture (v1.5+)
+### Prompt Intent Capture (v1.5+)
 
-The client can optionally install a `UserPromptSubmit` hook (Claude Code only) to capture a prompt summary (≤ 512 characters) and submit it as a `prompt_summary` field alongside edit records. The profile API adds a `prompt_patterns` intent classification dimension (generate / fix_debug / refactor / explain / test / other), extending the analysis from "how much AI" to "how AI is used" quality insights.
+The client can optionally install a `UserPromptSubmit` hook (Claude Code only) to classify the prompt locally and submit only one content-free intent label (`generate`, `fix_debug`, `refactor`, `explain`, `test`, or `other`) as `prompt_summary` alongside edit records. The profile API adds a `prompt_patterns` intent classification dimension, extending the analysis from "how much AI" to "how AI is used" quality insights.
 
-> **Off by default**: `prompt_summary` collection is disabled by default and requires explicit admin configuration to activate. Only summary classification labels and hashes are collected — the original prompt text is never captured.
+> `prompt_summary` is produced only when the corresponding local prompt hook is installed. Only the content-free intent label is collected; raw prompts, prompt summaries, and response content are not collected.
 
 ### Hexagonal Architecture and Secure Auto-Update (v1.6+)
 
@@ -178,7 +185,7 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # Or extract binary from distribution package to /usr/local/bin/
 
-# Install Claude Code hook
+# Install a native edit hook (Claude Code example; use --tool <name> for other registered tools)
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
@@ -201,12 +208,12 @@ TOKEN="aitrack_abcdef1234567890abcdef1234567890"  # replace with the token issue
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer $TOKEN"
 
-# All device heartbeats and hook installation status — investigate hook anomalies
+# All device heartbeats and agent status — investigate hook or registry anomalies
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-`group_by` also accepts `repo` (by repository), `device` (by device UUID), and `hostname` (by machine name). See [docs/API.md](docs/API.md) for full details.
+`group_by` also accepts `repo` (by repository), `device` (by device UUID), `hostname` (by machine name), and `tool` (by agent/tool key). See [docs/API.md](docs/API.md) for full details.
 
 ### 5. Coverage Verification (Docker)
 
@@ -240,7 +247,7 @@ bash e2e/run.sh both
 | **Token hash storage** | Server stores only `sha256(token)` — plaintext returned only once at issuance |
 | **Local-first** | All data stored on self-hosted infrastructure, never passes through any third-party cloud service |
 | **Constant-time comparison** | HMAC verification uses constant-time comparison to prevent timing attacks |
-| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; since v1.5, prompt summaries can optionally be collected (summary only, not the full prompt; off by default, requires explicit admin configuration); never collects complete code content, conversation history, or keyboard input; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
+| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; since v1.5, prompt intent labels can be collected when the corresponding local prompt hook is installed (not raw prompt text or a prompt summary); never collects complete code content, conversation history, or keyboard input; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
 
 ---
 

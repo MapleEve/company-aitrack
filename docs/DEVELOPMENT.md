@@ -66,7 +66,7 @@ client/src/
 ├── adapter/
 │   ├── sqlite/      ← SqliteStorage implements StoragePort
 │   ├── http/        ← HttpUploader implements UploadPort（真实 POST 逻辑）
-│   └── event/       ← claude/codex/cursor 事件适配
+│   └── event/       ← native edit 事件适配；动态 agent registry 在 agent.rs
 ├── update.rs        ← aitrack update 子命令（ed25519 签名验证）
 └── testkit/         ← factories.rs（测试工厂，使用 domain::model）
 ```

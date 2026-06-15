@@ -33,8 +33,8 @@ public class DeviceEntity {
     @Column(name = "last_heartbeat")
     private Instant lastHeartbeat;
 
-    // JSON blob: {"claude":true,"codex":false,"cursor":false}
-    @Column(name = "hooks_json", length = 256)
+    // JSON blob: {"claude":true,"opencode":true,"trae":false}
+    @Column(name = "hooks_json", length = 1024)
     private String hooksJson;
 
     @Column(name = "created_at", nullable = false)

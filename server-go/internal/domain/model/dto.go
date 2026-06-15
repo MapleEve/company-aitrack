@@ -54,20 +54,16 @@ type EditBatchResponse struct {
 	Flagged  []IndexedReason `json:"flagged"`
 }
 
-// HeartbeatHooks reports which tool hooks are installed.
-type HeartbeatHooks struct {
-	Claude bool `json:"claude"`
-	Codex  bool `json:"codex"`
-	Cursor bool `json:"cursor"`
-}
+// HeartbeatHooks reports installed hooks by agent key.
+type HeartbeatHooks map[string]bool
 
 // HeartbeatRequest is the body of POST /api/v1/ai-track/heartbeat.
 type HeartbeatRequest struct {
-	DeviceID       string          `json:"device_id"`
-	Hostname       string          `json:"hostname"`
-	TokenKeyMasked string          `json:"token_key_masked"`
-	ClientVersion  string          `json:"client_version"`
-	TS             int64           `json:"ts"`
-	Hooks          *HeartbeatHooks `json:"hooks"`
-	PendingCount   int             `json:"pending_count"`
+	DeviceID       string         `json:"device_id"`
+	Hostname       string         `json:"hostname"`
+	TokenKeyMasked string         `json:"token_key_masked"`
+	ClientVersion  string         `json:"client_version"`
+	TS             int64          `json:"ts"`
+	Hooks          HeartbeatHooks `json:"hooks"`
+	PendingCount   int            `json:"pending_count"`
 }

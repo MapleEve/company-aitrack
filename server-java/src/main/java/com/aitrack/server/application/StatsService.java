@@ -25,6 +25,7 @@ public class StatsService {
             case "repo" -> editRecordPort.aggregateByRepo();
             case "device" -> editRecordPort.aggregateByDevice();
             case "hostname" -> editRecordPort.aggregateByHostname();
+            case "tool" -> editRecordPort.aggregateByTool();
             default -> editRecordPort.aggregateByTokenKey();
         };
 

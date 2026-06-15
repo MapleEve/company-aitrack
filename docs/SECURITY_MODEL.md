@@ -150,7 +150,7 @@ X-AiTrack-Signature = lowercase_hex(
 
 - 每次 `capture` 结束时，若距上次心跳 >1 小时，自动发送心跳
 - `aitrack heartbeat` 命令强制立即发送
-- 心跳包含各工具钩子安装状态：`hooks.claude/codex/cursor: true/false`
+- 心跳包含动态 agent key 到安装/可用状态的映射：`hooks.<agent>: true/false`
 - 管理员通过 `GET /api/v1/ai-track/devices` 查看设备心跳状态
 
 **检测延迟**：钩子移除后，最迟在下一次 capture（或 1 小时内）触发心跳更新，`last_seen` 停止更新。
@@ -175,5 +175,5 @@ X-AiTrack-Signature = lowercase_hex(
 1. **Admin 接口隔离**：生产环境中通过网络 ACL 或反向代理限制 `/admin/**` 的访问源
 2. **定期轮换 hmac_secret**：通过重新签发 token 实现，旧 token 停用前需客户端重新 `aitrack init`
 3. **监控 flagged 记录**：定期查询 flagged 记录，对 `diff_inconsistent` 和 `oversized` 进行人工判断
-4. **监控设备 hooks 状态**：`GET /devices` 返回的 `hooks.claude=false` 设备需主动跟进
+4. **监控设备 hooks 状态**：`GET /devices` 返回的 native hook 或注册 agent 状态异常需主动跟进
 5. **HTTPS 传输**：`api_url` 生产环境应使用 HTTPS，防止 hmac_secret 和 token 在传输中泄漏

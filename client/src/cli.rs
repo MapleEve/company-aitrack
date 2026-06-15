@@ -23,7 +23,7 @@ pub enum Command {
     Inspect(InspectArgs),
     /// Show record stats grouped by token
     Stats,
-    /// Show status (token, pending count, hook installation)
+    /// Show status (token, pending count, native hooks, registered agents)
     Status,
     /// Delete local records
     Clean(CleanArgs),
@@ -43,6 +43,8 @@ pub struct InitArgs {
     pub codex: bool,
     #[arg(long)]
     pub cursor: bool,
+    #[arg(long = "tool", value_name = "name")]
+    pub tool: Vec<String>,
     #[arg(long)]
     pub api_url: Option<String>,
     /// Combined credential string: "<token>-<hmac_secret>"
@@ -58,10 +60,13 @@ pub struct RemoveArgs {
     pub codex: bool,
     #[arg(long)]
     pub cursor: bool,
+    #[arg(long = "tool", value_name = "name")]
+    pub tool: Vec<String>,
 }
 
 #[derive(Args)]
 pub struct CaptureArgs {
+    /// Source tool name.
     #[arg(short, long, default_value = "claude")]
     pub tool: String,
     #[arg(long)]
@@ -93,4 +98,33 @@ pub struct CleanArgs {
 pub struct PromptCaptureArgs {
     #[arg(short, long, default_value = "claude")]
     pub tool: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn agent_init_accepts_repeatable_tool_flags() {
+        let cli = Cli::parse_from(["aitrack", "init", "--tool", "trae", "--tool", "qwen"]);
+
+        let Command::Init(args) = cli.command else {
+            panic!("expected init command");
+        };
+
+        assert_eq!(args.tool, vec!["trae".to_string(), "qwen".to_string()]);
+    }
+
+    #[test]
+    fn agent_remove_accepts_legacy_flags_and_tool_flags() {
+        let cli = Cli::parse_from(["aitrack", "remove", "--claude", "--tool", "warp"]);
+
+        let Command::Remove(args) = cli.command else {
+            panic!("expected remove command");
+        };
+
+        assert!(args.claude);
+        assert_eq!(args.tool, vec!["warp".to_string()]);
+    }
 }

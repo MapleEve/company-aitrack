@@ -73,7 +73,7 @@ All signed endpoints require:
 |--------|------|-------------|
 | POST | `/api/v1/ai-track/edits` | Submit edit batch |
 | POST | `/api/v1/ai-track/heartbeat` | Device heartbeat |
-| GET | `/api/v1/ai-track/stats?group_by=token\|repo\|device` | Aggregated stats |
+| GET | `/api/v1/ai-track/stats?group_by=token\|repo\|device\|hostname\|tool` | Aggregated stats |
 | GET | `/api/v1/ai-track/devices` | Device list with heartbeat status |
 | GET | `/api/v1/ai-track/edits?token_key=&repo=&page=&size=` | Paginated edit query |
 
@@ -183,7 +183,7 @@ src/test/java/com/aitrack/server/
 ├── TokenServiceTest.java            # computeTokenKey variants (pre-existing)
 ├── IngestServiceTest.java           # Full ingest path: accept/flag/reject, entity fields
 ├── HeartbeatServiceTest.java        # New device creation, existing device update, hooks JSON
-├── StatsServiceTest.java            # getStats (token/repo/device), getDevices silent flag
+├── StatsServiceTest.java            # getStats (token/repo/device/hostname/tool), getDevices silent flag
 ├── EditsControllerTest.java         # MockMvc: auth steps 1-3, valid POST, malformed, GET
 ├── HeartbeatControllerTest.java     # MockMvc: auth, missing device_id, repeat heartbeat
 ├── AdminTokenControllerTest.java    # MockMvc: X-Admin-Key auth, 403, 400, token uniqueness

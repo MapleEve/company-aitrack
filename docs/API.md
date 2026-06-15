@@ -1,8 +1,24 @@
-# API 参考
+# API 文档
 
 ## 适用对象
 
 这篇面向需要与 AiTrack 服务端集成的开发者、管理员和运维人员。所有端点的字段定义与 `CONTRACT.md` v1.2 严格一致。
+
+---
+
+## Agent 与数据域边界
+
+aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。API 明确分离三类数据：
+
+| 数据面 | API 边界 |
+|--------|----------|
+| `EditRecord` 编辑证据 | `POST /api/v1/ai-track/edits`，必须包含文件路径、repo 元数据、Myers/LCS 行数、diff、设备信息和 `record_sig` |
+| registry/status/heartbeat | `POST /api/v1/ai-track/heartbeat` 与 `GET /devices`，`hooks` 是按 agent registry key 组织的动态 map |
+| usage rollup / snapshot | 标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计；token-only / usage-only 数据不能写入 `/edits` |
+
+Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成 `EditRecord`。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线；只有在各自本地编辑事件能力可还原并完成 adapter 后，才会进入 `EditRecord` 域。
+
+本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态。客户端可自动发现可用凭证或入口，不要求用户手动粘第三方 token。
 
 ---
 
@@ -17,7 +33,7 @@
 | **管理员** | 服务端启动后 | `POST /admin/tokens` — 签发 token |
 | **管理员** | 将 credential 交给开发者 | 复制 `credential` 字段值 |
 | **客户端（aitrack）** | 开发者每次编辑后自动触发 | `POST /api/v1/ai-track/edits` — 上报编辑记录 |
-| **客户端（aitrack）** | 每次 capture 结束、距上次 >1h 自动触发 | `POST /api/v1/ai-track/heartbeat` — 上报钩子状态 |
+| **客户端（aitrack）** | 每次 capture 结束、距上次 >1h 自动触发 | `POST /api/v1/ai-track/heartbeat` — 上报 agent 状态 |
 | **管理员** | 查看团队 AI 用量 | `GET /api/v1/ai-track/stats` — 按维度统计 |
 | **管理员** | 排查可疑设备 / 钩子状态 | `GET /api/v1/ai-track/devices` — 设备心跳列表 |
 | **管理员** | 原始记录审计 | `GET /api/v1/ai-track/edits` — 分页查询 |
@@ -82,7 +98,7 @@ aitrack status   # 验证钩子已安装
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer aitrack_abcdef1234567890abcdef1234567890"
 
-# 查看设备心跳状态（silent=false 说明钩子正常；若某台机器 hooks.claude=false 需跟进）
+# 查看设备心跳状态（silent=false 说明客户端活跃；hooks 为动态 agent key map）
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer aitrack_abcdef1234567890abcdef1234567890"
 ```
@@ -225,7 +241,7 @@ curl -s -X POST http://localhost:8080/admin/tokens \
 
 批量上报 AI 编码工具产生的编辑记录。服务端对每条 edit 依次执行 10 步校验链。
 
-**此端点由 aitrack 客户端自动调用**，管理员通常无需手动调用。若需测试或排查，可参考下方的签名算法示例。
+**此端点由 aitrack 客户端自动调用**，管理员通常无需手动调用。若需测试或排查，可使用下方的签名算法示例。
 
 **鉴权**：Bearer token + X-AiTrack-* 签名头（见公共头）
 
@@ -263,9 +279,9 @@ curl -s -X POST http://localhost:8080/admin/tokens \
 
 | 字段 | 类型 | 可空 | 说明 |
 |------|------|------|------|
-| `tool` | string | 否 | `claude` \| `codex` \| `cursor` |
+| `tool` | string | 否 | agent key；当前 native edit adapter 为 `claude` \| `codex` \| `cursor` |
 | `tool_version` | string | 是 | 如 `claude-code` |
-| `provider` | string | 否 | agent 框架名，与 tool 字段相同（如 `claude` / `codex` / `cursor`） |
+| `provider` | string | 否 | agent 框架名，通常与 `tool` 字段相同 |
 | `model` | string | 是 | 模型名称，客户端自报，不可信 |
 | `session_id` | string | 否 | AI 工具的会话标识 |
 | `repo_url` | string | 否 | git remote origin URL |
@@ -280,6 +296,8 @@ curl -s -X POST http://localhost:8080/admin/tokens \
 | `device_id` | string | 否 | UUIDv4，与外层 device_id 相同 |
 | `hostname` | string | 否 | 上报机器的 OS hostname（v1.1 新增） |
 | `record_sig` | string | 否 | HMAC-SHA256 小写十六进制，见下方签名算法 |
+
+`/edits` 仅接受 `EditRecord` 编辑证据。usage rollup、snapshot、token-only 或 usage-only 数据即使能证明某个 agent 被使用，也不能填充这些字段并伪装为编辑记录。
 
 ### record_sig 签名算法（可复现脚本）
 
@@ -467,7 +485,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
 
 ## POST /api/v1/ai-track/heartbeat
 
-设备心跳上报，用于检测钩子是否被静默移除。
+设备心跳上报，用于检测 native hook 是否被静默移除，并跟踪注册 agent 的本地状态。
 
 **此端点由 aitrack 客户端自动调用**，在每次 `capture` 执行结束后（距上次超过 1 小时时）自动发送，或运行 `aitrack heartbeat` 时立即发送。管理员通常无需手动调用此端点。
 
@@ -485,7 +503,8 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
   "hooks": {
     "claude": true,
     "codex": false,
-    "cursor": false
+    "cursor": false,
+    "opencode": true
   },
   "pending_count": 5
 }
@@ -498,7 +517,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
 | `token_key_masked` | string | masked token 标识 |
 | `client_version` | string | aitrack 客户端版本 |
 | `ts` | integer | Unix 秒 |
-| `hooks` | object | 各工具钩子安装状态（true=已安装） |
+| `hooks` | object | 动态 agent registry key 到安装/可用状态的映射（true=已安装或可用） |
 | `pending_count` | integer | 本地未同步记录数 |
 
 ### 响应（200）
@@ -519,7 +538,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
 
 | 参数 | 可选值 | 说明 |
 |------|--------|------|
-| `group_by` | `token` \| `repo` \| `device` \| `hostname` | 聚合维度 |
+| `group_by` | `token` \| `repo` \| `device` \| `hostname` \| `tool` | 聚合维度 |
 
 ### curl 示例
 
@@ -541,87 +560,42 @@ curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=device" \
 # 按 hostname 维度汇总 — 用于人工排查多设备共用 token 情况
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=hostname" \
   -H "Authorization: Bearer $TOKEN"
+
+# 按 agent/tool 维度汇总 — 用于查看各 native edit adapter 产生的编辑证据分布
+curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=tool" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-### 响应示例（group_by=token）
+### 响应示例
 
 ```json
 [
   {
-    "token_key": "abcdef…7890",
-    "owner": "alice",
-    "edit_count": 142,
+    "group": "aitrack_abcd...wxyz",
+    "edits": 142,
     "added_lines": 3820,
-    "removed_lines": 1240
+    "removed_lines": 1240,
+    "accepted": 139,
+    "flagged": 3,
+    "rejected": 0,
+    "last_active": "2026-06-16T09:30:00Z"
   },
   {
-    "token_key": "fedcba…0123",
-    "owner": "bob",
-    "edit_count": 87,
+    "group": "cursor",
+    "edits": 87,
     "added_lines": 2310,
-    "removed_lines": 890
+    "removed_lines": 890,
+    "accepted": 82,
+    "flagged": 4,
+    "rejected": 1,
+    "last_active": "2026-06-15T18:05:00Z"
   }
 ]
 ```
 
-### 响应示例（group_by=repo）
+`group` 的含义取决于 `group_by`：`token` 返回 masked token key，`repo` 返回 repo URL，`device` 返回 device_id，`hostname` 返回 OS hostname，`tool` 返回 agent/tool key。
 
-```json
-[
-  {
-    "repo_url": "git@github.com:org/backend.git",
-    "edit_count": 198,
-    "added_lines": 5200,
-    "removed_lines": 1870
-  },
-  {
-    "repo_url": "git@github.com:org/frontend.git",
-    "edit_count": 31,
-    "added_lines": 920,
-    "removed_lines": 260
-  }
-]
-```
-
-### 响应示例（group_by=device）
-
-```json
-[
-  {
-    "device_id": "550e8400-e29b-41d4-a716-446655440000",
-    "token_key": "abcdef…7890",
-    "owner": "alice",
-    "edit_count": 98,
-    "added_lines": 2700,
-    "removed_lines": 830
-  }
-]
-```
-
-### 响应示例（group_by=hostname）
-
-```json
-[
-  {
-    "hostname": "MacBook-Pro.local",
-    "token_key": "abcdef…7890",
-    "owner": "alice",
-    "edit_count": 98,
-    "added_lines": 2700,
-    "removed_lines": 830
-  },
-  {
-    "hostname": "alice-office-imac.local",
-    "token_key": "abcdef…7890",
-    "owner": "alice",
-    "edit_count": 44,
-    "added_lines": 1120,
-    "removed_lines": 410
-  }
-]
-```
-
-> 同一 `token_key` 出现多个不同 `hostname` 是正常情况（CONTRACT.md v1.2 明确支持一个 credential 用于多台机器）。若某个 hostname 数据量异常偏高，可通过 `/devices` 进一步核查该设备的钩子状态。
+> 同一 credential 可能出现在多个不同 `hostname` 或 `device` 分组中，这是正常情况。若某个 hostname 数据量异常偏高，可通过 `/devices` 进一步核查该设备的 agent 状态。
 
 ---
 
@@ -655,7 +629,8 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
     "hooks": {
       "claude": true,
       "codex": false,
-      "cursor": false
+      "cursor": false,
+      "opencode": true
     },
     "pending_count": 0,
     "silent": false
@@ -688,15 +663,16 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 | `hostname` | 上报机器的 OS hostname（v1.1 新增） |
 | `client_version` | 客户端版本 |
 | `last_seen` | 最后一次心跳时间 |
-| `hooks.claude/codex/cursor` | 对应 AI 工具的钩子是否已安装 |
+| `hooks` | 动态 agent registry key 到安装/可用状态的映射；Claude/Codex/Cursor 代表当前 native edit hook adapter 状态，其他 key 代表注册/状态/本地用量来源状态 |
 | `pending_count` | 客户端本地未同步的记录数（较大值提示上报异常） |
-| `silent` | `true` 表示该设备所有钩子均已被移除，需人工跟进 |
+| `silent` | `true` 表示该设备 7 天以上无心跳（或从未上报心跳），需人工跟进 |
 
 **运维判断指南：**
 
-- `hooks.claude=false`（且该开发者应使用 Claude Code）→ 钩子被移除或未安装，联系开发者重新执行 `aitrack init --claude`
-- `silent=true` → 所有工具钩子均已移除，可能存在主动规避采集的行为
-- `last_seen` 超过 3 天未更新（且开发者仍活跃）→ 客户端可能离线或崩溃
+- native hook key（例如 `claude`、`codex`、`cursor`）为 `false`，且该开发者应使用对应工具 → 钩子被移除或未安装，联系开发者重新执行对应 `aitrack init`
+- 其他 agent key 为 `true` → 仅表示该 agent 已进入 registry/status/heartbeat 或 local usage source 路线，不表示已经具备 native edit adapter
+- `silent=true` → 设备超过 7 天无心跳，客户端可能离线、崩溃或被移除
+- `last_seen` 超过预期时间未更新（且开发者仍活跃）→ 客户端可能离线或崩溃
 - `pending_count` 持续偏大 → 网络或鉴权异常，客户端数据积压无法上报
 
 ---

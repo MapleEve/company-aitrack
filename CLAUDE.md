@@ -11,11 +11,9 @@
 | `server-go/` | Go chi 服务端（等价备选） | `server-go/CLAUDE.md` |
 | `e2e/` | E2E 集成测试 | `e2e/CLAUDE.md` |
 | `docker/` | Dockerfile × 3 + compose | `docker/CLAUDE.md` |
-| `docs/` | 公开文档（ARCHITECTURE、API 等） | — |
+| `docs/` | 项目文档（ARCHITECTURE、API 等） | — |
 | `CONTRACT.md` | 客户端/服务端协议 SSoT | — |
 | `CHANGELOG.md` | 版本变更记录 | — |
-
-内部 PRD / spec / roadmap 在 Codeup 仓库，不在本仓库。
 
 ---
 
@@ -59,7 +57,6 @@ git -c http.proxy="" -c https.proxy="" fetch --prune origin
 
 - `RELEASE_SIGNING_KEY`（ed25519 私钥）：**绝不打印到 stdout，绝不 commit**
 - ed25519 公钥已硬编码在 `client/src/update.rs`，不得修改
-- 逆向来源、内部安全审计 ID、"limix"：**绝不出现在任何提交或文件中**
 - `hmac_secret` / `AITRACK_SECRET_KEY` / `AITRACK_ADMIN_KEY`：不得出现在代码或日志中
 
 ---

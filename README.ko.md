@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# aitrack 🛡️
+# aitrack 셀프 호스팅 AI 코딩 거버넌스 🛡️
 
 > *「AI 코딩 행동을 신뢰할 수 있는 감사에 편입하고, 엔지니어링 효율 팀에 실제 데이터를 돌려줍니다.」*
 
@@ -19,7 +19,7 @@
 
 <br>
 
-aitrack는 Claude Code, Codex CLI, Cursor 등 AI 코딩 도구에 경량 훅을 설치하고,<br>편집 이벤트마다 HMAC 서명된 레코드를 생성하며,<br>10단계 서버 검증 체인으로 노이즈와 변조를 필터링하여,<br>엔지니어링 효율 팀에 신뢰할 수 있고, 감사 가능하며, 정량화할 수 있는 AI 사용 데이터를 제공합니다.
+aitrack는 직원의 AI 코딩 활동을 모니터링하고 거버넌스하기 위한 범용·셀프 호스팅·오픈소스 도구입니다.<br>Claude Code, Codex CLI, Cursor에는 native edit hook adapter를 제공하여,<br>지원되는 편집 이벤트마다 HMAC 서명된 편집 증거를 생성합니다.<br>그 밖의 AI 코딩 도구는 동적 agent registry, 하트비트 상태, 로컬 사용량 소스를 통해 관리합니다.
 
 <br>
 
@@ -35,7 +35,7 @@ aitrack는 Claude Code, Codex CLI, Cursor 등 AI 코딩 도구에 경량 훅을 
   <img src="./docs/assets/readme/problem.ko.png" alt="문제" width="100%" />
 </p>
 
-AI 코딩 도구(Claude Code, Codex CLI, Cursor)가 개발 팀에 대규모로 도입되면서 피할 수 없는 세 가지 거버넌스 과제가 생겼습니다:
+AI 코딩 도구가 개발 팀에 대규모로 도입되면서 피할 수 없는 세 가지 거버넌스 과제가 생겼습니다:
 
 | 문제점 | 현실 |
 |--------|------|
@@ -54,7 +54,7 @@ AI 코딩 도구(Claude Code, Codex CLI, Cursor)가 개발 팀에 대규모로 �
 | 역할 | 핵심 요구사항 |
 |------|-------------|
 | **엔지니어링 효율 팀** | AI 도구의 실제 산출물을 객관적으로 정량화하고, 비효율적인 사용 패턴을 파악하여 월별 효율 보고서 지원 |
-| **엔지니어링 관리자** | 훅 설치 상태와 의심스러운 데이터 플래그를 실시간으로 파악하여 개발자 자기 보고에 의존하지 않음 |
+| **엔지니어링 관리자** | native hook 및 등록 agent 상태와 의심스러운 데이터 플래그를 실시간으로 파악하여 개발자 자기 보고에 의존하지 않음 |
 | **데이터 보안 중시·셀프 호스팅 팀** | 모든 데이터가 자체 호스팅 인프라에 저장되고 어떠한 서드파티 클라우드 서비스도 경유하지 않아 컴플라이언스 요건 충족 |
 
 ---
@@ -75,6 +75,13 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 - `POST /admin/tokens`는 토큰과 HMAC 시크릿을 통합한 단일 `credential` 필드(`<token>-<hmac_secret>`)를 반환
 - `hostname` 필드(v1.1에서 신규 추가)로 하나의 토큰을 여러 머신에서 사용할 때 디바이스 차원의 수동 검토가 가능
 - 클라이언트 로컬 데이터베이스 `~/.aitrack/records.db` 권한 0600, `hmac_secret`은 AES-256-GCM으로 암호화하여 저장
+
+**Agent 및 데이터 도메인 경계:**
+
+- Claude Code, Codex CLI, Cursor는 현재 native edit hook adapter를 갖고 있어 diff, 줄 수, 저장소 메타데이터, `record_sig`를 포함한 `EditRecord`를 생성할 수 있습니다
+- 그 밖의 등록 agent는 registry, status, heartbeat, local usage source 흐름에 참여할 수 있지만, `EditRecord`를 생성하려면 해당 agent의 로컬 편집 이벤트를 복원할 수 있는 native edit adapter가 필요합니다
+- `EditRecord`는 편집 증거 도메인입니다. usage rollup / snapshot은 스칼라 사용량 도메인이며, token-only 또는 usage-only 데이터를 편집 레코드로 취급할 수 없습니다
+- 로컬 사용량 소스에는 로컬 로그, JSONL, SQLite, 캐시, 로컬 클라이언트 상태가 포함됩니다. aitrack는 가능한 로컬 자격 증명 또는 진입점을 자동 발견하며, 사용자에게 서드파티 token을 수동으로 붙여 넣도록 요구하지 않습니다
 
 ---
 
@@ -105,11 +112,11 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 ### 엔지니어링 효율 측정
 
-`GET /api/v1/ai-track/stats?group_by=token|repo|device`로 개발자, 저장소 또는 디바이스 차원의 집계 통계를 조회하여 효율 보고서를 지원합니다.
+`GET /api/v1/ai-track/stats?group_by=token|repo|device|hostname|tool`로 개발자, 저장소, 디바이스, 호스트명 또는 agent/tool 차원의 집계 통계를 조회하여 효율 보고서를 지원합니다.
 
 ### hostname 차원 수동 조사
 
-`GET /api/v1/ai-track/devices`에서 각 디바이스의 하트비트 상태와 훅 설치 현황을 확인할 수 있습니다. 훅이 조용히 제거되면 다음 `aitrack` 명령 실행 시 이상 상태가 자동으로 보고되어 관리자가 능동적으로 후속 조치를 취할 수 있습니다.
+`GET /api/v1/ai-track/devices`에서 각 디바이스의 하트비트 상태와 동적 agent hooks map을 확인할 수 있습니다. 훅이 조용히 제거되면 다음 `aitrack` 명령 실행 시 이상 상태가 자동으로 보고되어 관리자가 능동적으로 후속 조치를 취할 수 있습니다.
 
 ### 서버 측 벡터 스토리지 및 시맨틱 검색(v1.3+)
 
@@ -130,11 +137,11 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 프로필 데이터는 AI 도구의 실제 채택 효과를 파악하기 위해서만 사용되며, 개인 성과 평가의 직접적인 근거로는 사용되지 않습니다.
 
-### 프롬프트 요약 캡처(v1.5+)
+### 프롬프트 의도 캡처(v1.5+)
 
-클라이언트는 선택적으로 `UserPromptSubmit` 훅(Claude Code 전용)을 설치하여 프롬프트 요약(≤ 512자)을 캡처하고 `prompt_summary` 필드로 편집 레코드와 함께 제출할 수 있습니다. 프로필 API에 `prompt_patterns` 의도 분류 차원(generate / fix_debug / refactor / explain / test / other)이 추가되어 "얼마나 AI를 사용했는지"에서 "어떻게 AI를 사용했는지"에 대한 품질 분석으로 확장됩니다.
+클라이언트는 선택적으로 `UserPromptSubmit` 훅(Claude Code 전용)을 설치하여 프롬프트를 로컬에서 의도 레이블로 분류하고 `generate` / `fix_debug` / `refactor` / `explain` / `test` / `other` 중 하나만 `prompt_summary` 필드로 편집 레코드와 함께 제출할 수 있습니다. 프로필 API에 `prompt_patterns` 의도 분류 차원이 추가되어 "얼마나 AI를 사용했는지"에서 "어떻게 AI를 사용했는지"에 대한 품질 분석으로 확장됩니다.
 
-> **기본 비활성화**: `prompt_summary` 수집은 기본적으로 비활성화되어 있으며 관리자가 명시적으로 구성한 경우에만 활성화됩니다. 요약 분류 레이블과 해시만 수집되며, 프롬프트 원문은 수집되지 않습니다.
+> `prompt_summary` 는 해당 로컬 prompt hook 이 설치된 경우에만 생성됩니다. 내용이 없는 의도 레이블만 수집되며, 프롬프트 원문, 프롬프트 요약, 응답 내용은 수집되지 않습니다.
 
 ### 헥사고날 아키텍처 및 보안 자동 업데이트(v1.6+)
 
@@ -178,7 +185,7 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # 또는 배포 패키지에서 바이너리를 /usr/local/bin/에 압축 해제
 
-# Claude Code 훅 설치
+# native edit hook 설치(Claude Code 예시, 다른 등록 도구는 --tool <name> 사용)
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
@@ -201,12 +208,12 @@ TOKEN="aitrack_abcdef1234567890abcdef1234567890"  # 2단계에서 발급한 toke
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer $TOKEN"
 
-# 모든 디바이스의 하트비트와 훅 설치 상태 확인 — 훅 이상 조사
+# 모든 디바이스의 하트비트와 agent 상태 확인 — hook 또는 등록 상태 이상 조사
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-`group_by`에는 `repo`(저장소별), `device`(디바이스 UUID별), `hostname`(머신명별)도 사용할 수 있습니다. 자세한 내용은 [docs/API.md](docs/API.md)를 참조하세요.
+`group_by`에는 `repo`(저장소별), `device`(디바이스 UUID별), `hostname`(머신명별), `tool`(agent/tool key별)도 사용할 수 있습니다. 자세한 내용은 [docs/API.md](docs/API.md)를 참조하세요.
 
 ### 5. 커버리지 검증(Docker)
 
@@ -240,7 +247,7 @@ bash e2e/run.sh both
 | **토큰 해시 저장** | 서버는 `sha256(token)`만 저장 — 평문은 발급 시 한 번만 반환됨 |
 | **로컬 우선** | 모든 데이터가 셀프 호스팅 인프라에 저장되고 어떠한 서드파티 클라우드 서비스도 경유하지 않음 |
 | **상수 시간 비교** | HMAC 검증은 타이밍 공격을 방지하기 위해 상수 시간 비교를 사용 |
-| **투명하고 설정 가능한 수집** | 기본적으로 파일 경로, diff, 줄 수, 저장소 메타데이터를 수집; v1.5부터 프롬프트 요약을 선택적으로 수집 가능(전체 프롬프트가 아닌 요약만; 기본 비활성화, 관리자의 명시적 구성 필요); 완전한 코드 내용, 대화 기록, 키보드 입력은 수집하지 않음; 수집 범위는 기업 관리자 구성으로 제어되며, 프로필 데이터는 개인 성과 평가의 직접적인 근거로 사용되지 않음 |
+| **투명하고 설정 가능한 수집** | 기본적으로 파일 경로, diff, 줄 수, 저장소 메타데이터를 수집; v1.5부터 해당 로컬 prompt hook 이 설치된 경우 프롬프트 의도 레이블을 수집 가능(원문이나 요약이 아님); 완전한 코드 내용, 대화 기록, 키보드 입력은 수집하지 않음; 수집 범위는 기업 관리자 구성으로 제어되며, 프로필 데이터는 개인 성과 평가의 직접적인 근거로 사용되지 않음 |
 
 ---
 

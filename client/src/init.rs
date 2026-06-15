@@ -1,7 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+use crate::agent;
 
 const COMMENT_MARKER: &str = "# aitrack";
 
@@ -13,7 +16,10 @@ pub fn install_hooks(tools: &[&str], aitrack_bin: &str, home: &Path) -> Result<(
             }
             "codex" => install_codex_hook(&home.join(".codex").join("config.toml"), aitrack_bin)?,
             "cursor" => install_cursor_hook(&home.join(".cursor").join("hooks.json"), aitrack_bin)?,
-            _ => {}
+            other if agent::is_known_agent(other) => {
+                eprintln!("[aitrack] known agent has no native hook installer yet: {other}");
+            }
+            other => bail!("unknown agent: {other}"),
         }
     }
     Ok(())
@@ -25,7 +31,10 @@ pub fn remove_hooks(tools: &[&str], home: &Path) -> Result<()> {
             "claude" => remove_claude_hook(&home.join(".claude").join("settings.json"))?,
             "codex" => remove_codex_hook(&home.join(".codex").join("config.toml"))?,
             "cursor" => remove_cursor_hook(&home.join(".cursor").join("hooks.json"))?,
-            _ => {}
+            other if agent::is_known_agent(other) => {
+                eprintln!("[aitrack] known agent has no native hook remover yet: {other}");
+            }
+            other => bail!("unknown agent: {other}"),
         }
     }
     Ok(())
@@ -449,12 +458,21 @@ pub fn remove_cursor_hook(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn detect_tool_statuses(home: &Path) -> (bool, bool, bool) {
-    (
-        has_claude_hook(&home.join(".claude").join("settings.json")),
-        has_codex_hook(&home.join(".codex").join("config.toml")),
-        has_cursor_hook(&home.join(".cursor").join("hooks.json")),
-    )
+/// Returns native hook status for native edit adapters and local marker
+/// presence for registered agents without a native hook installer.
+pub fn detect_tool_statuses(home: &Path) -> HashMap<String, bool> {
+    agent::registered_agents()
+        .iter()
+        .map(|registered| {
+            let active = match registered.name {
+                "claude" => has_claude_hook(&home.join(".claude").join("settings.json")),
+                "codex" => has_codex_hook(&home.join(".codex").join("config.toml")),
+                "cursor" => has_cursor_hook(&home.join(".cursor").join("hooks.json")),
+                _ => registered.marker_path(home).exists(),
+            };
+            (registered.name.to_string(), active)
+        })
+        .collect()
 }
 
 /// Detect which AI coding tools appear to be installed on this machine.
@@ -463,18 +481,12 @@ pub fn detect_tool_statuses(home: &Path) -> (bool, bool, bool) {
 /// than checking for the hook itself (which may not be installed yet).
 ///
 /// Returns a list of tool name strings that can be passed to `install_hooks`.
-pub fn detect_installed_tools(home: &Path) -> Vec<&'static str> {
-    let mut tools = Vec::new();
-    if home.join(".claude").exists() {
-        tools.push("claude");
-    }
-    if home.join(".codex").exists() {
-        tools.push("codex");
-    }
-    if home.join(".cursor").exists() {
-        tools.push("cursor");
-    }
-    tools
+pub fn detect_installed_tools(home: &Path) -> Vec<String> {
+    agent::registered_agents()
+        .iter()
+        .filter(|registered| registered.marker_path(home).exists())
+        .map(|registered| registered.name.to_string())
+        .collect()
 }
 
 /// Returns `true` if `settings.json` already contains a PostToolUse hook command
@@ -818,10 +830,10 @@ mod tests {
     #[test]
     fn detect_tool_statuses_all_false_when_none_installed() {
         let home = setup_home();
-        let (claude, codex, cursor) = detect_tool_statuses(home.path());
-        assert!(!claude);
-        assert!(!codex);
-        assert!(!cursor);
+        let statuses = detect_tool_statuses(home.path());
+        assert_eq!(statuses.get("claude"), Some(&false));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("cursor"), Some(&false));
     }
 
     #[test]
@@ -830,10 +842,10 @@ mod tests {
         let claude_path = home.path().join(".claude").join("settings.json");
         install_claude_hook(&claude_path, "/usr/local/bin/aitrack").unwrap();
 
-        let (claude, codex, cursor) = detect_tool_statuses(home.path());
-        assert!(claude, "claude should be detected");
-        assert!(!codex);
-        assert!(!cursor);
+        let statuses = detect_tool_statuses(home.path());
+        assert_eq!(statuses.get("claude"), Some(&true));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("cursor"), Some(&false));
     }
 
     // ---------------------------------------------------------------------------
@@ -844,9 +856,9 @@ mod tests {
     fn install_hooks_multiple_tools() {
         let home = setup_home();
         install_hooks(&["claude", "cursor"], "/usr/local/bin/aitrack", home.path()).unwrap();
-        let (claude, _codex, cursor) = detect_tool_statuses(home.path());
-        assert!(claude);
-        assert!(cursor);
+        let statuses = detect_tool_statuses(home.path());
+        assert_eq!(statuses.get("claude"), Some(&true));
+        assert_eq!(statuses.get("cursor"), Some(&true));
     }
 
     #[test]
@@ -859,10 +871,10 @@ mod tests {
         )
         .unwrap();
         remove_hooks(&["claude", "codex", "cursor"], home.path()).unwrap();
-        let (claude, codex, cursor) = detect_tool_statuses(home.path());
-        assert!(!claude);
-        assert!(!codex);
-        assert!(!cursor);
+        let statuses = detect_tool_statuses(home.path());
+        assert_eq!(statuses.get("claude"), Some(&false));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("cursor"), Some(&false));
     }
 
     // ---------------------------------------------------------------------------
@@ -877,9 +889,18 @@ mod tests {
         std::fs::create_dir_all(home.path().join(".cursor")).unwrap();
 
         let tools = detect_installed_tools(home.path());
-        assert!(tools.contains(&"claude"), "claude dir present → detected");
-        assert!(tools.contains(&"cursor"), "cursor dir present → detected");
-        assert!(!tools.contains(&"codex"), "codex dir absent → not detected");
+        assert!(
+            tools.contains(&"claude".to_string()),
+            "claude dir present → detected"
+        );
+        assert!(
+            tools.contains(&"cursor".to_string()),
+            "cursor dir present → detected"
+        );
+        assert!(
+            !tools.contains(&"codex".to_string()),
+            "codex dir absent → not detected"
+        );
     }
 
     #[test]
@@ -892,20 +913,70 @@ mod tests {
     #[test]
     fn detect_tool_statuses_returns_false_when_no_hooks() {
         let home = setup_home();
-        let (claude, codex, cursor) = detect_tool_statuses(home.path());
-        assert!(!claude);
-        assert!(!codex);
-        assert!(!cursor);
+        let statuses = detect_tool_statuses(home.path());
+        assert_eq!(statuses.get("claude"), Some(&false));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("cursor"), Some(&false));
     }
 
     #[test]
     fn detect_tool_statuses_returns_true_after_install() {
         let home = setup_home();
         install_hooks(&["claude"], "/usr/bin/aitrack", home.path()).unwrap();
-        let (claude, codex, cursor) = detect_tool_statuses(home.path());
-        assert!(claude);
-        assert!(!codex);
-        assert!(!cursor);
+        let statuses = detect_tool_statuses(home.path());
+        assert_eq!(statuses.get("claude"), Some(&true));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("cursor"), Some(&false));
+    }
+
+    #[test]
+    fn agent_registry_contains_required_known_tools() {
+        let names = crate::agent::registered_agent_names();
+        assert_eq!(
+            names,
+            vec![
+                "claude",
+                "codex",
+                "cursor",
+                "trae",
+                "qwen",
+                "baidu-comate",
+                "wenxin",
+                "antigravity",
+                "opencode",
+                "hermes",
+                "openclaw",
+                "gemini",
+                "copilot",
+                "cline",
+                "roo-code",
+                "kiro",
+                "zed",
+                "goose",
+                "amp",
+                "crush",
+                "codebuff",
+                "kilo",
+                "kimi",
+                "grok",
+                "warp",
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_detect_tool_statuses_returns_dynamic_map() {
+        let home = setup_home();
+        install_hooks(&["claude"], "/usr/bin/aitrack", home.path()).unwrap();
+        std::fs::create_dir_all(home.path().join(".qwen")).unwrap();
+
+        let statuses = detect_tool_statuses(home.path());
+
+        assert_eq!(statuses.get("claude"), Some(&true));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("qwen"), Some(&true));
+        assert_eq!(statuses.get("warp"), Some(&false));
+        assert_eq!(statuses.len(), crate::agent::registered_agent_names().len());
     }
 
     // ---------------------------------------------------------------------------

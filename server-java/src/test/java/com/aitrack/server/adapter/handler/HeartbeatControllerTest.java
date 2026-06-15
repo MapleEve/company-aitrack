@@ -1,6 +1,7 @@
 package com.aitrack.server.adapter.handler;
 
 import com.aitrack.server.adapter.db.TokenRepository;
+import com.aitrack.server.adapter.db.DeviceRepository;
 import com.aitrack.server.application.TokenService;
 import com.aitrack.server.domain.model.HeartbeatRequest;
 import com.aitrack.server.domain.model.TokenEntity;
@@ -19,7 +20,10 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -31,6 +35,7 @@ class HeartbeatControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired TokenRepository tokenRepository;
+    @Autowired DeviceRepository deviceRepository;
     @Autowired SignatureService signatureService;
 
     private static final String RAW_TOKEN = "aitrack_" + "b".repeat(64);
@@ -110,6 +115,36 @@ class HeartbeatControllerTest {
         postHeartbeat(HeartbeatRequestFactory.buildAllHooksOff())
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ok").value(true));
+    }
+
+    @Test
+    void heartbeat_arbitraryHookKeys_persistsHooksJson() throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("device_id", "device-dynamic-hooks");
+        body.put("hostname", EditDtoFactory.DEFAULT_HOSTNAME);
+        body.put("token_key_masked", EditDtoFactory.DEFAULT_TOKEN_KEY);
+        body.put("client_version", "1.0.0");
+        body.put("ts", 1715940000L);
+        body.put("pending_count", 3);
+
+        Map<String, Boolean> hooks = new LinkedHashMap<>();
+        hooks.put("claude", true);
+        hooks.put("opencode", true);
+        hooks.put("trae", false);
+        body.put("hooks", hooks);
+
+        postHeartbeat(body)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true));
+
+        String hooksJson = deviceRepository.findByDeviceId("device-dynamic-hooks")
+                .orElseThrow()
+                .getHooksJson();
+        assertThat(hooksJson).contains("\"claude\":true");
+        assertThat(hooksJson).contains("\"opencode\":true");
+        assertThat(hooksJson).contains("\"trae\":false");
+        assertThat(hooksJson).doesNotContain("\"codex\"");
+        assertThat(hooksJson).doesNotContain("\"cursor\"");
     }
 
     @Test

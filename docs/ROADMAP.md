@@ -1,14 +1,14 @@
 # AiTrack 产品路线图
 
-**版本**：v1.3
-**更新日期**：2026-05-21
-**当前状态**：v1.6.0 已交付；v1.7（2026 Q3）与 v1.8（2026 Q4）已纳入规划；Phase 4 全闭环（v2.0，2027 Q1）规划中
+**版本**：v1.6
+**更新日期**：2026-06-16
+**当前状态**：v1.6.1 已交付；v1.7（2026 Q3）与 v1.8（2026 Q4）已纳入规划；v2.0（2027 Q1）规划中
 
 ---
 
 ## 项目定位
 
-AiTrack 是一款面向企业的 **AI 编码行为治理工具**，以私有化自托管（Self-Hosted）方式交付，不提供 SaaS 版本。企业 IT 团队将 AiTrack 部署在自有基础设施上，对开发者使用 AI 编码工具的行为进行可信采集、签名验证与数据分析，全程数据不出企业网络。
+AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治理工具**。团队将 AiTrack 部署在自有基础设施上，对开发者使用 AI 编码工具的行为进行可信采集、签名验证与数据分析，全程数据留在部署方控制的环境内。
 
 ---
 
@@ -33,6 +33,12 @@ AiTrack 是一款面向企业的 **AI 编码行为治理工具**，以私有化�
 | v1.6.0 | 六边形架构重构（domain / port / adapter）；`aitrack update` 子命令（ed25519 签名验证）；关键词完整性指纹（SHA-256）；testapp 端到端真实链路 | 已交付 |
 | v1.6.1 | Go 服务端完全迁移为 PostgreSQL-only（移除 SQLite 回退）；E2E 竞态修复；CI 改用原生工具链（llvm-cov / mvn verify）替代 Docker 构建验证 | 已交付 |
 
+### 当前 agent 支持边界
+
+- Claude Code、Codex CLI、Cursor：已具备 native edit hook adapter，可生成 `EditRecord` 编辑证据。
+- 动态 agent registry/status/heartbeat：心跳 `hooks` 已按 agent key 动态表达，支持登记更多 agent 的安装状态。
+- local usage source：规划按本机日志、JSONL、SQLite、缓存和本地客户端状态接入标量用量；usage rollup / snapshot 与 `EditRecord` 分域，token-only / usage-only 不生成编辑证据。
+
 ### 当前成功指标（v1.6.1 基线）
 
 - 捕获成功率 ≥ 99%
@@ -47,7 +53,7 @@ AiTrack 是一款面向企业的 **AI 编码行为治理工具**，以私有化�
 
 **主题**：可信采集端 + 生产级部署强化
 
-**目标**：让企业管理者对「客户端钩子是否在线、二进制是否被替换」拥有主动可观测能力；同时将大型企业（500+ 开发者）的部署与运行门槛降至生产可用水平。
+**目标**：让企业管理者对「native hook / 注册 agent 是否在线、二进制是否被替换」拥有主动可观测能力；同时将大型企业（500+ 开发者）的部署与运行门槛降至生产可用水平。
 
 | 里程碑 | 功能 | 说明 |
 |--------|------|------|
@@ -69,14 +75,14 @@ AiTrack 是一款面向企业的 **AI 编码行为治理工具**，以私有化�
 | 里程碑 | 功能 | 说明 |
 |--------|------|------|
 | M12 | Rust 服务端 | 基于 axum + sqlx + tokio；与 Java / Go 协议完全等价；目标资源占用 ≤ 32MB 空载；适用于边缘部署与资源受限场景 |
-| M13 | Agent 框架扩展：国产 AI 工具 | 通义灵码、Baidu Comate、文心快码钩子适配；通用 ToolAdapter 抽象，新工具只需实现 adapter |
-| M14 | Agent 框架扩展：其他 AI 工具 | antigravity、opencode、hermes、openclaw 适配；插件化 adapter 注册机制 |
+| M13 | Dynamic agent registry + local usage source | 注册 agent 的状态、心跳和本地用量来源；支持本机日志、JSONL、SQLite、缓存和本地客户端状态自动发现 |
+| M14 | Native edit adapter 扩展 | 按 agent 自身本地编辑事件能力逐个落地 native edit adapter；只有可还原文件编辑事件的 agent 才进入 `EditRecord` 域 |
 | M15 | 服务端 Skills + 服务端 CLI（纯 Rust） | Skills：服务端沙箱执行能力（初始内置 summarize_edits / detect_pattern / suggest_refactor）；CLI：管理员命令行工具，无需 JVM / Go 运行时，支持 token 管理、设备查询、统计与画像查询 |
 | M16 | MCP 管理接口 | 将 aitrack 服务端暴露为 MCP Server；管理者可在 Claude Desktop / Claude Code 中直接查询统计、设备、画像、相似代码等数据，无需传统后台 UI |
 
 预计工期：12 周
 
-完成后，AI 工具覆盖从 3 款扩展至 10 款（含全部主流国产 AI 编码工具），管理形态从「Web 后台 + REST API」扩展至「CLI + MCP」。
+完成后，agent 覆盖从固定 native adapter 扩展为「动态注册 + 状态心跳 + 本地用量来源 + 按能力落地编辑适配」，管理形态从「Web 后台 + REST API」扩展至「CLI + MCP」。
 
 ---
 
@@ -126,7 +132,7 @@ prompt 捕获（v1.5）
 | 全文检索（BM25） | ✓ | ✓ | ✓ | ✓ |
 | 向量 ANN 检索 | ✓ | ✓ | ✓ | ✓ |
 | 开发者使用画像 | ✓ | ✓ | ✓ | ✓ |
-| prompt 摘要捕获 | ✓ | ✓ | ✓ | ✓ |
+| prompt 意图标签捕获 | ✓ | ✓ | ✓ | ✓ |
 | 六边形架构 | ✓ | ✓ | ✓ | ✓ |
 | ed25519 自更新验证 | ✓ | ✓ | ✓ | ✓ |
 | 逆向心跳（server → client） | — | 规划中 | ✓ | ✓ |
@@ -134,8 +140,9 @@ prompt 捕获（v1.5）
 | DockerHub 官方镜像 + Compose | — | 规划中 | ✓ | ✓ |
 | 本地防篡改 / 二进制完整性 | — | 规划中 | ✓ | ✓ |
 | Rust 服务端（第三实现） | — | — | 规划中 | ✓ |
-| 通义灵码 / Baidu Comate / 文心快码 | — | — | 规划中 | ✓ |
-| antigravity / opencode / hermes / openclaw | — | — | 规划中 | ✓ |
+| 动态 agent registry / status / heartbeat | 部分 | ✓ | ✓ | ✓ |
+| local usage source / usage rollup | — | 规划中 | ✓ | ✓ |
+| 更多 native edit adapter | — | — | 规划中 | ✓ |
 | 服务端 Skills | — | — | 规划中 | ✓ |
 | 服务端 CLI（纯 Rust） | — | — | 规划中 | ✓ |
 | MCP 管理接口 | — | — | 规划中 | ✓ |

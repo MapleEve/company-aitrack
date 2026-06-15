@@ -160,7 +160,7 @@ func BuildEditRecord(opts ...func(*model.EditRecord)) *model.EditRecord {
 // ─── Heartbeat factories ──────────────────────────────────────────────────────
 
 func BuildHeartbeatRequest(opts ...func(*model.HeartbeatRequest)) *model.HeartbeatRequest {
-	hooks := &model.HeartbeatHooks{Claude: true, Codex: false, Cursor: false}
+	hooks := model.HeartbeatHooks{"claude": true, "codex": false, "cursor": false}
 	req := &model.HeartbeatRequest{
 		DeviceID:       "device-001",
 		Hostname:       "test-host.local",

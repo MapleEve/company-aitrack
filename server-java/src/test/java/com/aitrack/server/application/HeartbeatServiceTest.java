@@ -13,6 +13,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -90,6 +92,28 @@ class HeartbeatServiceTest {
         assertThat(hooksJson).contains("\"claude\":true");
         assertThat(hooksJson).contains("\"codex\":false");
         assertThat(hooksJson).contains("\"cursor\":false");
+    }
+
+    @Test
+    void recordHeartbeat_arbitraryHookKeysStoredAsJson() {
+        when(deviceRepository.findByDeviceId(anyString())).thenReturn(Optional.empty());
+        Map<String, Boolean> hooks = new LinkedHashMap<>();
+        hooks.put("claude", true);
+        hooks.put("opencode", true);
+        hooks.put("trae", false);
+        HeartbeatRequest req = HeartbeatRequestFactory.with(r -> r.setHooks(hooks));
+
+        heartbeatService.recordHeartbeat(token, req);
+
+        ArgumentCaptor<DeviceEntity> captor = ArgumentCaptor.forClass(DeviceEntity.class);
+        verify(deviceRepository).save(captor.capture());
+        String hooksJson = captor.getValue().getHooksJson();
+
+        assertThat(hooksJson).contains("\"claude\":true");
+        assertThat(hooksJson).contains("\"opencode\":true");
+        assertThat(hooksJson).contains("\"trae\":false");
+        assertThat(hooksJson).doesNotContain("\"codex\"");
+        assertThat(hooksJson).doesNotContain("\"cursor\"");
     }
 
     @Test

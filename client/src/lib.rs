@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod agent;
 pub mod cli;
 pub mod config;
 pub mod domain;
@@ -65,28 +66,16 @@ pub async fn run(cli: Cli) -> Result<()> {
 async fn handle_init(args: cli::InitArgs) -> Result<()> {
     let cfg = apply_init_args(args.api_url, args.credential)?;
 
-    let tools: Vec<&str> = {
-        let mut t = Vec::new();
-        if args.claude {
-            t.push("claude");
-        }
-        if args.codex {
-            t.push("codex");
-        }
-        if args.cursor {
-            t.push("cursor");
-        }
-        t
-    };
+    let tools = selected_tools(args.claude, args.codex, args.cursor, args.tool);
 
     let home = dirs::home_dir().expect("cannot find home directory");
 
-    let tools: Vec<&str> = if tools.is_empty() {
+    let tools = if tools.is_empty() {
         // No flags passed — auto-detect installed AI tools by config dir presence.
         let detected = detect_installed_tools(&home);
         if detected.is_empty() {
             println!(
-                "No AI tools detected. Use --claude, --codex, or --cursor to install manually."
+                "No AI tools detected. Use --claude, --codex, --cursor, or --tool <name> to install manually."
             );
             return Ok(());
         }
@@ -100,7 +89,8 @@ async fn handle_init(args: cli::InitArgs) -> Result<()> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "aitrack".to_string());
 
-    install_hooks(&tools, &aitrack_bin, &home)?;
+    let tool_refs = tool_refs(&tools);
+    install_hooks(&tool_refs, &aitrack_bin, &home)?;
 
     // Initialize the keyword store after hook installation.
     // Failure is non-fatal — keyword integrity is best-effort.
@@ -111,20 +101,26 @@ async fn handle_init(args: cli::InitArgs) -> Result<()> {
         }
     }
 
-    let (claude, codex, cursor) = detect_tool_statuses(&home);
-    println!("Hook installation complete:");
-    println!(
-        "  claude: {}",
-        if claude { "installed" } else { "not installed" }
-    );
-    println!(
-        "  codex:  {}",
-        if codex { "installed" } else { "not installed" }
-    );
-    println!(
-        "  cursor: {}",
-        if cursor { "installed" } else { "not installed" }
-    );
+    let native_tools = selected_native_edit_tools(&tools);
+    let registry_only_tools = selected_registry_only_tools(&tools);
+    if native_tools.is_empty() {
+        println!("No native hooks installed.");
+    } else {
+        println!(
+            "Native hook installation complete for: {}",
+            native_tools.join(", ")
+        );
+    }
+    if !registry_only_tools.is_empty() {
+        println!(
+            "Registered agents without native hook installer: {}",
+            registry_only_tools.join(", ")
+        );
+    }
+
+    let statuses = detect_tool_statuses(&home);
+    println!("Agent status:");
+    print_agent_statuses(&statuses);
 
     if !cfg.api_url.is_empty() {
         println!("API URL: {}", cfg.api_url);
@@ -140,29 +136,87 @@ async fn handle_init(args: cli::InitArgs) -> Result<()> {
 }
 
 fn handle_remove(args: cli::RemoveArgs) -> Result<()> {
-    let tools: Vec<&str> = {
-        let mut t = Vec::new();
-        if args.claude {
-            t.push("claude");
-        }
-        if args.codex {
-            t.push("codex");
-        }
-        if args.cursor {
-            t.push("cursor");
-        }
-        t
-    };
+    let tools = selected_tools(args.claude, args.codex, args.cursor, args.tool);
 
     if tools.is_empty() {
-        println!("No tools selected. Use --claude, --codex, or --cursor.");
+        println!("No tools selected. Use --claude, --codex, --cursor, or --tool <name>.");
         return Ok(());
     }
 
     let home = dirs::home_dir().expect("cannot find home directory");
-    remove_hooks(&tools, &home)?;
-    println!("Hooks removed for: {}", tools.join(", "));
+    let tool_refs = tool_refs(&tools);
+    remove_hooks(&tool_refs, &home)?;
+    let native_tools = selected_native_edit_tools(&tools);
+    let registry_only_tools = selected_registry_only_tools(&tools);
+    if native_tools.is_empty() {
+        println!("No native hooks removed.");
+    } else {
+        println!("Native hooks removed for: {}", native_tools.join(", "));
+    }
+    if !registry_only_tools.is_empty() {
+        println!(
+            "Registered agents without native hook remover: {}",
+            registry_only_tools.join(", ")
+        );
+    }
     Ok(())
+}
+
+fn selected_tools(
+    claude: bool,
+    codex: bool,
+    cursor: bool,
+    explicit_tools: Vec<String>,
+) -> Vec<String> {
+    let mut tools = Vec::new();
+    if claude {
+        push_unique_tool(&mut tools, "claude");
+    }
+    if codex {
+        push_unique_tool(&mut tools, "codex");
+    }
+    if cursor {
+        push_unique_tool(&mut tools, "cursor");
+    }
+    for tool in explicit_tools {
+        push_unique_tool(&mut tools, tool.trim());
+    }
+    tools
+}
+
+fn push_unique_tool(tools: &mut Vec<String>, tool: &str) {
+    if tool.is_empty() {
+        return;
+    }
+    if !tools.iter().any(|existing| existing == tool) {
+        tools.push(tool.to_string());
+    }
+}
+
+fn tool_refs(tools: &[String]) -> Vec<&str> {
+    tools.iter().map(String::as_str).collect()
+}
+
+fn selected_native_edit_tools(tools: &[String]) -> Vec<String> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            agent::agent_by_name(tool)
+                .filter(|registered| registered.has_native_edit_adapter)
+                .map(|registered| registered.name.to_string())
+        })
+        .collect()
+}
+
+fn selected_registry_only_tools(tools: &[String]) -> Vec<String> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            agent::agent_by_name(tool)
+                .filter(|registered| !registered.has_native_edit_adapter)
+                .map(|registered| registered.name.to_string())
+        })
+        .collect()
 }
 
 /// 32 MiB: generous enough for any real hook payload, prevents OOM from malformed input.
@@ -184,15 +238,7 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
     }
     let stdin_json = raw.trim();
 
-    let record_opt = match args.tool.as_str() {
-        "claude" => adapter::event::parse_claude(stdin_json),
-        "codex" => adapter::event::parse_codex(stdin_json),
-        "cursor" => adapter::event::parse_cursor(stdin_json),
-        other => {
-            eprintln!("[aitrack] unknown tool: {other}");
-            return Ok(());
-        }
-    };
+    let record_opt = parse_capture_event(stdin_json, &args.tool);
 
     let mut record = match record_opt {
         Some(r) => r,
@@ -281,6 +327,15 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
     Ok(())
 }
 
+fn parse_capture_event(stdin_json: &str, tool: &str) -> Option<domain::model::Record> {
+    if tool.trim().is_empty() {
+        eprintln!("[aitrack] --tool must not be empty");
+        return None;
+    }
+
+    adapter::event::parse_known_agent(tool, stdin_json)
+}
+
 fn handle_inspect(args: cli::InspectArgs) -> Result<()> {
     let limit = args.limit.min(200);
     let conn = open_db()?;
@@ -362,7 +417,7 @@ fn handle_status() -> Result<()> {
     };
     let pending = pending_count(&conn, &token_key);
     let home = dirs::home_dir().expect("cannot find home directory");
-    let (claude, codex, cursor) = detect_tool_statuses(&home);
+    let statuses = detect_tool_statuses(&home);
 
     println!(
         "API URL:      {}",
@@ -389,12 +444,28 @@ fn handle_status() -> Result<()> {
         }
     );
     println!("Pending sync: {pending}");
-    println!(
-        "Hooks:        claude={} codex={} cursor={}",
-        claude, codex, cursor
-    );
+    println!("Agent status:");
+    print_agent_statuses(&statuses);
 
     Ok(())
+}
+
+fn print_agent_statuses(statuses: &std::collections::HashMap<String, bool>) {
+    for registered in agent::registered_agents() {
+        let active = statuses.get(registered.name).copied().unwrap_or(false);
+        let label = if registered.has_native_edit_adapter {
+            if active {
+                "native hook installed"
+            } else {
+                "native hook not installed"
+            }
+        } else if active {
+            "local state detected"
+        } else {
+            "local state not detected"
+        };
+        println!("  {:<13} {}", registered.name, label);
+    }
 }
 
 fn handle_clean(args: cli::CleanArgs) -> Result<()> {
@@ -451,8 +522,16 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
     }
     let stdin_json = raw.trim();
 
-    // Only claude is supported for now; other tools don't have UserPromptSubmit
+    // Only agents with native prompt hooks run prompt capture. Currently Claude.
     if args.tool.as_str() != "claude" {
+        if agent::is_known_agent(args.tool.as_str()) {
+            eprintln!(
+                "[aitrack] known agent has no native prompt-capture hook yet: {}",
+                args.tool
+            );
+        } else {
+            eprintln!("[aitrack] unsupported prompt-capture tool: {}", args.tool);
+        }
         return Ok(());
     }
 
@@ -472,14 +551,15 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Classify the prompt and prepend the category tag so downstream queries
-    // can filter/group without re-parsing the raw text.
-    let category = domain::keywords::classify_prompt(prompt);
-    let tagged = format!("[{}] {}", category.as_str(), prompt);
-
+    // Store only the intent label; raw prompt text stays out of local records
+    // and upload payloads.
     let conn = open_db()?;
-    insert_prompt_context(&conn, session_id, &tagged)?;
+    insert_prompt_context(&conn, session_id, prompt_intent_label(prompt))?;
     Ok(())
+}
+
+fn prompt_intent_label(prompt: &str) -> &'static str {
+    domain::keywords::classify_prompt(prompt).as_str()
 }
 
 #[cfg(test)]
@@ -524,6 +604,7 @@ mod tests {
             claude: false,
             codex: false,
             cursor: false,
+            tool: vec![],
         };
         // Should print message and return Ok without touching FS
         let result = handle_remove(args);
@@ -710,6 +791,76 @@ mod tests {
         .await;
     }
 
+    #[test]
+    fn capture_dispatch_unknown_tool_returns_none() {
+        let json = serde_json::json!({
+            "session_id": "sess-local",
+            "tool_input": {
+                "file_path": "src/local.rs",
+                "old_string": "old\n",
+                "new_string": "new\n"
+            }
+        })
+        .to_string();
+
+        assert!(parse_capture_event(&json, "unsupported-agent").is_none());
+    }
+
+    #[test]
+    fn capture_dispatch_empty_tool_returns_none() {
+        let json = serde_json::json!({
+            "file_path": "src/local.rs",
+            "content": "new\n"
+        })
+        .to_string();
+
+        assert!(parse_capture_event(&json, "").is_none());
+        assert!(parse_capture_event(&json, "  ").is_none());
+    }
+
+    #[test]
+    fn capture_dispatch_unknown_tool_rejects_payloads() {
+        assert!(parse_capture_event(r#"{"session_id":"oops""#, "unsupported-agent").is_none());
+        assert!(parse_capture_event(r#"{"session_id":"missing"}"#, "unsupported-agent").is_none());
+        assert!(parse_capture_event(
+            r#"{"file_path":"src/missing-content.rs","metadata":{"request_id":"req"}}"#,
+            "unsupported-agent"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn agent_capture_known_without_native_edit_adapter_returns_none() {
+        assert!(crate::agent::agent_by_name("qwen").is_some());
+        assert!(
+            !crate::agent::agent_by_name("qwen")
+                .unwrap()
+                .has_native_edit_adapter
+        );
+
+        let json = serde_json::json!({
+            "session_id": "sess-local",
+            "tool_input": {
+                "file_path": "src/local.rs",
+                "old_string": "old\n",
+                "new_string": "new\n"
+            }
+        })
+        .to_string();
+
+        assert!(parse_capture_event(&json, "qwen").is_none());
+    }
+
+    #[test]
+    fn prompt_capture_label_excludes_raw_prompt_text() {
+        let raw_prompt = "fix leaked customer token in checkout.rs";
+        let label = prompt_intent_label(raw_prompt);
+
+        assert_eq!(label, "fix_debug");
+        assert!(!label.contains("customer"));
+        assert!(!label.contains("checkout"));
+    }
+
     // -------------------------------------------------------------------------
     // run() dispatch: Heartbeat (no config → Ok, prints error internally)
     // -------------------------------------------------------------------------
@@ -762,6 +913,7 @@ mod tests {
                 claude: false,
                 codex: false,
                 cursor: false,
+                tool: vec![],
                 api_url: None,
                 credential: None,
             };
@@ -782,6 +934,7 @@ mod tests {
             claude: true,
             codex: false,
             cursor: false,
+            tool: vec![],
         };
         let result = handle_remove(args);
         std::env::remove_var("AITRACK_HOME");
