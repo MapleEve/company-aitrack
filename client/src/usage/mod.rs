@@ -543,11 +543,17 @@ fn skip_dir(path: &Path) -> bool {
 }
 
 fn is_supported_file(path: &Path) -> bool {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("json") | Some("jsonl") | Some("ndjson") | Some("log") | Some("csv") | Some("db")
-        | Some("sqlite") | Some("sqlite3") => true,
-        _ => false,
-    }
+    matches!(
+        path.extension().and_then(|s| s.to_str()),
+        Some("json")
+            | Some("jsonl")
+            | Some("ndjson")
+            | Some("log")
+            | Some("csv")
+            | Some("db")
+            | Some("sqlite")
+            | Some("sqlite3")
+    )
 }
 
 fn scan_source_file(tool: &str, path: &Path) -> Result<ScanResult> {
@@ -622,7 +628,7 @@ fn scan_csv_file(tool: &str, path: &Path) -> Result<ScanResult> {
         let row = headers
             .iter()
             .cloned()
-            .zip(values.into_iter())
+            .zip(values)
             .collect::<HashMap<_, _>>();
         if let Some(msg) = usage_from_csv(tool, path, idx, &row) {
             result.messages.push(msg);
