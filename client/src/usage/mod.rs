@@ -154,6 +154,8 @@ struct RollupItem {
     tokens_cache_read: i64,
     tokens_cache_write: i64,
     tokens_reasoning: i64,
+    message_count: i64,
+    source_cost: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +320,7 @@ fn open_usage_db() -> Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     conn.execute_batch(SCHEMA).context("create usage schema")?;
+    ensure_usage_schema(&conn)?;
     Ok(conn)
 }
 
@@ -358,6 +361,7 @@ CREATE TABLE IF NOT EXISTS usage_daily_model_rollups (
   tokens_cache_write INTEGER NOT NULL DEFAULT 0,
   tokens_reasoning INTEGER NOT NULL DEFAULT 0,
   message_count INTEGER NOT NULL DEFAULT 0,
+  source_cost REAL NOT NULL DEFAULT 0,
   dirty INTEGER NOT NULL DEFAULT 1,
   uploaded_at TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -404,6 +408,51 @@ CREATE TABLE IF NOT EXISTS usage_monitoring_seen (
   inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 "#;
+
+fn ensure_usage_schema(conn: &Connection) -> Result<()> {
+    add_column_if_missing(
+        conn,
+        "usage_daily_model_rollups",
+        "message_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(
+        conn,
+        "usage_daily_model_rollups",
+        "source_cost",
+        "REAL NOT NULL DEFAULT 0",
+    )?;
+    Ok(())
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM pragma_table_info({}) WHERE name = ?1",
+        quote_sql_string(table)
+    );
+    let exists: i64 = conn.query_row(&sql, params![column], |row| row.get(0))?;
+    if exists == 0 {
+        conn.execute(
+            &format!(
+                "ALTER TABLE {} ADD COLUMN {} {}",
+                quote_identifier(table),
+                quote_identifier(column),
+                definition
+            ),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn quote_sql_string(raw: &str) -> String {
+    format!("'{}'", raw.replace('\'', "''"))
+}
 
 fn scan_local_sources(options: &UsageScanOptions) -> Result<ScanResult> {
     let home = scan_home().context("cannot find home directory")?;
@@ -453,9 +502,9 @@ fn scan_home() -> Option<PathBuf> {
 
 fn selected_scan_tools(raw: &[String]) -> Vec<String> {
     if raw.is_empty() {
-        return agent::registered_agents()
-            .iter()
-            .map(|a| a.name.to_string())
+        return agent::default_scan_agent_names()
+            .into_iter()
+            .map(ToString::to_string)
             .collect();
     }
     let mut out = Vec::new();
@@ -469,39 +518,20 @@ fn selected_scan_tools(raw: &[String]) -> Vec<String> {
 }
 
 fn scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(registered) = agent::agent_by_name(tool) {
-        roots.push(registered.marker_path(home));
-    } else {
-        roots.push(home.join(format!(".{tool}")));
-    }
-
-    match tool {
-        "claude" => {
-            roots.push(home.join(".claude").join("projects"));
-            roots.push(home.join(".claude").join("transcripts"));
-        }
-        "codex" => {
-            roots.push(home.join(".codex").join("sessions"));
-        }
-        "cursor" => {
-            roots.push(home.join("Library/Application Support/Cursor/User/globalStorage"));
-            roots.push(home.join(".config/Cursor/User/globalStorage"));
-        }
-        "trae" => {
-            roots.push(home.join("Library/Application Support/Trae"));
-            roots.push(home.join(".config/Trae"));
-        }
-        "opencode" => {
-            roots.push(home.join(".local/share/opencode"));
-            roots.push(home.join(".config/opencode"));
-        }
-        _ => {}
-    }
-
+    let mut roots = agent::default_scan_roots(home, tool);
     roots.push(crate::config::config_dir().join("sources").join(tool));
     roots.push(crate::config::config_dir().join("cache").join(tool));
-    roots
+    dedup_paths(roots)
+}
+
+fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for path in paths {
+        if !out.iter().any(|existing| existing == &path) {
+            out.push(path);
+        }
+    }
+    out
 }
 
 fn collect_supported_files(root: &Path, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
@@ -934,6 +964,7 @@ fn collect_events_recursive(
                 None
             };
 
+            let mut suppress_child_events = false;
             if let Some(kind) = event_type {
                 let timestamp_ms =
                     timestamp_ms_from_value(value).or_else(|| timestamp_ms_from_value(root));
@@ -1007,19 +1038,22 @@ fn collect_events_recursive(
                     diff_hunk,
                     metadata,
                 });
+                suppress_child_events = kind == "prompt";
             }
 
-            for child in map.values() {
-                collect_events_recursive(
-                    tool,
-                    path,
-                    row_key,
-                    root,
-                    child,
-                    fallback_timestamp_ms,
-                    index,
-                    out,
-                );
+            if !suppress_child_events {
+                for child in map.values() {
+                    collect_events_recursive(
+                        tool,
+                        path,
+                        row_key,
+                        root,
+                        child,
+                        fallback_timestamp_ms,
+                        index,
+                        out,
+                    );
+                }
             }
         }
         Value::Array(items) => {
@@ -1378,7 +1412,8 @@ fn rebuild_rollups(conn: &mut Connection) -> Result<usize> {
         let mut stmt = tx.prepare(
             "SELECT day, agent, model, account,
                     SUM(tokens_in), SUM(tokens_out), SUM(tokens_cache_read),
-                    SUM(tokens_cache_write), SUM(tokens_reasoning), SUM(message_count)
+                    SUM(tokens_cache_write), SUM(tokens_reasoning), SUM(message_count),
+                    SUM(source_cost)
              FROM usage_sessions
              GROUP BY day, agent, model, account
              ORDER BY day, agent, model, account",
@@ -1395,6 +1430,7 @@ fn rebuild_rollups(conn: &mut Connection) -> Result<usize> {
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, i64>(9)?,
+                row.get::<_, f64>(10)?,
             ))
         })?;
         mapped.collect::<rusqlite::Result<Vec<_>>>()?
@@ -1412,13 +1448,14 @@ fn rebuild_rollups(conn: &mut Connection) -> Result<usize> {
         tokens_cache_write,
         tokens_reasoning,
         message_count,
+        source_cost,
     ) in rows
     {
         upserted += tx.execute(
             "INSERT INTO usage_daily_model_rollups
              (device_id, day, agent, model, account, tokens_in, tokens_out, tokens_cache_read,
-              tokens_cache_write, tokens_reasoning, message_count, dirty, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, datetime('now'))
+              tokens_cache_write, tokens_reasoning, message_count, source_cost, dirty, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, datetime('now'))
              ON CONFLICT(device_id, day, agent, model, account) DO UPDATE SET
                tokens_in = excluded.tokens_in,
                tokens_out = excluded.tokens_out,
@@ -1426,6 +1463,7 @@ fn rebuild_rollups(conn: &mut Connection) -> Result<usize> {
                tokens_cache_write = excluded.tokens_cache_write,
                tokens_reasoning = excluded.tokens_reasoning,
                message_count = excluded.message_count,
+               source_cost = excluded.source_cost,
                dirty = 1,
                updated_at = datetime('now')",
             params![
@@ -1440,6 +1478,7 @@ fn rebuild_rollups(conn: &mut Connection) -> Result<usize> {
                 tokens_cache_write,
                 tokens_reasoning,
                 message_count,
+                source_cost,
             ],
         )?;
     }
@@ -1648,7 +1687,7 @@ fn collect_files_with_extension(root: &Path, extension: &str, out: &mut Vec<Path
 fn enqueue_dirty_rollups(conn: &Connection, device_id: &str) -> Result<usize> {
     let mut stmt = conn.prepare(
         "SELECT device_id, day, agent, model, account, tokens_in, tokens_out,
-                tokens_cache_read, tokens_cache_write, tokens_reasoning
+                tokens_cache_read, tokens_cache_write, tokens_reasoning, message_count, source_cost
          FROM usage_daily_model_rollups
          WHERE dirty = 1
          ORDER BY day, agent, model, account
@@ -1667,6 +1706,8 @@ fn enqueue_dirty_rollups(conn: &Connection, device_id: &str) -> Result<usize> {
                 tokens_cache_read: row.get(7)?,
                 tokens_cache_write: row.get(8)?,
                 tokens_reasoning: row.get(9)?,
+                message_count: row.get(10)?,
+                source_cost: row.get(11)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1935,6 +1976,16 @@ fn prompt_text_from_object(map: &Map<String, Value>) -> Option<String> {
         }
         if let Some(text) = string_from_object(map, &["text", "message"]) {
             return Some(text);
+        }
+    }
+    for key in PROMPT_KEYS {
+        if let Some(value) = get_case_insensitive(map, key) {
+            if let Some(text) = content_text(Some(value)).or_else(|| value_as_string(value)) {
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    return Some(text);
+                }
+            }
         }
     }
     string_from_object(map, PROMPT_KEYS).or_else(|| {
@@ -2207,7 +2258,11 @@ fn parse_timestamp_ms_str(raw: &str) -> Option<i64> {
 }
 
 fn normalize_epoch_ms(raw: i64) -> i64 {
-    if raw > 10_000_000_000 {
+    if raw > 10_000_000_000_000_000 {
+        raw / 1_000_000
+    } else if raw > 10_000_000_000_000 {
+        raw / 1_000
+    } else if raw > 10_000_000_000 {
         raw
     } else {
         raw.saturating_mul(1000)
@@ -2337,6 +2392,9 @@ const INPUT_TOKEN_KEYS: &[&str] = &[
     "inputTokens",
     "promptTokens",
     "total_input_tokens",
+    "usage.input_tokens",
+    "gen_ai.usage.input_tokens",
+    "inputTokenCount",
 ];
 const OUTPUT_TOKEN_KEYS: &[&str] = &[
     "output_tokens",
@@ -2345,6 +2403,9 @@ const OUTPUT_TOKEN_KEYS: &[&str] = &[
     "outputTokens",
     "completionTokens",
     "total_output_tokens",
+    "usage.output_tokens",
+    "gen_ai.usage.output_tokens",
+    "outputTokenCount",
 ];
 const CACHE_READ_TOKEN_KEYS: &[&str] = &[
     "cache_read_input_tokens",
@@ -2352,6 +2413,9 @@ const CACHE_READ_TOKEN_KEYS: &[&str] = &[
     "cache_read_tokens",
     "tokens_cache_read",
     "cacheReadInputTokens",
+    "cachedContentTokenCount",
+    "usage.cache_read_tokens",
+    "gen_ai.usage.cache_read.input_tokens",
 ];
 const CACHE_WRITE_TOKEN_KEYS: &[&str] = &[
     "cache_creation_input_tokens",
@@ -2359,13 +2423,53 @@ const CACHE_WRITE_TOKEN_KEYS: &[&str] = &[
     "cache_write_tokens",
     "tokens_cache_write",
     "cacheCreationInputTokens",
+    "usage.cache_write_tokens",
+    "gen_ai.usage.cache_creation.input_tokens",
+    "gen_ai.usage.cache_write.input_tokens",
 ];
-const REASONING_TOKEN_KEYS: &[&str] = &["reasoning_tokens", "tokens_reasoning", "reasoningTokens"];
-const TOTAL_TOKEN_KEYS: &[&str] = &["total_tokens", "tokens_total", "totalTokens"];
+const REASONING_TOKEN_KEYS: &[&str] = &[
+    "reasoning_tokens",
+    "tokens_reasoning",
+    "reasoningTokens",
+    "thoughtsTokenCount",
+    "usage.reasoning_tokens",
+    "gen_ai.usage.reasoning_tokens",
+    "gen_ai.usage.reasoning.output_tokens",
+];
+const TOTAL_TOKEN_KEYS: &[&str] = &[
+    "total_tokens",
+    "tokens_total",
+    "totalTokens",
+    "totalTokenCount",
+    "usage.total_tokens",
+    "gen_ai.usage.total_tokens",
+];
 const MESSAGE_COUNT_KEYS: &[&str] = &["message_count", "messages", "messageCount"];
-const COST_KEYS: &[&str] = &["cost", "source_cost", "total_cost"];
-const MODEL_KEYS: &[&str] = &["model", "model_id", "modelId", "model_name", "modelName"];
-const PROVIDER_KEYS: &[&str] = &["provider", "provider_id", "providerId"];
+const COST_KEYS: &[&str] = &[
+    "cost",
+    "source_cost",
+    "total_cost",
+    "usage.total_cost",
+    "gen_ai.usage.total_cost",
+];
+const MODEL_KEYS: &[&str] = &[
+    "model",
+    "model_id",
+    "modelId",
+    "model_name",
+    "modelName",
+    "gen_ai.request.model",
+    "gen_ai.response.model",
+];
+const PROVIDER_KEYS: &[&str] = &[
+    "provider",
+    "provider_id",
+    "providerId",
+    "provider_name",
+    "providerName",
+    "gen_ai.provider.name",
+    "gen_ai.system",
+];
 const SESSION_KEYS: &[&str] = &[
     "session_id",
     "sessionId",
@@ -2374,18 +2478,39 @@ const SESSION_KEYS: &[&str] = &[
     "chat_id",
     "thread_id",
     "threadId",
+    "gen_ai.session.id",
+    "gen_ai.conversation.id",
 ];
-const ACCOUNT_KEYS: &[&str] = &["account", "email", "user_email", "userEmail"];
+const ACCOUNT_KEYS: &[&str] = &[
+    "account",
+    "email",
+    "user_email",
+    "userEmail",
+    "user.id",
+    "user.email",
+];
 const TIMESTAMP_KEYS: &[&str] = &[
     "timestamp",
+    "timestamp_ms",
+    "timestampMs",
     "ts",
     "time",
+    "time_unix_nano",
+    "timeUnixNano",
+    "observed_time_unix_nano",
+    "observedTimeUnixNano",
+    "time_unix_milli",
+    "timeUnixMilli",
     "created_at",
     "createdAt",
+    "created_at_ms",
+    "createdAtMs",
     "created",
     "date",
     "started_at",
+    "startedAt",
     "updated_at",
+    "updatedAt",
 ];
 const PROMPT_KEYS: &[&str] = &[
     "prompt",
@@ -2393,9 +2518,22 @@ const PROMPT_KEYS: &[&str] = &[
     "userPrompt",
     "input_text",
     "inputText",
+    "input.messages",
+    "input.messages_delta",
+    "gen_ai.input.messages",
+    "gen_ai.input.messages_delta",
+    "gen_ai.prompt",
+    "message.content",
     "message",
 ];
-const TOOL_NAME_KEYS: &[&str] = &["tool_name", "toolName", "tool", "name"];
+const TOOL_NAME_KEYS: &[&str] = &[
+    "tool_name",
+    "toolName",
+    "tool",
+    "name",
+    "tool.name",
+    "gen_ai.tool.name",
+];
 const FILE_PATH_KEYS: &[&str] = &[
     "file_path",
     "filePath",
@@ -2404,6 +2542,8 @@ const FILE_PATH_KEYS: &[&str] = &[
     "file",
     "target_file",
     "targetFile",
+    "tool.file.path",
+    "gen_ai.tool.file.path",
 ];
 const OLD_TEXT_KEYS: &[&str] = &["old_string", "old_str", "oldString", "old"];
 const NEW_TEXT_KEYS: &[&str] = &["new_string", "new_str", "newString", "new", "content"];
@@ -2414,6 +2554,9 @@ const WORKSPACE_KEYS: &[&str] = &[
     "workspacePath",
     "project_path",
     "projectPath",
+    "session.directory",
+    "workspace.directory",
+    "gen_ai.session.directory",
 ];
 const WINDOW_KEYS: &[&str] = &[
     "window_title",
@@ -2519,15 +2662,30 @@ mod tests {
             let mut conn = open_usage_db().unwrap();
             insert_usage_sessions(&mut conn, &[make_message(1), make_message(2)]).unwrap();
             assert_eq!(rebuild_rollups(&mut conn).unwrap(), 1);
-            let row: (i64, i64, i64, i64, i64) = conn
+            let row: (i64, i64, i64, i64, i64, i64, f64) = conn
                 .query_row(
-                    "SELECT tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, tokens_reasoning
+                    "SELECT tokens_in, tokens_out, tokens_cache_read, tokens_cache_write,
+                            tokens_reasoning, message_count, source_cost
                      FROM usage_daily_model_rollups",
                     [],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                        ))
+                    },
                 )
                 .unwrap();
-            assert_eq!(row, (20, 40, 6, 8, 10));
+            assert_eq!(
+                (row.0, row.1, row.2, row.3, row.4, row.5),
+                (20, 40, 6, 8, 10, 2)
+            );
+            assert!((row.6 - 0.02).abs() < f64::EPSILON);
         });
     }
 
@@ -2569,6 +2727,93 @@ mod tests {
             assert_eq!(report.monitoring_events_parsed, 1);
             assert_eq!(report.sessions_inserted, 1);
             assert_eq!(report.monitoring_records_inserted, 1);
+        });
+    }
+
+    #[test]
+    fn json_scan_extracts_dotted_local_telemetry_fields_for_registered_agents() {
+        with_home(|home| {
+            let dir = home.join(".copilot").join("session-state").join("default");
+            fs::create_dir_all(&dir).unwrap();
+            let lines = [
+                serde_json::json!({
+                    "time_unix_nano": 1_781_604_000_000_000_000_i64,
+                    "gen_ai.session.id": "copilot-session",
+                    "gen_ai.provider.name": "github",
+                    "gen_ai.request.model": "gpt-5",
+                    "gen_ai.usage.input_tokens": 11,
+                    "gen_ai.usage.output_tokens": 13,
+                    "gen_ai.usage.cache_read.input_tokens": 5,
+                    "gen_ai.input.messages_delta": [
+                        {"content": "review local telemetry"}
+                    ]
+                }),
+                serde_json::json!({
+                    "time_unix_nano": 1_781_604_001_000_000_000_i64,
+                    "gen_ai.session.id": "copilot-session",
+                    "gen_ai.request.model": "gpt-5",
+                    "gen_ai.tool.name": "Read"
+                }),
+            ]
+            .into_iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+            fs::write(dir.join("events.jsonl"), lines).unwrap();
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["copilot".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+
+            assert_eq!(report.parsed_messages, 1);
+            assert_eq!(report.monitoring_events_parsed, 2);
+            let row: (String, String, String, String, i64, i64, i64) = conn
+                .query_row(
+                    "SELECT day, agent, provider, model, tokens_in, tokens_out, tokens_cache_read
+                     FROM usage_sessions",
+                    [],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                row,
+                (
+                    "2026-06-16".to_string(),
+                    "copilot".to_string(),
+                    "github".to_string(),
+                    "gpt-5".to_string(),
+                    11,
+                    13,
+                    5
+                )
+            );
+
+            let rows = monitoring_rows();
+            let types = rows
+                .iter()
+                .map(|row| event_type(&row.0))
+                .collect::<Vec<_>>();
+            assert_eq!(types, vec!["prompt", "tool"]);
+            assert_eq!(rows[0].1.as_deref(), Some("review local telemetry"));
+            assert!(rows[1].2.starts_with("__aitrack__/copilot/Read/"));
         });
     }
 
@@ -3251,6 +3496,10 @@ mod tests {
         assert_eq!(
             day_from_timestamp_ms(parse_timestamp_ms_str("1789000000").unwrap()),
             "2026-09-10"
+        );
+        assert_eq!(
+            parse_timestamp_ms_str("1781604000000000000"),
+            Some(1_781_604_000_000)
         );
         assert!(parse_timestamp_ms_str("not-a-date").is_none());
         assert!(rfc3339_from_ms(1_789_000_000_000).starts_with("2026-"));

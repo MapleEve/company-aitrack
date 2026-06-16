@@ -50,6 +50,8 @@ public class UsageService {
             entity.setTokensCacheRead(item.getTokensCacheRead());
             entity.setTokensCacheWrite(item.getTokensCacheWrite());
             entity.setTokensReasoning(item.getTokensReasoning());
+            entity.setMessageCount(Math.max(0, item.getMessageCount()));
+            entity.setSourceCost(Math.max(0.0, item.getSourceCost()));
             entity.setUpdatedAt(Instant.now());
             dailyRollups.save(entity);
         }
@@ -96,12 +98,16 @@ public class UsageService {
             summary.setTokensCacheRead(summary.getTokensCacheRead() + row.getTokensCacheRead());
             summary.setTokensCacheWrite(summary.getTokensCacheWrite() + row.getTokensCacheWrite());
             summary.setTokensReasoning(summary.getTokensReasoning() + row.getTokensReasoning());
+            summary.setMessageCount(summary.getMessageCount() + row.getMessageCount());
+            summary.setSourceCost(summary.getSourceCost() + row.getSourceCost());
 
             String account = normalizeAccount(row.getAccount());
             String key = row.getTokenKey() + "\u0000" + row.getAgent() + "\u0000" + row.getModel() + "\u0000" + account;
             UsageSummaryItem item = grouped.computeIfAbsent(key, ignored ->
-                new UsageSummaryItem(row.getTokenKey(), row.getAgent(), row.getModel(), account, 0));
+                new UsageSummaryItem(row.getTokenKey(), row.getAgent(), row.getModel(), account, 0, 0, 0.0));
             item.setTotalTokens(item.getTotalTokens() + total(row));
+            item.setMessageCount(item.getMessageCount() + row.getMessageCount());
+            item.setSourceCost(item.getSourceCost() + row.getSourceCost());
         }
         summary.setTotalTokens(
             summary.getTokensIn()

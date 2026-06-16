@@ -90,11 +90,9 @@ aitrack consists of three independent components communicating via Protocol v1.2
 | `claude` | yes | yes | yes: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | yes: local rate-limit snapshot |
 | `codex` | yes | no | yes: `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | yes: session rate-limit snapshot |
 | `cursor` | yes | no | yes: Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
-| `trae` | no | no | yes: local Trae app data, `~/.aitrack/sources/trae`, `~/.aitrack/cache/trae` | yes | no |
-| `opencode` | no | no | yes: local opencode data, `~/.aitrack/sources/opencode`, `~/.aitrack/cache/opencode` | yes | no |
-| generic registered agents | no | no | yes: marker path + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | yes when local logs expose usage fields | no |
+| default local-scan agents | no | no | local agent directories, app data, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | no |
 
-The generic registry currently includes `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `crush`, `codebuff`, `kilo`, `kimi`, `grok`, and `warp`. These tools use the status / heartbeat / local source scan path today; when local JSON, JSONL, CSV, SQLite, or cache files expose prompt, tool, window, edit, or token fields, aitrack routes them into the matching monitoring or usage data plane.
+Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path. When local JSON, JSONL, NDJSON, CSV, SQLite, or cache files expose prompt, tool, window, edit, or token fields, aitrack routes them into the matching monitoring or usage data plane.
 
 ---
 
@@ -154,14 +152,14 @@ Profile data is used solely to understand actual AI tool adoption — it is not 
 
 The client can optionally install a `UserPromptSubmit` hook and can also scan local agent logs, JSONL files, SQLite databases, and caches with `aitrack usage scan|sync`. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from local transcripts.
 
-The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
+The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets, message count, and source cost by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
 
 ### Hexagonal Architecture and Secure Auto-Update (v1.6+)
 
 - The Rust client has been refactored to hexagonal architecture (domain / port / adapter three-layer), with all I/O routed through `StoragePort` / `UploadPort` interfaces — business logic fully decoupled from infrastructure
 - `aitrack update` subcommand: fetches the latest release from GitHub Releases and atomically replaces the current binary after ed25519 signature verification
 - Keyword library tamper protection: keywords are hardcoded as compile-time constants; `keyword_fingerprint()` computes a SHA-256 fingerprint for server-side verification
-- All three components have coverage ≥ 90% (Rust 292 tests / Java 218 tests / Go 244 tests)
+- All three components have coverage ≥ 90% (Rust 295 tests / Java 225 tests / Go package tests)
 
 ---
 

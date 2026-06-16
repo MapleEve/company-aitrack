@@ -27,11 +27,9 @@ Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生�
 | `claude` | 是 | 是 | `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地 rate-limit snapshot |
 | `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | session rate-limit snapshot |
 | `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
-| `trae` | 否 | 否 | Trae 本地应用数据、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | 是 | 否 |
-| `opencode` | 否 | 否 | opencode 本地数据、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | 是 | 否 |
-| generic registered agents | 否 | 否 | marker 路径 + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | 取决于本地日志字段 | 否 |
+| default local-scan agents | 否 | 否 | 本地 agent 目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、message count、source cost | 否 |
 
-通用 registry key 当前包括：`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp`。这些 key 可以出现在 `heartbeat.hooks`、`GET /devices`、usage rollup 的 `agent` 字段和 transcript 扫描生成的监控事件中。
+默认本地扫描覆盖：`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用 canonical key，避免同一路径重复入库。这些 key 可以出现在 `heartbeat.hooks`、`GET /devices`、usage rollup 的 `agent` 字段和 transcript 扫描生成的监控事件中。
 
 ---
 
@@ -565,7 +563,9 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
       "tokens_out": 20,
       "tokens_cache_read": 3,
       "tokens_cache_write": 4,
-      "tokens_reasoning": 5
+      "tokens_reasoning": 5,
+      "message_count": 2,
+      "source_cost": 0.25
     }
   ]
 }
@@ -620,8 +620,10 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
   "tokens_cache_read": 0,
   "tokens_cache_write": 0,
   "tokens_reasoning": 7,
+  "message_count": 3,
+  "source_cost": 0.25,
   "items": [
-    {"token_key": "abcdef…7890", "agent": "codex", "model": "gpt-5", "account": "local", "total_tokens": 40}
+    {"token_key": "abcdef…7890", "agent": "codex", "model": "gpt-5", "account": "local", "total_tokens": 40, "message_count": 3, "source_cost": 0.25}
   ]
 }
 ```

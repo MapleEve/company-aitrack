@@ -125,6 +125,8 @@ func postgresDDL() []string {
   tokens_cache_read   BIGINT NOT NULL DEFAULT 0,
   tokens_cache_write  BIGINT NOT NULL DEFAULT 0,
   tokens_reasoning    BIGINT NOT NULL DEFAULT 0,
+  message_count       BIGINT NOT NULL DEFAULT 0,
+  source_cost         DOUBLE PRECISION NOT NULL DEFAULT 0,
   updated_at          TEXT NOT NULL,
   UNIQUE(token_key, device_id, day, agent, model, account)
 )`,
@@ -152,5 +154,7 @@ func postgresDDL() []string {
 		// Additive migrations for existing PostgreSQL databases.
 		`ALTER TABLE edit_records ADD COLUMN IF NOT EXISTS prompt_summary TEXT`,
 		`ALTER TABLE edit_records ADD COLUMN IF NOT EXISTS embedding BYTEA`,
+		`ALTER TABLE usage_daily_rollups ADD COLUMN IF NOT EXISTS message_count BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE usage_daily_rollups ADD COLUMN IF NOT EXISTS source_cost DOUBLE PRECISION NOT NULL DEFAULT 0`,
 	}
 }

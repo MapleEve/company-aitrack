@@ -48,14 +48,14 @@ func (e *testEnv) signedUsageRequest(method, path string, body []byte) *http.Req
 
 func TestUsageRollupIngestAndSummary(t *testing.T) {
 	env := newTestEnv(t)
-	body := []byte(`{"items":[{"device_id":"usage-device-1","day":"2026-06-16","agent":"codex","model":"gpt-5","account":"openai","tokens_in":10,"tokens_out":20,"tokens_cache_read":3,"tokens_cache_write":4,"tokens_reasoning":5}]}`)
+	body := []byte(`{"items":[{"device_id":"usage-device-1","day":"2026-06-16","agent":"codex","model":"gpt-5","account":"openai","tokens_in":10,"tokens_out":20,"tokens_cache_read":3,"tokens_cache_write":4,"tokens_reasoning":5,"message_count":2,"source_cost":0.12}]}`)
 
 	req := env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
 	w := do(env.router, req)
 	assertStatus(t, w, http.StatusOK)
 
 	// Idempotent overwrite: same natural key with different values should not double count.
-	body = []byte(`{"items":[{"device_id":"usage-device-1","day":"2026-06-16","agent":"codex","model":"gpt-5","account":"openai","tokens_in":11,"tokens_out":22,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":7}]}`)
+	body = []byte(`{"items":[{"device_id":"usage-device-1","day":"2026-06-16","agent":"codex","model":"gpt-5","account":"openai","tokens_in":11,"tokens_out":22,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":7,"message_count":3,"source_cost":0.25}]}`)
 	req = env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
 	w = do(env.router, req)
 	assertStatus(t, w, http.StatusOK)
@@ -67,6 +67,12 @@ func TestUsageRollupIngestAndSummary(t *testing.T) {
 	decodeJSON(t, w, &resp)
 	if got := int(resp["total_tokens"].(float64)); got != 40 {
 		t.Fatalf("total_tokens = %d, want 40", got)
+	}
+	if got := int(resp["message_count"].(float64)); got != 3 {
+		t.Fatalf("message_count = %d, want 3", got)
+	}
+	if got := resp["source_cost"].(float64); got != 0.25 {
+		t.Fatalf("source_cost = %f, want 0.25", got)
 	}
 }
 

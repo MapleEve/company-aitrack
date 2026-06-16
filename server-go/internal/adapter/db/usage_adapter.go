@@ -33,18 +33,20 @@ func (r *UsageAdapter) UpsertRollups(tokenKey string, items []model.UsageRollupI
 		if _, err := tx.Exec(`
 			INSERT INTO usage_daily_rollups
 			  (token_key, device_id, day, agent, model, account, tokens_in, tokens_out,
-			   tokens_cache_read, tokens_cache_write, tokens_reasoning, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			   tokens_cache_read, tokens_cache_write, tokens_reasoning, message_count, source_cost, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			ON CONFLICT(token_key, device_id, day, agent, model, account) DO UPDATE SET
 			  tokens_in = excluded.tokens_in,
 			  tokens_out = excluded.tokens_out,
 			  tokens_cache_read = excluded.tokens_cache_read,
 			  tokens_cache_write = excluded.tokens_cache_write,
 			  tokens_reasoning = excluded.tokens_reasoning,
+			  message_count = excluded.message_count,
+			  source_cost = excluded.source_cost,
 			  updated_at = excluded.updated_at`,
 			tokenKey, item.DeviceID, item.Day, item.Agent, item.Model, item.Account,
 			item.TokensIn, item.TokensOut, item.TokensCacheRead, item.TokensCacheWrite,
-			item.TokensReasoning, now,
+			item.TokensReasoning, item.MessageCount, item.SourceCost, now,
 		); err != nil {
 			return err
 		}
@@ -82,7 +84,8 @@ func (r *UsageAdapter) Summary(tokenKey, fromDay, toDay, agent string, limit int
 	}
 	rows, err := r.db.Query(`
 		SELECT token_key, agent, model, account,
-		       SUM(tokens_in + tokens_out + tokens_cache_read + tokens_cache_write + tokens_reasoning) AS total_tokens
+		       SUM(tokens_in + tokens_out + tokens_cache_read + tokens_cache_write + tokens_reasoning) AS total_tokens,
+		       COALESCE(SUM(message_count),0), COALESCE(SUM(source_cost),0)
 		FROM usage_daily_rollups
 		WHERE ($1 = '' OR token_key = $1)
 		  AND ($2 = '' OR day >= $2)
@@ -101,10 +104,20 @@ func (r *UsageAdapter) Summary(tokenKey, fromDay, toDay, agent string, limit int
 	summary := &model.UsageSummary{}
 	for rows.Next() {
 		var item model.UsageSummaryItem
-		if err := rows.Scan(&item.TokenKey, &item.Agent, &item.Model, &item.Account, &item.TotalTokens); err != nil {
+		if err := rows.Scan(
+			&item.TokenKey,
+			&item.Agent,
+			&item.Model,
+			&item.Account,
+			&item.TotalTokens,
+			&item.MessageCount,
+			&item.SourceCost,
+		); err != nil {
 			return nil, err
 		}
 		summary.TotalTokens += item.TotalTokens
+		summary.MessageCount += item.MessageCount
+		summary.SourceCost += item.SourceCost
 		summary.Items = append(summary.Items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -114,7 +127,8 @@ func (r *UsageAdapter) Summary(tokenKey, fromDay, toDay, agent string, limit int
 	row := r.db.QueryRow(`
 		SELECT COALESCE(SUM(tokens_in),0), COALESCE(SUM(tokens_out),0),
 		       COALESCE(SUM(tokens_cache_read),0), COALESCE(SUM(tokens_cache_write),0),
-		       COALESCE(SUM(tokens_reasoning),0)
+		       COALESCE(SUM(tokens_reasoning),0), COALESCE(SUM(message_count),0),
+		       COALESCE(SUM(source_cost),0)
 		FROM usage_daily_rollups
 		WHERE ($1 = '' OR token_key = $1)
 		  AND ($2 = '' OR day >= $2)
@@ -128,6 +142,8 @@ func (r *UsageAdapter) Summary(tokenKey, fromDay, toDay, agent string, limit int
 		&summary.TokensCacheRead,
 		&summary.TokensCacheWrite,
 		&summary.TokensReasoning,
+		&summary.MessageCount,
+		&summary.SourceCost,
 	); err != nil {
 		return nil, err
 	}

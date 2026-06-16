@@ -16,4 +16,8 @@ public class UsageSummaryItem {
     private String account;
     @JsonProperty("total_tokens")
     private long totalTokens;
+    @JsonProperty("message_count")
+    private long messageCount;
+    @JsonProperty("source_cost")
+    private double sourceCost;
 }

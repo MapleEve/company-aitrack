@@ -78,17 +78,19 @@ class UsageControllerTest {
     @Test
     void rollup_identityJson_ingestsAndSummarizes() throws Exception {
         byte[] first = objectMapper.writeValueAsBytes(Map.of(
-            "items", java.util.List.of(Map.of(
-                "device_id", "usage-device-java",
-                "day", "2026-06-16",
-                "agent", "codex",
-                "model", "gpt-5",
-                "account", "local",
-                "tokens_in", 10,
-                "tokens_out", 20,
-                "tokens_cache_read", 3,
-                "tokens_cache_write", 4,
-                "tokens_reasoning", 5
+            "items", java.util.List.of(Map.ofEntries(
+                Map.entry("device_id", "usage-device-java"),
+                Map.entry("day", "2026-06-16"),
+                Map.entry("agent", "codex"),
+                Map.entry("model", "gpt-5"),
+                Map.entry("account", "local"),
+                Map.entry("tokens_in", 10),
+                Map.entry("tokens_out", 20),
+                Map.entry("tokens_cache_read", 3),
+                Map.entry("tokens_cache_write", 4),
+                Map.entry("tokens_reasoning", 5),
+                Map.entry("message_count", 2),
+                Map.entry("source_cost", 0.12)
             ))
         ));
 
@@ -97,17 +99,19 @@ class UsageControllerTest {
             .andExpect(jsonPath("$.accepted", is(1)));
 
         byte[] second = objectMapper.writeValueAsBytes(Map.of(
-            "items", java.util.List.of(Map.of(
-                "device_id", "usage-device-java",
-                "day", "2026-06-16",
-                "agent", "codex",
-                "model", "gpt-5",
-                "account", "local",
-                "tokens_in", 11,
-                "tokens_out", 22,
-                "tokens_cache_read", 0,
-                "tokens_cache_write", 0,
-                "tokens_reasoning", 7
+            "items", java.util.List.of(Map.ofEntries(
+                Map.entry("device_id", "usage-device-java"),
+                Map.entry("day", "2026-06-16"),
+                Map.entry("agent", "codex"),
+                Map.entry("model", "gpt-5"),
+                Map.entry("account", "local"),
+                Map.entry("tokens_in", 11),
+                Map.entry("tokens_out", 22),
+                Map.entry("tokens_cache_read", 0),
+                Map.entry("tokens_cache_write", 0),
+                Map.entry("tokens_reasoning", 7),
+                Map.entry("message_count", 3),
+                Map.entry("source_cost", 0.25)
             ))
         ));
 
@@ -120,6 +124,8 @@ class UsageControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.total_tokens", is(40)))
             .andExpect(jsonPath("$.tokens_in", is(11)))
+            .andExpect(jsonPath("$.message_count", is(3)))
+            .andExpect(jsonPath("$.source_cost", is(0.25)))
             .andExpect(jsonPath("$.items[0].agent", is("codex")));
     }
 

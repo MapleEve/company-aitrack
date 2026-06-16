@@ -52,9 +52,9 @@
 | 不收集的数据 | 技术保障方式 |
 |-------------|-------------|
 | **完整文件内容** | 仅存储 `diff_hunk`（变更部分）。捕获流程不读取或存储工具钩子 payload 之外的任何内容。 |
-| **完整 AI 响应内容** | usage / transcript 扫描面只提取 prompt、tool、window、编辑事件和 token bucket，不把完整 assistant response 作为独立数据面上传。 |
+| **完整 AI 响应内容** | usage / transcript 扫描面只提取 prompt、tool、window、编辑事件和 token bucket、message count、source cost，不把完整 assistant response 作为独立数据面上传。 |
 | **密码、私钥、证书** | 捕获流程包含文件路径合理性检查，自动跳过匹配以下模式的文件：`*.key`、`*.pem`、`*.pfx`、`*.p12`、`*.env`、`*secret*`、`*password*` 等敏感文件名。这些路径不会生成任何记录。 |
-| **完整 AI 对话历史** | 本地 hook / transcript 扫描只抽取 prompt、tool、window、编辑事件和 token bucket 字段，不把完整对话历史作为独立数据面上传。 |
+| **完整 AI 对话历史** | 本地 hook / transcript 扫描只抽取 prompt、tool、window、编辑事件和 token bucket、message count、source cost 字段，不把完整对话历史作为独立数据面上传。 |
 | **凭证中的 HMAC secret 部分** | 凭证由 `<token>-<hmac_secret>` 组成。`hmac_secret` 仅在本地用于计算签名，从不通过网络发送。 |
 | **与编码无关的个人身份信息** | aitrack 不访问开发环境以外的任何系统。 |
 
@@ -143,7 +143,7 @@ aitrack remove --cursor          # 移除 Cursor 钩子
 
 `prompt_summary` 由本地 prompt hook 或 transcript 扫描产生。客户端会保存有界 prompt 内容，并将其作为可选字段附加到编辑记录，用于审计和画像维度。
 
-usage rollup / snapshot 仍是独立标量域，用于 token bucket、quota 和 subscription 状态。它不替代 `EditRecord`，也不会伪造 diff、行数或 `record_sig` 编辑证据。
+usage rollup / snapshot 仍是独立标量域，用于 token bucket、message count、source cost、quota 和 subscription 状态。它不替代 `EditRecord`，也不会伪造 diff、行数或 `record_sig` 编辑证据。
 
 ---
 

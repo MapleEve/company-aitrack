@@ -90,11 +90,9 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 | `claude` | あり | あり | あり: `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | あり | あり: ローカル rate-limit snapshot |
 | `codex` | あり | なし | あり: `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | あり | あり: session rate-limit snapshot |
 | `cursor` | あり | なし | あり: Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | あり | なし |
-| `trae` | なし | なし | あり: Trae ローカルアプリデータ、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | あり | なし |
-| `opencode` | なし | なし | あり: opencode ローカルデータ、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | あり | なし |
-| generic registered agents | なし | なし | あり: marker パス + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | ローカルログに usage フィールドがある場合あり | なし |
+| default local-scan agents | なし | なし | ローカル agent ディレクトリ、アプリデータ、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、message count、source cost | なし |
 
-汎用 registry には `qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp` が登録されています。これらは現在 status / heartbeat / local source scan の経路を使います。ローカル JSON、JSONL、CSV、SQLite、キャッシュに prompt、tool、window、edit、token フィールドが含まれていれば、aitrack は対応する監視または usage データ面へ取り込みます。
+デフォルトのローカルスキャンは `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode` を対象にします。明示的な `--tool` では `roocode`、`kilo-code`、`gajae-code` も alias として受け付けます。デフォルトスキャンは canonical key を使い、同じローカルパスの二重取り込みを避けます。ローカル JSON、JSONL、NDJSON、CSV、SQLite、キャッシュに prompt、tool、window、edit、token フィールドが含まれていれば、aitrack は対応する監視または usage データ面へ取り込みます。
 
 ---
 
@@ -154,14 +152,14 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 
 クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` でローカル agent のログ、JSONL、SQLite、キャッシュもスキャンできます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、ローカル transcript から prompt、tool、window、編集監視イベントを復元できます。
 
-`usage` サブコマンドは独立した usage rollup / subscription snapshot データ面も維持します。day、agent、model、account ごとに token bucket を集計し、`/api/v1/ai-track/usage/*` API 経由で Java または Go サーバーへアップロードします。
+`usage` サブコマンドは独立した usage rollup / subscription snapshot データ面も維持します。day、agent、model、account ごとに token bucket、message count、source cost を集計し、`/api/v1/ai-track/usage/*` API 経由で Java または Go サーバーへアップロードします。
 
 ### ヘキサゴナルアーキテクチャとセキュアな自動更新（v1.6+）
 
 - Rust クライアントをヘキサゴナルアーキテクチャ（domain / port / adapter の3層）にリファクタリング完了。すべての I/O は `StoragePort` / `UploadPort` インターフェースを通じてルーティングされ、ビジネスロジックとインフラが完全に分離
 - `aitrack update` サブコマンド：GitHub Releases から最新バージョンを取得し、ed25519 署名検証後に現在のバイナリをアトミックに置換
 - キーワードライブラリ改ざん防止：キーワードはコンパイル時定数としてハードコードされ、`keyword_fingerprint()` がサーバー側検証用の SHA-256 フィンガープリントを計算
-- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 292 tests / Java 218 tests / Go 244 tests）
+- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 295 tests / Java 225 tests / Go package tests）
 
 ---
 

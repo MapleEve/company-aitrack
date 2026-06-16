@@ -75,16 +75,18 @@ type UsageRollupRequest struct {
 
 // UsageRollupItem is a day/model/account token bucket aggregate.
 type UsageRollupItem struct {
-	DeviceID         string `json:"device_id"`
-	Day              string `json:"day"`
-	Agent            string `json:"agent"`
-	Model            string `json:"model"`
-	Account          string `json:"account"`
-	TokensIn         int64  `json:"tokens_in"`
-	TokensOut        int64  `json:"tokens_out"`
-	TokensCacheRead  int64  `json:"tokens_cache_read"`
-	TokensCacheWrite int64  `json:"tokens_cache_write"`
-	TokensReasoning  int64  `json:"tokens_reasoning"`
+	DeviceID         string  `json:"device_id"`
+	Day              string  `json:"day"`
+	Agent            string  `json:"agent"`
+	Model            string  `json:"model"`
+	Account          string  `json:"account"`
+	TokensIn         int64   `json:"tokens_in"`
+	TokensOut        int64   `json:"tokens_out"`
+	TokensCacheRead  int64   `json:"tokens_cache_read"`
+	TokensCacheWrite int64   `json:"tokens_cache_write"`
+	TokensReasoning  int64   `json:"tokens_reasoning"`
+	MessageCount     int64   `json:"message_count"`
+	SourceCost       float64 `json:"source_cost"`
 }
 
 // UsageSubscriptionSnapshotRequest is a scalar subscription/quota snapshot.

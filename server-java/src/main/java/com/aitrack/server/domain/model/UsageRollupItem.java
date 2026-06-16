@@ -21,4 +21,8 @@ public class UsageRollupItem {
     private long tokensCacheWrite;
     @JsonProperty("tokens_reasoning")
     private long tokensReasoning;
+    @JsonProperty("message_count")
+    private long messageCount;
+    @JsonProperty("source_cost")
+    private double sourceCost;
 }

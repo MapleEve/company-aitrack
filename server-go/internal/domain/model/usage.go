@@ -15,6 +15,8 @@ type UsageDailyRollup struct {
 	TokensCacheRead  int64
 	TokensCacheWrite int64
 	TokensReasoning  int64
+	MessageCount     int64
+	SourceCost       float64
 	UpdatedAt        time.Time
 }
 
@@ -41,14 +43,18 @@ type UsageSummary struct {
 	TokensCacheRead  int64              `json:"tokens_cache_read"`
 	TokensCacheWrite int64              `json:"tokens_cache_write"`
 	TokensReasoning  int64              `json:"tokens_reasoning"`
+	MessageCount     int64              `json:"message_count"`
+	SourceCost       float64            `json:"source_cost"`
 	Items            []UsageSummaryItem `json:"items"`
 }
 
 // UsageSummaryItem is a token total grouped by token/tool/model.
 type UsageSummaryItem struct {
-	TokenKey    string `json:"token_key"`
-	Agent       string `json:"agent"`
-	Model       string `json:"model"`
-	Account     string `json:"account"`
-	TotalTokens int64  `json:"total_tokens"`
+	TokenKey     string  `json:"token_key"`
+	Agent        string  `json:"agent"`
+	Model        string  `json:"model"`
+	Account      string  `json:"account"`
+	TotalTokens  int64   `json:"total_tokens"`
+	MessageCount int64   `json:"message_count"`
+	SourceCost   float64 `json:"source_cost"`
 }

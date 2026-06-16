@@ -23,6 +23,12 @@ func (s *UsageService) IngestRollups(token *model.Token, req *model.UsageRollupR
 		req.Items[i].Agent = strings.TrimSpace(req.Items[i].Agent)
 		req.Items[i].Model = strings.TrimSpace(req.Items[i].Model)
 		req.Items[i].Account = strings.TrimSpace(req.Items[i].Account)
+		if req.Items[i].MessageCount < 0 {
+			req.Items[i].MessageCount = 0
+		}
+		if req.Items[i].SourceCost < 0 {
+			req.Items[i].SourceCost = 0
+		}
 	}
 	return s.repo.UpsertRollups(token.TokenKey, req.Items)
 }

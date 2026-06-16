@@ -37,10 +37,9 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 
 - Claude Code、Codex CLI、Cursor：已具备 native edit hook adapter，可生成 `EditRecord` 编辑证据。
 - Claude Code：额外支持 native prompt hook；Codex CLI 与 Claude Code 可从本地状态提取 quota / subscription snapshot。
-- Trae、opencode：当前走本地应用数据、source/cache 扫描路线，可提取 prompt、tool、window、edit 与 usage 字段。
 - 动态 agent registry/status/heartbeat：心跳 `hooks` 已按 agent key 动态表达，支持登记更多 agent 的安装状态。
-- generic registry 已登记 `qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp`；这些 agent 当前走 status / heartbeat / local source 扫描路线。
-- local usage source：已支持按本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态接入 usage rollup / snapshot，并可将 transcript 中的 prompt、tool、window 和可还原编辑监控事件补入 `EditRecord` 上报链路。
+- 默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- local usage source：已支持按本机日志、JSONL、NDJSON、SQLite、CSV、缓存和本地客户端状态接入 usage rollup / snapshot，按 token bucket、message count 和 source cost 聚合；同时可将 transcript 中的 prompt、tool、window 和可还原编辑监控事件补入 `EditRecord` 上报链路。
 
 ### 当前成功指标（v1.6.1 基线）
 

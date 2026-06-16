@@ -56,6 +56,12 @@ public class UsageDailyRollupEntity {
     @Column(name = "tokens_reasoning", nullable = false)
     private long tokensReasoning;
 
+    @Column(name = "message_count", nullable = false)
+    private long messageCount;
+
+    @Column(name = "source_cost", nullable = false)
+    private double sourceCost;
+
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 }

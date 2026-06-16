@@ -51,11 +51,9 @@ The heartbeat `hooks` map is intentionally dynamic and keyed by agent registry k
 | `claude` | yes | yes | `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | local rate-limit snapshot |
 | `codex` | yes | no | `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | session rate-limit snapshot |
 | `cursor` | yes | no | Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
-| `trae` | no | no | local Trae app data, `~/.aitrack/sources/trae`, `~/.aitrack/cache/trae` | yes | no |
-| `opencode` | no | no | local opencode data, `~/.aitrack/sources/opencode`, `~/.aitrack/cache/opencode` | yes | no |
-| generic registered agents | no | no | marker path + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | when local logs expose usage fields | no |
+| default local-scan agents | no | no | local agent directories, app data, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | no |
 
-The generic registry currently includes `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `crush`, `codebuff`, `kilo`, `kimi`, `grok`, and `warp`.
+Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path.
 
 ---
 

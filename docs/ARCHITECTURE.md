@@ -53,11 +53,9 @@ aitrack 的开源边界是通用部署与运行时解耦，不是去掉员工、
 | `claude` | 是 | 是 | `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地 rate-limit snapshot |
 | `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | session rate-limit snapshot |
 | `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
-| `trae` | 否 | 否 | Trae 本地应用数据、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | 是 | 否 |
-| `opencode` | 否 | 否 | opencode 本地数据、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | 是 | 否 |
-| generic registered agents | 否 | 否 | marker 路径 + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | 取决于本地日志字段 | 否 |
+| default local-scan agents | 否 | 否 | 本地 agent 目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、message count、source cost | 否 |
 
-通用 registry key 当前包括：`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp`。这些 key 的动态心跳可见性不等于 native edit adapter 已完成；它们当前通过本地 source/cache 扫描把可提取字段送入监控事件域或 usage 标量域。
+默认本地扫描覆盖：`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用 canonical key，避免同一路径重复入库。这些 key 的动态心跳可见性不等于 native edit adapter 已完成；它们当前通过本地 source/cache 扫描把可提取字段送入监控事件域或 usage 标量域。
 
 ---
 
@@ -171,7 +169,7 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 ### 本地 usage / transcript 扫描流
 
 1. `aitrack usage scan|sync` 递归扫描已登记 agent 的本机日志、JSONL、SQLite、CSV 和缓存
-2. 提取 token bucket，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
+2. 提取 token bucket、message count 和 source cost，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
 3. 提取 prompt、tool、window 和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
 4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`
 
