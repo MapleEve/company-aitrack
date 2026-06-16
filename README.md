@@ -83,6 +83,19 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - `EditRecord` 是监控事件域；usage rollup / snapshot 是标量用量域，token-only 或 usage-only 数据不能伪装成监控事件
 - 本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态；aitrack 自动发现可用凭证或入口，不要求用户手动粘第三方 token
 
+**当前 agent 框架支持：**
+
+| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | ✅ | ✅ | ✅ `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | ✅ | ✅ 本地 rate-limit snapshot |
+| `codex` | ✅ | — | ✅ `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | ✅ | ✅ session rate-limit snapshot |
+| `cursor` | ✅ | — | ✅ Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | ✅ | — |
+| `trae` | — | — | ✅ Trae 本地应用数据、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | ✅ | — |
+| `opencode` | — | — | ✅ opencode 本地数据、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | ✅ | — |
+| generic registered agents | — | — | ✅ marker 路径 + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | ✅ 取决于本地日志字段 | — |
+
+通用 registry 已登记：`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp`。这些工具当前走 status / heartbeat / local source 扫描路线；只要本地 JSON、JSONL、CSV、SQLite 或缓存中包含 prompt、tool、window、edit 或 token 字段，就可以进入对应监控或 usage 数据面。
+
 ---
 
 ## 你会得到什么
@@ -148,7 +161,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - Rust 客户端完成六边形架构重构（domain / port / adapter 三层），所有 I/O 通过 `StoragePort` / `UploadPort` 接口路由，业务逻辑与基础设施彻底解耦
 - `aitrack update` 子命令：从 GitHub Releases 拉取最新版本，ed25519 签名验证通过后原子替换当前二进制
 - 关键词库防篡改：关键词以编译期常量硬编码，`keyword_fingerprint()` 计算 SHA-256 指纹供服务端校验
-- 三端覆盖率均 ≥ 90%（Rust 291 tests / Java 218 tests / Go 244 tests）
+- 三端覆盖率均 ≥ 90%（Rust 292 tests / Java 218 tests / Go 244 tests）
 
 ---
 

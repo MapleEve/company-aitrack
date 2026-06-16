@@ -79,9 +79,22 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 **Agent とデータドメインの境界：**
 
 - Claude Code、Codex CLI、Cursor は現在 native edit hook adapter を持ち、diff、行数、リポジトリメタデータ、`record_sig` を含む `EditRecord` を生成できます
-- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できますが、`EditRecord` を生成するには agent 固有のローカル編集イベントを復元できる native edit adapter が必要です
+- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できます。native hook がない場合でも、ローカル transcript スキャンから prompt、tool、window、復元可能な編集監視イベントを補完できます
 - `EditRecord` は編集証拠ドメインです。usage rollup / snapshot はスカラー使用量ドメインであり、token-only または usage-only データを編集レコードとして扱うことはできません
 - ローカル使用量ソースには、ローカルログ、JSONL、SQLite、キャッシュ、ローカルクライアント状態が含まれます。aitrack は利用可能なローカル認証情報または入口を自動検出し、ユーザーにサードパーティの token 貼り付けを求めません
+
+**現在対応している agent framework：**
+
+| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | あり | あり | あり: `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | あり | あり: ローカル rate-limit snapshot |
+| `codex` | あり | なし | あり: `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | あり | あり: session rate-limit snapshot |
+| `cursor` | あり | なし | あり: Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | あり | なし |
+| `trae` | なし | なし | あり: Trae ローカルアプリデータ、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | あり | なし |
+| `opencode` | なし | なし | あり: opencode ローカルデータ、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | あり | なし |
+| generic registered agents | なし | なし | あり: marker パス + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | ローカルログに usage フィールドがある場合あり | なし |
+
+汎用 registry には `qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp` が登録されています。これらは現在 status / heartbeat / local source scan の経路を使います。ローカル JSON、JSONL、CSV、SQLite、キャッシュに prompt、tool、window、edit、token フィールドが含まれていれば、aitrack は対応する監視または usage データ面へ取り込みます。
 
 ---
 
@@ -148,7 +161,7 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 - Rust クライアントをヘキサゴナルアーキテクチャ（domain / port / adapter の3層）にリファクタリング完了。すべての I/O は `StoragePort` / `UploadPort` インターフェースを通じてルーティングされ、ビジネスロジックとインフラが完全に分離
 - `aitrack update` サブコマンド：GitHub Releases から最新バージョンを取得し、ed25519 署名検証後に現在のバイナリをアトミックに置換
 - キーワードライブラリ改ざん防止：キーワードはコンパイル時定数としてハードコードされ、`keyword_fingerprint()` がサーバー側検証用の SHA-256 フィンガープリントを計算
-- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 291 tests / Java 218 tests / Go 244 tests）
+- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 292 tests / Java 218 tests / Go 244 tests）
 
 ---
 

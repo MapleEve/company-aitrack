@@ -37,12 +37,25 @@ The client stores only `credential` (never the two parts separately). Internally
 aitrack is a general, self-hosted, open-source monitoring and governance tool for employee AI coding activity. The protocol separates agent registration, edit evidence, and scalar usage metrics:
 
 - **Native edit evidence**: Claude Code, Codex CLI, and Cursor currently have native edit hook adapters. These adapters can produce `EditRecord` payloads because they expose enough local file-edit event data to build a signed diff record.
-- **Registered agents**: other agent keys may appear in registry, status, heartbeat, and local usage source flows. Their native edit adapters must be implemented against each agent's own local event surface before they can emit `EditRecord` payloads.
-- **EditRecord domain**: `POST /api/v1/ai-track/edits` accepts signed edit evidence only: file path, repo metadata, Myers/LCS line counts, diff hunk, device identity, and `record_sig`.
+- **Registered agents**: other agent keys may appear in registry, status, heartbeat, and local usage source flows. Native edit adapters remain the strongest source for signed file diffs, while local transcript scans may still produce prompt, tool, window, and reconstructable edit monitoring events.
+- **EditRecord domain**: `POST /api/v1/ai-track/edits` accepts signed monitoring evidence: file path or synthetic monitoring path, repo metadata when available, Myers/LCS line counts and diff hunk when available, device identity, metadata, bounded prompt content, and `record_sig`.
 - **Usage rollup domain**: usage rollups and snapshots are scalar usage metrics, such as request counts, token counts, cost estimates, or local client activity totals. A token-only or usage-only source MUST NOT be represented as an `EditRecord`.
 - **Local usage source boundary**: local sources are discovered from local logs, JSONL files, SQLite databases, caches, and local client state. The client may discover local credentials or entry points from those local states when the agent exposes them; users are not required to manually paste third-party service tokens into aitrack.
 
 The heartbeat `hooks` map is intentionally dynamic and keyed by agent registry key. Dynamic heartbeat support does not imply that every registered agent has a completed native edit adapter.
+
+### Current Agent Framework Support
+
+| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | yes | yes | `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | local rate-limit snapshot |
+| `codex` | yes | no | `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | session rate-limit snapshot |
+| `cursor` | yes | no | Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
+| `trae` | no | no | local Trae app data, `~/.aitrack/sources/trae`, `~/.aitrack/cache/trae` | yes | no |
+| `opencode` | no | no | local opencode data, `~/.aitrack/sources/opencode`, `~/.aitrack/cache/opencode` | yes | no |
+| generic registered agents | no | no | marker path + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | when local logs expose usage fields | no |
+
+The generic registry currently includes `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `crush`, `codebuff`, `kilo`, `kimi`, `grok`, and `warp`.
 
 ---
 
@@ -52,12 +65,15 @@ The heartbeat `hooks` map is intentionally dynamic and keyed by agent registry k
 aitrack init    [--claude] [--codex] [--cursor] [--tool <name> ...] [--api-url URL] [--credential CRED]
 aitrack remove  [--claude] [--codex] [--cursor] [--tool <name> ...]
 aitrack capture --tool <name>   (default: claude)  [--api-url URL] [--credential CRED]
-aitrack prompt-capture --tool <name>   (reads UserPromptSubmit stdin for agents with native prompt hooks, stores intent label)
+aitrack prompt-capture --tool <name>   (reads UserPromptSubmit stdin for agents with native prompt hooks, stores bounded prompt content)
 aitrack inspect [--limit N]  (default 20, max 200)  [--pending] [--current-token]
 aitrack stats
 aitrack status
 aitrack clean   [--all] [--force]
 aitrack heartbeat
+aitrack usage scan [--tool <name> ...] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+aitrack usage sync [--tool <name> ...] [--api-url URL] [--credential CRED]
+aitrack usage status
 ```
 
 `--credential` takes the single combined credential string issued by `POST /admin/tokens`.
@@ -505,4 +521,4 @@ Find edit records semantically similar to a given embedding vector using pgvecto
 
 **Computation**: Includes ACCEPTED + FLAGGED records, excludes REJECTED. Computed on-demand (Phase 4 will add caching).
 
-**`prompt_patterns`**: Counted from content-free `prompt_summary` intent labels. Only counts records that have non-null `prompt_summary`. Categories: `generate`, `fix_debug`, `refactor`, `explain`, `test`, `other`.
+**`prompt_patterns`**: Counted by classifying bounded `prompt_summary` content into intent categories. Only counts records that have non-null `prompt_summary`. Categories: `generate`, `fix_debug`, `refactor`, `explain`, `test`, `other`.

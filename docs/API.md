@@ -20,6 +20,19 @@ Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生�
 
 本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态。客户端可自动发现可用凭证或入口，不要求用户手动粘第三方 token。
 
+### Agent 框架支持
+
+| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | 是 | 是 | `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地 rate-limit snapshot |
+| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | session rate-limit snapshot |
+| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
+| `trae` | 否 | 否 | Trae 本地应用数据、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | 是 | 否 |
+| `opencode` | 否 | 否 | opencode 本地数据、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | 是 | 否 |
+| generic registered agents | 否 | 否 | marker 路径 + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | 取决于本地日志字段 | 否 |
+
+通用 registry key 当前包括：`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp`。这些 key 可以出现在 `heartbeat.hooks`、`GET /devices`、usage rollup 的 `agent` 字段和 transcript 扫描生成的监控事件中。
+
 ---
 
 ## 运维操作指引 — 装完服务端之后怎么用

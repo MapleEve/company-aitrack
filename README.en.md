@@ -79,9 +79,22 @@ aitrack consists of three independent components communicating via Protocol v1.2
 **Agent and data-domain boundaries:**
 
 - Claude Code, Codex CLI, and Cursor currently have native edit hook adapters that can produce `EditRecord` payloads with diff, line counts, repository metadata, and `record_sig`
-- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; they produce `EditRecord` payloads only after an agent-specific native edit adapter can reconstruct local file-edit events
+- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; local transcript scans can recover prompt, tool, window, and reconstructable edit monitoring events even when no native hook is available
 - `EditRecord` is the edit evidence domain; usage rollups and snapshots are scalar usage domains, so token-only or usage-only data cannot be represented as edit records
 - Local usage sources include local logs, JSONL files, SQLite databases, caches, and local client state; aitrack discovers available local credentials or entry points where possible and does not require users to paste third-party service tokens
+
+**Current agent framework support:**
+
+| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | yes | yes | yes: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | yes: local rate-limit snapshot |
+| `codex` | yes | no | yes: `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | yes: session rate-limit snapshot |
+| `cursor` | yes | no | yes: Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
+| `trae` | no | no | yes: local Trae app data, `~/.aitrack/sources/trae`, `~/.aitrack/cache/trae` | yes | no |
+| `opencode` | no | no | yes: local opencode data, `~/.aitrack/sources/opencode`, `~/.aitrack/cache/opencode` | yes | no |
+| generic registered agents | no | no | yes: marker path + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | yes when local logs expose usage fields | no |
+
+The generic registry currently includes `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `crush`, `codebuff`, `kilo`, `kimi`, `grok`, and `warp`. These tools use the status / heartbeat / local source scan path today; when local JSON, JSONL, CSV, SQLite, or cache files expose prompt, tool, window, edit, or token fields, aitrack routes them into the matching monitoring or usage data plane.
 
 ---
 
@@ -148,7 +161,7 @@ The `usage` command also maintains a separate usage rollup / subscription snapsh
 - The Rust client has been refactored to hexagonal architecture (domain / port / adapter three-layer), with all I/O routed through `StoragePort` / `UploadPort` interfaces — business logic fully decoupled from infrastructure
 - `aitrack update` subcommand: fetches the latest release from GitHub Releases and atomically replaces the current binary after ed25519 signature verification
 - Keyword library tamper protection: keywords are hardcoded as compile-time constants; `keyword_fingerprint()` computes a SHA-256 fingerprint for server-side verification
-- All three components have coverage ≥ 90% (Rust 291 tests / Java 218 tests / Go 244 tests)
+- All three components have coverage ≥ 90% (Rust 292 tests / Java 218 tests / Go 244 tests)
 
 ---
 

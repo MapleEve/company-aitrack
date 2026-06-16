@@ -46,6 +46,19 @@ aitrack 的开源边界是通用部署与运行时解耦，不是去掉员工、
 
 `EditRecord` 是监控事件域，必须包含设备信息、时间、agent、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。usage rollup / snapshot 是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。token-only / usage-only 只能进入用量域，不能写成监控事件。
 
+### 当前 agent 框架支持矩阵
+
+| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | 是 | 是 | `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地 rate-limit snapshot |
+| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | session rate-limit snapshot |
+| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
+| `trae` | 否 | 否 | Trae 本地应用数据、`~/.aitrack/sources/trae`、`~/.aitrack/cache/trae` | 是 | 否 |
+| `opencode` | 否 | 否 | opencode 本地数据、`~/.aitrack/sources/opencode`、`~/.aitrack/cache/opencode` | 是 | 否 |
+| generic registered agents | 否 | 否 | marker 路径 + `~/.aitrack/sources/<agent>` + `~/.aitrack/cache/<agent>` | 取决于本地日志字段 | 否 |
+
+通用 registry key 当前包括：`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`crush`、`codebuff`、`kilo`、`kimi`、`grok`、`warp`。这些 key 的动态心跳可见性不等于 native edit adapter 已完成；它们当前通过本地 source/cache 扫描把可提取字段送入监控事件域或 usage 标量域。
+
 ---
 
 ## 客户端：Rust CLI

@@ -3,7 +3,7 @@
 
 use sha2::{Digest, Sha256};
 
-/// Prompt pattern categories for classifying prompt intent labels.
+/// Prompt pattern categories for classifying prompt text.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PromptCategory {
     Generate,
@@ -97,7 +97,7 @@ const KEYWORDS_TEST: &[&str] = &[
     "覆盖",
 ];
 
-/// Classify a prompt into a content-free intent category.
+/// Classify a prompt into an intent category.
 /// Keywords are checked in priority order: FixDebug > Test > Refactor > Explain > Generate.
 /// Returns Other if no keywords match.
 pub fn classify_prompt(prompt: &str) -> PromptCategory {
