@@ -137,11 +137,11 @@ The server database has been upgraded to **ParadeDB** (PostgreSQL + pg_search + 
 
 Profile data is used solely to understand actual AI tool adoption — it is not used as a direct basis for individual performance evaluation.
 
-### Prompt Intent Capture (v1.5+)
+### Prompt and Local Transcript Monitoring (v1.7+)
 
-The client can optionally install a `UserPromptSubmit` hook (Claude Code only) to classify the prompt locally and submit only one content-free intent label (`generate`, `fix_debug`, `refactor`, `explain`, `test`, or `other`) as `prompt_summary` alongside edit records. The profile API adds a `prompt_patterns` intent classification dimension, extending the analysis from "how much AI" to "how AI is used" quality insights.
+The client can optionally install a `UserPromptSubmit` hook and can also scan local agent logs, JSONL files, SQLite databases, and caches with `aitrack usage scan|sync`. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from local transcripts.
 
-> `prompt_summary` is produced only when the corresponding local prompt hook is installed. Only the content-free intent label is collected; raw prompts, prompt summaries, and response content are not collected.
+The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
 
 ### Hexagonal Architecture and Secure Auto-Update (v1.6+)
 
@@ -247,7 +247,7 @@ bash e2e/run.sh both
 | **Token hash storage** | Server stores only `sha256(token)` — plaintext returned only once at issuance |
 | **Local-first** | All data stored on self-hosted infrastructure, never passes through any third-party cloud service |
 | **Constant-time comparison** | HMAC verification uses constant-time comparison to prevent timing attacks |
-| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; since v1.5, prompt intent labels can be collected when the corresponding local prompt hook is installed (not raw prompt text or a prompt summary); never collects complete code content, conversation history, or keyboard input; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
+| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; prompt hooks and local transcript scans can collect bounded prompt/tool/window monitoring events; usage rollups only record scalar usage metrics; complete workspace files and keyboard input are not collected; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
 
 ---
 

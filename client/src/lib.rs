@@ -11,6 +11,7 @@ pub mod port;
 pub mod testkit;
 pub mod update;
 pub mod uploader;
+pub mod usage;
 
 /// Crate-wide test synchronization for process-global state.
 #[cfg(test)]
@@ -57,8 +58,41 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Status => handle_status()?,
         Command::Clean(args) => handle_clean(args)?,
         Command::Heartbeat => handle_heartbeat().await?,
+        Command::Usage(args) => handle_usage(args).await?,
         Command::PromptCapture(args) => handle_prompt_capture(args).await?,
         Command::Update => update::run_update()?,
+    }
+    Ok(())
+}
+
+async fn handle_usage(args: cli::UsageArgs) -> Result<()> {
+    match args.command {
+        cli::UsageCommand::Scan(scan) => {
+            let report = usage::scan_now(usage::UsageScanOptions {
+                tools: scan.tool,
+                since: scan.since,
+                until: scan.until,
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        cli::UsageCommand::Sync(sync) => {
+            let report = usage::sync_now(usage::UsageSyncOptions {
+                scan: usage::UsageScanOptions {
+                    tools: sync.tool,
+                    since: sync.since,
+                    until: sync.until,
+                },
+                api_url: sync.api_url,
+                credential: sync.credential,
+            })
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        cli::UsageCommand::Status => {
+            let status = usage::status()?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
     }
     Ok(())
 }
@@ -551,15 +585,13 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Store only the intent label; raw prompt text stays out of local records
-    // and upload payloads.
     let conn = open_db()?;
-    insert_prompt_context(&conn, session_id, prompt_intent_label(prompt))?;
+    insert_prompt_context(&conn, session_id, &prompt_capture_text(prompt))?;
     Ok(())
 }
 
-fn prompt_intent_label(prompt: &str) -> &'static str {
-    domain::keywords::classify_prompt(prompt).as_str()
+fn prompt_capture_text(prompt: &str) -> String {
+    prompt.chars().take(4096).collect()
 }
 
 #[cfg(test)]
@@ -852,13 +884,12 @@ mod tests {
     }
 
     #[test]
-    fn prompt_capture_label_excludes_raw_prompt_text() {
+    fn prompt_capture_text_preserves_monitoring_content() {
         let raw_prompt = "fix leaked customer token in checkout.rs";
-        let label = prompt_intent_label(raw_prompt);
+        let text = prompt_capture_text(raw_prompt);
 
-        assert_eq!(label, "fix_debug");
-        assert!(!label.contains("customer"));
-        assert!(!label.contains("checkout"));
+        assert!(text.contains("customer"));
+        assert!(text.contains("checkout"));
     }
 
     // -------------------------------------------------------------------------

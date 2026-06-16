@@ -20,11 +20,12 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 ┌─────────────────────────────────────────────────┐
 │  Rust 客户端  aitrack                            │
 │  · 适配器解析  · Myers/LCS diff                  │
-│  · record_sig  · SQLite 本地存储                  │
+│  · record_sig  · 本地 scanner/outbox              │
 │  · flush 上传  · 节流心跳                         │
 └────────────────────┬────────────────────────────┘
                      │ POST /api/v1/ai-track/edits
                      │ POST /api/v1/ai-track/heartbeat
+                     │ POST /api/v1/ai-track/usage/*
                      ▼
 ┌────────────────────────────┐  ┌────────────────────────────┐
 │  Java 服务端               │  │  Go 服务端                  │
@@ -39,11 +40,11 @@ aitrack 的开源边界是通用部署与运行时解耦，不是去掉员工、
 
 | 层级 | 当前边界 |
 |------|----------|
-| native edit adapter | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成 `EditRecord` |
+| native edit adapter | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成文件编辑类 `EditRecord` |
 | registry/status/heartbeat | 服务端心跳 `hooks` 为动态 map，可接收任意 agent registry key 的安装状态 |
-| local usage source | 本机日志、JSONL、SQLite、缓存和本地客户端状态可作为用量来源；客户端可自动发现本地凭证或入口，不要求用户手动粘第三方 token |
+| local usage source | 本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态可作为用量来源，也可补齐 prompt、tool、window 和可还原编辑监控事件 |
 
-`EditRecord` 是编辑证据域，必须来自可还原文件编辑事件的 adapter，并包含 diff、行数、仓库信息、设备信息与 `record_sig`。usage rollup / snapshot 是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。token-only / usage-only 只能进入用量域，不能写成 `EditRecord`。
+`EditRecord` 是监控事件域，必须包含设备信息、时间、agent、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。usage rollup / snapshot 是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。token-only / usage-only 只能进入用量域，不能写成监控事件。
 
 ---
 
@@ -128,13 +129,13 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 1. AI 工具触发 PostToolUse/afterFileEdit 钩子
 2. aitrack capture 从 stdin 读取 JSON
-3. 按 `--tool` 选择 adapter；Claude/Codex/Cursor 解析 native edit payload，已登记但无 native edit adapter 的 agent 不生成 `EditRecord`
+3. 按 `--tool` 选择 adapter；Claude/Codex/Cursor 解析 native edit payload，其他 agent 通过本地 usage / transcript 扫描进入监控链路
 4. 调用 similar crate 计算 Myers/LCS diff
    → added_lines, removed_lines, diff_hunk
 5. spawn git 获取 repo 元数据
    → repo_url, branch, current_sha
 6. 获取 OS hostname
-7. 从 prompt_context 表查询最近一次意图标签 → prompt_summary（可选，仅 claude）
+7. 从 prompt_context 表查询最近一次有界 prompt 文本 → prompt_summary（可选）
 8. 计算 record_sig
    → HMAC_SHA256(hmac_secret, canonical_string)（不包含 prompt_summary）
 8b. 执行 backfill_repo_info（queries.rs）
@@ -147,12 +148,19 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
     → 服务端 10 步校验链
     → 更新 synced/retry_count
 
-### 提示词捕获流（UserPromptSubmit，仅 Claude Code）
+### 提示词捕获流（UserPromptSubmit）
 
 1. Claude Code 触发 UserPromptSubmit 钩子
 2. aitrack prompt-capture 从 stdin 读取 JSON（{"session_id": "...", "prompt": "..."}）
-3. 在本地归类为 `generate` / `fix_debug` / `refactor` / `explain` / `test` / `other`
-4. INSERT INTO prompt_context（session_id, intent_label）
+3. 在本地写入有界 prompt 文本
+4. INSERT INTO prompt_context（session_id, prompt_text）
+
+### 本地 usage / transcript 扫描流
+
+1. `aitrack usage scan|sync` 递归扫描已登记 agent 的本机日志、JSONL、SQLite、CSV 和缓存
+2. 提取 token bucket，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
+3. 提取 prompt、tool、window 和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
+4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`
 
 ---
 
@@ -376,9 +384,9 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 #### 提示词捕获
 
-- 新增 `UserPromptSubmit` 钩子（仅 Claude Code）：Claude Code 用户提交 prompt 时触发，aitrack 只将内容无关的意图标签写入本地 `prompt_context` 表
-- `records` 表新增 `prompt_summary TEXT` 列（可空），capture 流程从 `prompt_context` 查询当前 session 的最近一条提示词并附加
-- `prompt_summary` 不参与 `record_sig` 计算（仅用于画像分析，不影响防篡改机制）
+- 新增 `UserPromptSubmit` 钩子：用户提交 prompt 时触发，aitrack 将有界 prompt 内容写入本地 `prompt_context` 表
+- `records` 表新增 `prompt_summary TEXT` 列（可空），capture / transcript 扫描流程附加当前 session 的有界 prompt 内容
+- `prompt_summary` 不参与 `record_sig` 计算（用于审计和画像分析，不影响防篡改机制）
 - 上传时 `prompt_summary` 作为可选字段随 edit 记录上报
 
 #### 画像维度更新

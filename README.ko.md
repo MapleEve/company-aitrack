@@ -137,11 +137,11 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 프로필 데이터는 AI 도구의 실제 채택 효과를 파악하기 위해서만 사용되며, 개인 성과 평가의 직접적인 근거로는 사용되지 않습니다.
 
-### 프롬프트 의도 캡처(v1.5+)
+### 프롬프트 및 로컬 transcript 모니터링(v1.7+)
 
-클라이언트는 선택적으로 `UserPromptSubmit` 훅(Claude Code 전용)을 설치하여 프롬프트를 로컬에서 의도 레이블로 분류하고 `generate` / `fix_debug` / `refactor` / `explain` / `test` / `other` 중 하나만 `prompt_summary` 필드로 편집 레코드와 함께 제출할 수 있습니다. 프로필 API에 `prompt_patterns` 의도 분류 차원이 추가되어 "얼마나 AI를 사용했는지"에서 "어떻게 AI를 사용했는지"에 대한 품질 분석으로 확장됩니다.
+클라이언트는 선택적으로 `UserPromptSubmit` 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 로컬 agent 로그, JSONL, SQLite, 캐시도 스캔할 수 있습니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 로컬 transcript 에서 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
 
-> `prompt_summary` 는 해당 로컬 prompt hook 이 설치된 경우에만 생성됩니다. 내용이 없는 의도 레이블만 수집되며, 프롬프트 원문, 프롬프트 요약, 응답 내용은 수집되지 않습니다.
+`usage` 서브커맨드는 별도의 usage rollup / subscription snapshot 데이터면도 유지합니다. day, agent, model, account 기준으로 token bucket 을 집계하고 `/api/v1/ai-track/usage/*` API 를 통해 Java 또는 Go 서버로 업로드합니다.
 
 ### 헥사고날 아키텍처 및 보안 자동 업데이트(v1.6+)
 
@@ -247,7 +247,7 @@ bash e2e/run.sh both
 | **토큰 해시 저장** | 서버는 `sha256(token)`만 저장 — 평문은 발급 시 한 번만 반환됨 |
 | **로컬 우선** | 모든 데이터가 셀프 호스팅 인프라에 저장되고 어떠한 서드파티 클라우드 서비스도 경유하지 않음 |
 | **상수 시간 비교** | HMAC 검증은 타이밍 공격을 방지하기 위해 상수 시간 비교를 사용 |
-| **투명하고 설정 가능한 수집** | 기본적으로 파일 경로, diff, 줄 수, 저장소 메타데이터를 수집; v1.5부터 해당 로컬 prompt hook 이 설치된 경우 프롬프트 의도 레이블을 수집 가능(원문이나 요약이 아님); 완전한 코드 내용, 대화 기록, 키보드 입력은 수집하지 않음; 수집 범위는 기업 관리자 구성으로 제어되며, 프로필 데이터는 개인 성과 평가의 직접적인 근거로 사용되지 않음 |
+| **투명하고 설정 가능한 수집** | 기본적으로 파일 경로, diff, 줄 수, 저장소 메타데이터를 수집; prompt hook 과 로컬 transcript 스캔은 제한된 prompt/tool/window 모니터링 이벤트를 수집할 수 있음; usage rollup 은 사용량 스칼라 지표만 기록; 전체 워크스페이스 파일이나 키보드 입력은 수집하지 않음; 수집 범위는 기업 관리자 구성으로 제어되며, 프로필 데이터는 개인 성과 평가의 직접적인 근거로 사용되지 않음 |
 
 ---
 

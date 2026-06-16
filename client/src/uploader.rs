@@ -477,6 +477,79 @@ mod tests {
         assert_eq!(record.file_path, "src/chain.rs");
     }
 
+    #[tokio::test]
+    async fn capture_chain_uploads_bounded_prompt_monitoring_content() {
+        use crate::adapter::event::parse_claude;
+        use crate::domain::crypto::compute_record_sig;
+        use crate::testkit::factories::ClaudeHookPayloadFactory;
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/ai-track/edits"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"accepted": 1, "rejected": [], "flagged": []}),
+                ),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let conn = open_test_db();
+        db::ensure_prompt_context_table(&conn).unwrap();
+        db::insert_prompt_context(
+            &conn,
+            "prompt-monitoring-sess",
+            "find every place checkout totals can leak customer pricing",
+        )
+        .unwrap();
+
+        let json = ClaudeHookPayloadFactory::new(101)
+            .with_old_string("let total = subtotal;\n")
+            .with_new_string("let total = subtotal + tax;\n")
+            .with_file_path("src/checkout.rs")
+            .with_session_id("prompt-monitoring-sess")
+            .build_json();
+        let mut record = parse_claude(&json).expect("parse must succeed");
+        record.repo_url = "git@github.com:org/repo.git".to_string();
+        record.branch = "main".to_string();
+        record.current_sha = "ddeeff00".to_string();
+        record.token_key = mask_token(TEST_TOKEN);
+        record.device_id = "device-prompt-test".to_string();
+        record.hostname = "prompt-test-host".to_string();
+        record.timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        record.prompt_summary = db::get_recent_prompt(&conn, &record.session_id);
+        record.record_sig = compute_record_sig(
+            "testhmacsecret",
+            &record.token_key,
+            &record.device_id,
+            &record.hostname,
+            &record.timestamp,
+            &record.tool,
+            &record.file_path,
+            &record.repo_url,
+            &record.current_sha,
+            record.added_lines,
+            record.removed_lines,
+            record.diff_hunk.as_deref(),
+        );
+
+        assert!(db::insert_record(&conn, &record).unwrap());
+
+        let uploader = make_uploader(&mock_server.uri());
+        flush_unsynced(&conn, &uploader).await.unwrap();
+
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        let edit = &body["edits"][0];
+        assert_eq!(edit["session_id"], "prompt-monitoring-sess");
+        assert_eq!(edit["file_path"], "src/checkout.rs");
+        assert_eq!(
+            edit["prompt_summary"],
+            "find every place checkout totals can leak customer pricing"
+        );
+    }
+
     /// Verify that oversized-line tampered record gets inserted but its lines are detectable.
     #[test]
     fn oversized_lines_record_insertable_but_detectable() {

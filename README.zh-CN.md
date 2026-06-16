@@ -12,7 +12,7 @@
 
 <img src="./docs/assets/readme/hero.zh-CN.png" alt="aitrack hero" width="100%" />
 
-aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成带 HMAC 签名的编辑证据；其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线，待各自本地事件能力具备后再落地 native edit adapter。
+aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成带 HMAC 签名的编辑证据；其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线，并通过本地 transcript 扫描补齐 prompt、tool、window 和可还原编辑监控事件。
 
 ---
 
@@ -61,9 +61,9 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 **Agent 与数据域边界：**
 
-- `EditRecord` 是编辑证据域，包含 diff、行数、仓库信息、设备信息和 `record_sig`
+- `EditRecord` 是监控事件域，包含 diff、行数、仓库信息、设备信息和 `record_sig`
 - usage rollup / snapshot 是标量用量域，可承载请求数、token 数、成本估算或本地客户端活跃统计
-- token-only 或 usage-only 数据不能伪装成 `EditRecord`
+- token-only 或 usage-only 数据不能伪装成监控事件
 - 本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态；aitrack 自动发现可用凭证或入口，不要求用户手动粘第三方 token
 
 ---
@@ -118,11 +118,11 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 画像数据仅用于了解 AI 工具实际采用效果，不作为个人绩效考核的直接依据。
 
-### Prompt 意图捕获（v1.5+）
+### Prompt 与本地 transcript 监控（v1.7+）
 
-客户端可选安装 `UserPromptSubmit` 钩子（仅限 Claude Code），在本地把提示词归类为意图标签，并只将 `generate` / `fix_debug` / `refactor` / `explain` / `test` / `other` 之一作为 `prompt_summary` 字段随编辑记录上报。画像 API 新增 `prompt_patterns` 意图分类维度，从"使用了多少 AI"延伸至"怎么用 AI"的质量分析。
+客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 扫描本机 agent 日志、JSONL、SQLite 和缓存。`prompt_summary` 用于随编辑记录上报有界 prompt 内容；无 native hook 的 agent 也可通过本地 transcript 扫描补齐 prompt、tool、window 和编辑监控事件。
 
-> `prompt_summary` 仅在对应本地 prompt hook 已安装时产生。采集的是内容无关的意图标签，不采集 prompt 原文、prompt 摘要或 response 内容。
+`usage` 子命令同时维护独立的 usage rollup / subscription snapshot 数据面，按 day、agent、model、account 聚合 token bucket，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 
 ### 六边形架构与安全自动更新（v1.6+）
 
@@ -226,7 +226,7 @@ bash e2e/run.sh both
 | **token 哈希存储** | 服务端仅存储 `sha256(token)`，明文仅签发时返回一次 |
 | **本地优先** | 所有数据存储于自建服务，不经过任何第三方云服务 |
 | **常量时间比较** | HMAC 验证使用常量时间比较，防止 timing attack |
-| **采集范围透明可控** | 默认采集文件路径、diff、行数、repo 元数据；v1.5 起在对应本地 prompt hook 已安装时可采集 prompt 意图标签（非原文、非摘要）；不采集完整代码内容、对话历史或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
+| **采集范围透明可控** | 默认采集文件路径、diff、行数、repo 元数据；prompt hook 与本地 transcript 扫描可采集有界 prompt/tool/window 监控事件；usage rollup 只记录用量标量；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
 
 ---
 

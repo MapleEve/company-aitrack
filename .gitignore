@@ -74,7 +74,7 @@ docs/assets/**/batch.json
 # ── Local-only overrides ───────────────────────────────────────────────────────
 AGENTS.local.md
 CLAUDE.LOCAL.md
-internal/
+/internal/
 
 # ── Local source overlays ──────────────────────────────────────────────────────
 client/src/local/

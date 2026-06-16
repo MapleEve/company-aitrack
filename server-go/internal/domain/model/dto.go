@@ -67,3 +67,35 @@ type HeartbeatRequest struct {
 	Hooks          HeartbeatHooks `json:"hooks"`
 	PendingCount   int            `json:"pending_count"`
 }
+
+// UsageRollupRequest is the scalar usage rollup ingestion body.
+type UsageRollupRequest struct {
+	Items []UsageRollupItem `json:"items"`
+}
+
+// UsageRollupItem is a day/model/account token bucket aggregate.
+type UsageRollupItem struct {
+	DeviceID         string `json:"device_id"`
+	Day              string `json:"day"`
+	Agent            string `json:"agent"`
+	Model            string `json:"model"`
+	Account          string `json:"account"`
+	TokensIn         int64  `json:"tokens_in"`
+	TokensOut        int64  `json:"tokens_out"`
+	TokensCacheRead  int64  `json:"tokens_cache_read"`
+	TokensCacheWrite int64  `json:"tokens_cache_write"`
+	TokensReasoning  int64  `json:"tokens_reasoning"`
+}
+
+// UsageSubscriptionSnapshotRequest is a scalar subscription/quota snapshot.
+type UsageSubscriptionSnapshotRequest struct {
+	DeviceID              string  `json:"device_id"`
+	Agent                 string  `json:"agent"`
+	Account               string  `json:"account"`
+	Plan                  *string `json:"plan"`
+	QuotaSessionRemaining *int64  `json:"quota_session_remaining"`
+	QuotaWeeklyRemaining  *int64  `json:"quota_weekly_remaining"`
+	QuotaResetAt          *string `json:"quota_reset_at"`
+	ReaderStatus          string  `json:"reader_status"`
+	SnapshottedAt         string  `json:"snapshotted_at"`
+}

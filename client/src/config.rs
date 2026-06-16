@@ -34,6 +34,10 @@ pub fn db_path() -> PathBuf {
     config_dir().join("records.db")
 }
 
+pub fn usage_db_path() -> PathBuf {
+    config_dir().join("usage.sqlite")
+}
+
 pub fn load_config() -> Config {
     let path = config_path();
     if let Ok(text) = fs::read_to_string(&path) {

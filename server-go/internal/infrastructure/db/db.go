@@ -112,6 +112,43 @@ func postgresDDL() []string {
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id)`,
 
+		`CREATE TABLE IF NOT EXISTS usage_daily_rollups (
+  id                  BIGSERIAL PRIMARY KEY,
+  token_key           TEXT NOT NULL,
+  device_id           TEXT NOT NULL,
+  day                 TEXT NOT NULL,
+  agent               TEXT NOT NULL,
+  model               TEXT NOT NULL,
+  account             TEXT NOT NULL DEFAULT '',
+  tokens_in           BIGINT NOT NULL DEFAULT 0,
+  tokens_out          BIGINT NOT NULL DEFAULT 0,
+  tokens_cache_read   BIGINT NOT NULL DEFAULT 0,
+  tokens_cache_write  BIGINT NOT NULL DEFAULT 0,
+  tokens_reasoning    BIGINT NOT NULL DEFAULT 0,
+  updated_at          TEXT NOT NULL,
+  UNIQUE(token_key, device_id, day, agent, model, account)
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_daily_rollups_token_key ON usage_daily_rollups(token_key)`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_daily_rollups_day ON usage_daily_rollups(day)`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_daily_rollups_agent ON usage_daily_rollups(agent)`,
+
+		`CREATE TABLE IF NOT EXISTS usage_subscription_snapshots (
+  id                        BIGSERIAL PRIMARY KEY,
+  token_key                 TEXT NOT NULL,
+  device_id                 TEXT NOT NULL,
+  agent                     TEXT NOT NULL,
+  account                   TEXT NOT NULL DEFAULT '',
+  plan                      TEXT,
+  quota_session_remaining   BIGINT,
+  quota_weekly_remaining    BIGINT,
+  quota_reset_at            TEXT,
+  reader_status             TEXT NOT NULL,
+  snapshotted_at            TEXT NOT NULL,
+  updated_at                TEXT NOT NULL,
+  UNIQUE(token_key, device_id, agent, account)
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_subscription_token_key ON usage_subscription_snapshots(token_key)`,
+
 		// Additive migrations for existing PostgreSQL databases.
 		`ALTER TABLE edit_records ADD COLUMN IF NOT EXISTS prompt_summary TEXT`,
 		`ALTER TABLE edit_records ADD COLUMN IF NOT EXISTS embedding BYTEA`,

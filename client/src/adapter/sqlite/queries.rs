@@ -235,7 +235,7 @@ pub fn ensure_prompt_context_table(conn: &Connection) -> Result<()> {
 }
 
 pub fn insert_prompt_context(conn: &Connection, session_id: &str, prompt_text: &str) -> Result<()> {
-    let truncated: String = prompt_text.chars().take(512).collect();
+    let truncated: String = prompt_text.chars().take(4096).collect();
     conn.execute(
         "INSERT INTO prompt_context (session_id, prompt_text) VALUES (?1, ?2)",
         params![session_id, truncated],

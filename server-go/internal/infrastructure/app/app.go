@@ -43,6 +43,7 @@ func Build(cfg *config.Config) (http.Handler, func(), error) {
 	tokenAdapter := dbadapter.NewTokenAdapter(database)
 	editAdapter := dbadapter.NewEditRecordAdapter(database)
 	deviceAdapter := dbadapter.NewDeviceAdapter(database)
+	usageAdapter := dbadapter.NewUsageAdapter(database)
 
 	// Map infrastructure config onto the domain validation policy.
 	policy := service.ValidationPolicy{
@@ -58,6 +59,7 @@ func Build(cfg *config.Config) (http.Handler, func(), error) {
 	ingestSvc := application.NewIngestService(validationSvc, ev, editAdapter)
 	heartbeatSvc := application.NewHeartbeatService(deviceAdapter)
 	statsSvc := application.NewStatsService(editAdapter, deviceAdapter)
+	usageSvc := application.NewUsageService(usageAdapter)
 
 	// Driving adapters (HTTP).
 	auth := handler.NewAuthMiddleware(tokenSvc, sig, cfg)
@@ -68,5 +70,6 @@ func Build(cfg *config.Config) (http.Handler, func(), error) {
 	searchH := handler.NewSearchHandler(database, cfg.AdminKey, true)
 	similarH := handler.NewSimilarHandler(database, cfg.AdminKey, true)
 	profileH := handler.NewProfileHandler(database, cfg.AdminKey)
-	return handler.NewRouter(adminH, editsH, hbH, statsH, searchH, similarH, profileH), cleanup, nil
+	usageH := handler.NewUsageHandler(auth, usageSvc)
+	return handler.NewRouter(adminH, editsH, hbH, statsH, searchH, similarH, profileH, usageH), cleanup, nil
 }

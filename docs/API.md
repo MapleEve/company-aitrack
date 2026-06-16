@@ -12,11 +12,11 @@ aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具�
 
 | 数据面 | API 边界 |
 |--------|----------|
-| `EditRecord` 编辑证据 | `POST /api/v1/ai-track/edits`，必须包含文件路径、repo 元数据、Myers/LCS 行数、diff、设备信息和 `record_sig` |
+| `EditRecord` 监控事件 | `POST /api/v1/ai-track/edits`，包含文件路径、repo 元数据、行数、diff 或 prompt/tool/window metadata、设备信息和 `record_sig` |
 | registry/status/heartbeat | `POST /api/v1/ai-track/heartbeat` 与 `GET /devices`，`hooks` 是按 agent registry key 组织的动态 map |
-| usage rollup / snapshot | 标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计；token-only / usage-only 数据不能写入 `/edits` |
+| usage rollup / snapshot | 标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计；token-only / usage-only 数据不能伪装成监控事件 |
 
-Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成 `EditRecord`。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线；只有在各自本地编辑事件能力可还原并完成 adapter 后，才会进入 `EditRecord` 域。
+Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成文件编辑类 `EditRecord`。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线；本地 transcript 扫描可补齐 prompt、tool、window 和可还原编辑监控事件。
 
 本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态。客户端可自动发现可用凭证或入口，不要求用户手动粘第三方 token。
 
@@ -148,6 +148,9 @@ X-AiTrack-Signature = lowercase_hex(
 | 编辑 | GET | `/api/v1/ai-track/edits/search` | BM25 全文检索（仅 PostgreSQL/ParadeDB） |
 | 编辑 | POST | `/api/v1/ai-track/edits/similar` | 向量 ANN 相似搜索（仅 PostgreSQL/ParadeDB） |
 | 心跳 | POST | `/api/v1/ai-track/heartbeat` | 设备心跳上报 |
+| Usage | POST | `/api/v1/ai-track/usage/rollup` | 本地 usage 聚合上报 |
+| Usage | POST | `/api/v1/ai-track/usage/subscription` | 本地 quota / subscription snapshot 上报 |
+| Usage | GET | `/api/v1/ai-track/usage/summary` | usage 聚合查询 |
 | 统计 | GET | `/api/v1/ai-track/stats` | 聚合统计 |
 | 设备 | GET | `/api/v1/ai-track/devices` | 设备列表 |
 
@@ -269,13 +272,14 @@ curl -s -X POST http://localhost:8080/admin/tokens \
       "timestamp": "2026-05-17T10:21:00Z",
       "device_id": "550e8400-e29b-41d4-a716-446655440000",
       "hostname": "MacBook-Pro.local",
-      "record_sig": "a3f2b1c4..."
+      "record_sig": "a3f2b1c4...",
+      "prompt_summary": "review the checkout flow"
     }
   ]
 }
 ```
 
-**edit 对象共 17 个字段**（`token_key` 不在其中，服务端从 Bearer token 推导）：
+**edit 对象共 18 个字段**（`token_key` 不在其中，服务端从 Bearer token 推导）：
 
 | 字段 | 类型 | 可空 | 说明 |
 |------|------|------|------|
@@ -296,8 +300,9 @@ curl -s -X POST http://localhost:8080/admin/tokens \
 | `device_id` | string | 否 | UUIDv4，与外层 device_id 相同 |
 | `hostname` | string | 否 | 上报机器的 OS hostname（v1.1 新增） |
 | `record_sig` | string | 否 | HMAC-SHA256 小写十六进制，见下方签名算法 |
+| `prompt_summary` | string | 是 | 本地 prompt hook 或 transcript 扫描附加的有界 prompt 内容 |
 
-`/edits` 仅接受 `EditRecord` 编辑证据。usage rollup、snapshot、token-only 或 usage-only 数据即使能证明某个 agent 被使用，也不能填充这些字段并伪装为编辑记录。
+`/edits` 仅接受 `EditRecord` 监控事件。usage rollup、snapshot、token-only 或 usage-only 数据即使能证明某个 agent 被使用，也不能填充这些字段并伪装为监控事件。
 
 ### record_sig 签名算法（可复现脚本）
 
@@ -528,6 +533,88 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
 
 ---
 
+## POST /api/v1/ai-track/usage/rollup
+
+本地 usage 聚合上报。客户端按 day、agent、model、account 聚合 token bucket 后提交；服务端按 `(token_key, device_id, day, agent, model, account)` 幂等 upsert。
+
+**鉴权**：Bearer token + `X-AiTrack-Timestamp` + `X-AiTrack-Signature`，并额外要求 `X-AiTrack-Body-Sha256` 与 `X-AiTrack-Body-Timestamp`。签名和 body digest 均覆盖实际传输 body；`Content-Encoding` 可为空、`identity` 或 `gzip`。
+
+```json
+{
+  "items": [
+    {
+      "device_id": "550e8400-e29b-41d4-a716-446655440000",
+      "day": "2026-06-16",
+      "agent": "codex",
+      "model": "gpt-5",
+      "account": "local",
+      "tokens_in": 10,
+      "tokens_out": 20,
+      "tokens_cache_read": 3,
+      "tokens_cache_write": 4,
+      "tokens_reasoning": 5
+    }
+  ]
+}
+```
+
+### 响应（200）
+
+```json
+{"ok": true, "accepted": 1}
+```
+
+---
+
+## POST /api/v1/ai-track/usage/subscription
+
+本地 quota / subscription snapshot 上报。服务端按 `(token_key, device_id, agent, account)` 幂等 upsert。
+
+**鉴权**：同 `/usage/rollup`。
+
+```json
+{
+  "device_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent": "codex",
+  "account": "local",
+  "plan": "Pro",
+  "quota_session_remaining": 70,
+  "quota_weekly_remaining": 80,
+  "quota_reset_at": "2026-06-16T10:00:00Z",
+  "reader_status": "ok",
+  "snapshotted_at": "2026-06-16T09:00:00Z"
+}
+```
+
+---
+
+## GET /api/v1/ai-track/usage/summary
+
+查询 usage 聚合。该端点只读，Bearer token 即可。
+
+| 参数 | 说明 |
+|------|------|
+| `token_key` | 可选；默认当前 token |
+| `from_day` / `to_day` | 可选；`YYYY-MM-DD` |
+| `agent` | 可选；按 agent key 过滤 |
+| `limit` | 可选；默认 20，最大 100 |
+
+```json
+{
+  "total_tokens": 40,
+  "tokens_in": 11,
+  "tokens_out": 22,
+  "tokens_cache_read": 0,
+  "tokens_cache_write": 0,
+  "tokens_reasoning": 7,
+  "items": [
+    {"token_key": "abcdef…7890", "agent": "codex", "model": "gpt-5", "account": "local", "total_tokens": 40}
+  ]
+}
+```
+
+---
+
 ## GET /api/v1/ai-track/stats
 
 聚合统计查询。这是管理员查看团队 AI 编码效能的主入口。
@@ -561,7 +648,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=device" \
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=hostname" \
   -H "Authorization: Bearer $TOKEN"
 
-# 按 agent/tool 维度汇总 — 用于查看各 native edit adapter 产生的编辑证据分布
+# 按 agent/tool 维度汇总 — 用于查看各 agent 监控事件分布
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=tool" \
   -H "Authorization: Bearer $TOKEN"
 ```
@@ -670,7 +757,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 **运维判断指南：**
 
 - native hook key（例如 `claude`、`codex`、`cursor`）为 `false`，且该开发者应使用对应工具 → 钩子被移除或未安装，联系开发者重新执行对应 `aitrack init`
-- 其他 agent key 为 `true` → 仅表示该 agent 已进入 registry/status/heartbeat 或 local usage source 路线，不表示已经具备 native edit adapter
+- 其他 agent key 为 `true` → 表示该 agent 已进入 registry/status/heartbeat 或 local usage source 路线，不等同于已安装 native edit adapter
 - `silent=true` → 设备超过 7 天无心跳，客户端可能离线、崩溃或被移除
 - `last_seen` 超过预期时间未更新（且开发者仍活跃）→ 客户端可能离线或崩溃
 - `pending_count` 持续偏大 → 网络或鉴权异常，客户端数据积压无法上报

@@ -8,7 +8,7 @@
 
 本文档说明 aitrack 收集哪些数据、收集原因、存储位置、可见范围，以及您对数据的控制权。
 
-**aitrack 是什么**：一个通用、自托管、开源的员工 AI 编码监控与治理平台。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可记录这些工具对代码库所做的变更。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线；只有在对应本地事件能力落地后才会生成编辑证据。
+**aitrack 是什么**：一个通用、自托管、开源的员工 AI 编码监控与治理平台。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可记录这些工具对代码库所做的变更。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线，并通过本地 transcript 扫描补齐 prompt、tool、window 和可还原编辑监控事件。
 
 **本文档的目的**：任何记录开发者行为的工具都应当对其行为保持透明。这不是法律免责声明——而是对"我的数据去哪了？"这一问题的直接回答。
 
@@ -31,14 +31,15 @@
 | **分支（branch）** | 当前 Git 分支名 | 区分主干与功能分支 | 本地 SQLite + 服务端数据库 |
 | **提交哈希（current_sha）** | 编辑时的 HEAD commit SHA | 将编辑关联到特定代码快照 | 本地 SQLite + 服务端数据库 |
 | **主机名（hostname）** | 机器的操作系统 hostname，如 `MacBook-Pro.local` | 在同一凭证跨多台机器使用时识别来源机器；不用于访问控制 | 本地 SQLite + 服务端数据库 |
-| **AI 工具类型（tool）** | EditRecord 中当前来自 `claude`、`codex`、`cursor` native edit adapter；heartbeat/status 可包含其他注册 agent key | 按工具区分使用模式 | 本地 SQLite + 服务端数据库 |
+| **AI 工具类型（tool）** | EditRecord 中来自 native adapter 或本地 transcript 扫描；heartbeat/status 可包含其他注册 agent key | 按工具区分使用模式 | 本地 SQLite + 服务端数据库 |
+| **Prompt / tool 监控内容（prompt_summary / metadata）** | 本地 prompt hook 或 transcript 扫描得到的有界 prompt、tool、window 事件内容 | 审计员工 AI 编码使用方式 | 本地 SQLite + 服务端数据库 |
 | **Token 标识符（token_key）** | 管理员分配的凭证中的 token 部分，格式 `aitrack_<hex>` | 将记录归因到特定开发者席位 | 仅本地 SQLite（用于本地过滤，不随上传 payload 发送） |
 | **设备 ID（device_id）** | 首次运行时生成的 UUIDv4，持久化至本地配置 | 区分使用同一凭证的多台设备 | 本地 SQLite + 服务端数据库 |
 | **记录签名（record_sig）** | 绑定以上所有字段的 HMAC-SHA256 签名 | 检测本地记录是否被篡改或伪造 | 本地 SQLite + 服务端数据库 |
 
 **关于 diff_hunk 的说明**：这是变更部分的差异，不是完整文件。如果 AI 修改了一个函数，您得到的是该函数的前后对比——文件中的其他内容不会被包含。差异算法使用 Myers/LCS 最小编辑距离，因此 diff 尽可能小。
 
-**数据域边界**：上表描述的是 `EditRecord` 编辑证据域。usage rollup / snapshot 属于标量用量域，可包含请求数、token 数、成本估算或本地客户端活跃统计。token-only 或 usage-only 数据不能伪装成 `EditRecord`，也不会生成 diff、行数或 `record_sig` 编辑证据。
+**数据域边界**：上表描述的是 `EditRecord` 监控事件域。usage rollup / snapshot 属于标量用量域，可包含请求数、token 数、成本估算或本地客户端活跃统计。token-only 或 usage-only 数据不能伪装成监控事件，也不会生成 diff、行数或 `record_sig` 编辑证据。
 
 **本地用量来源**：aitrack 可从本机日志、JSONL、SQLite、缓存和本地客户端状态中发现用量来源，并在本地状态允许时自动发现凭证或入口。用户不需要手动粘贴第三方 token 才能接入本地用量来源。
 
@@ -51,9 +52,9 @@
 | 不收集的数据 | 技术保障方式 |
 |-------------|-------------|
 | **完整文件内容** | 仅存储 `diff_hunk`（变更部分）。捕获流程不读取或存储工具钩子 payload 之外的任何内容。 |
-| **完整 Prompt 文本** | `prompt_summary` 仅在对应本地 prompt hook 已安装时产生；只保存内容无关的意图标签，不保存 prompt 原文、prompt 摘要或 response 内容。 |
+| **完整 AI 响应内容** | usage / transcript 扫描面只提取 prompt、tool、window、编辑事件和 token bucket，不把完整 assistant response 作为独立数据面上传。 |
 | **密码、私钥、证书** | 捕获流程包含文件路径合理性检查，自动跳过匹配以下模式的文件：`*.key`、`*.pem`、`*.pfx`、`*.p12`、`*.env`、`*secret*`、`*password*` 等敏感文件名。这些路径不会生成任何记录。 |
-| **AI 对话历史** | aitrack 仅钩入文件编辑事件。Claude Code、Codex 或 Cursor 的对话历史不经过 aitrack。 |
+| **完整 AI 对话历史** | 本地 hook / transcript 扫描只抽取 prompt、tool、window、编辑事件和 token bucket 字段，不把完整对话历史作为独立数据面上传。 |
 | **凭证中的 HMAC secret 部分** | 凭证由 `<token>-<hmac_secret>` 组成。`hmac_secret` 仅在本地用于计算签名，从不通过网络发送。 |
 | **与编码无关的个人身份信息** | aitrack 不访问开发环境以外的任何系统。 |
 
@@ -140,9 +141,9 @@ aitrack remove --cursor          # 移除 Cursor 钩子
 
 ## 8. 关于 Prompt 数据的说明 / A Note on Prompt Data
 
-`prompt_summary` 仅在对应本地 prompt hook 已安装时产生。当前 native 能力仅覆盖 Claude Code 的 `UserPromptSubmit` 钩子：客户端只保存内容无关的意图标签，并将其作为可选字段附加到编辑记录，用于 `prompt_patterns` 画像维度。
+`prompt_summary` 由本地 prompt hook 或 transcript 扫描产生。客户端会保存有界 prompt 内容，并将其作为可选字段附加到编辑记录，用于审计和画像维度。
 
-aitrack 不采集完整 AI 对话历史，不把完整 prompt 文本作为默认数据面。其他 agent 的 prompt 或用量指标如只能提供 token-only / usage-only 信号，应进入 usage rollup / snapshot 域，而不是编辑证据域。
+usage rollup / snapshot 仍是独立标量域，用于 token bucket、quota 和 subscription 状态。它不替代 `EditRecord`，也不会伪造 diff、行数或 `record_sig` 编辑证据。
 
 ---
 

@@ -37,7 +37,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 
 - Claude Code、Codex CLI、Cursor：已具备 native edit hook adapter，可生成 `EditRecord` 编辑证据。
 - 动态 agent registry/status/heartbeat：心跳 `hooks` 已按 agent key 动态表达，支持登记更多 agent 的安装状态。
-- local usage source：规划按本机日志、JSONL、SQLite、缓存和本地客户端状态接入标量用量；usage rollup / snapshot 与 `EditRecord` 分域，token-only / usage-only 不生成编辑证据。
+- local usage source：已支持按本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态接入 usage rollup / snapshot，并可将 transcript 中的 prompt、tool、window 和编辑监控事件补入 `EditRecord` 上报链路。
 
 ### 当前成功指标（v1.6.1 基线）
 
@@ -76,7 +76,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 |--------|------|------|
 | M12 | Rust 服务端 | 基于 axum + sqlx + tokio；与 Java / Go 协议完全等价；目标资源占用 ≤ 32MB 空载；适用于边缘部署与资源受限场景 |
 | M13 | Dynamic agent registry + local usage source | 注册 agent 的状态、心跳和本地用量来源；支持本机日志、JSONL、SQLite、缓存和本地客户端状态自动发现 |
-| M14 | Native edit adapter 扩展 | 按 agent 自身本地编辑事件能力逐个落地 native edit adapter；只有可还原文件编辑事件的 agent 才进入 `EditRecord` 域 |
+| M14 | Native edit adapter 扩展 | 按 agent 自身本地编辑事件能力逐个落地 native edit adapter，提升文件编辑类 `EditRecord` 的 diff 与行数精度 |
 | M15 | 服务端 Skills + 服务端 CLI（纯 Rust） | Skills：服务端沙箱执行能力（初始内置 summarize_edits / detect_pattern / suggest_refactor）；CLI：管理员命令行工具，无需 JVM / Go 运行时，支持 token 管理、设备查询、统计与画像查询 |
 | M16 | MCP 管理接口 | 将 aitrack 服务端暴露为 MCP Server；管理者可在 Claude Desktop / Claude Code 中直接查询统计、设备、画像、相似代码等数据，无需传统后台 UI |
 
@@ -132,7 +132,7 @@ prompt 捕获（v1.5）
 | 全文检索（BM25） | ✓ | ✓ | ✓ | ✓ |
 | 向量 ANN 检索 | ✓ | ✓ | ✓ | ✓ |
 | 开发者使用画像 | ✓ | ✓ | ✓ | ✓ |
-| prompt 意图标签捕获 | ✓ | ✓ | ✓ | ✓ |
+| prompt / transcript 监控 | ✓ | ✓ | ✓ | ✓ |
 | 六边形架构 | ✓ | ✓ | ✓ | ✓ |
 | ed25519 自更新验证 | ✓ | ✓ | ✓ | ✓ |
 | 逆向心跳（server → client） | — | 规划中 | ✓ | ✓ |
@@ -141,7 +141,7 @@ prompt 捕获（v1.5）
 | 本地防篡改 / 二进制完整性 | — | 规划中 | ✓ | ✓ |
 | Rust 服务端（第三实现） | — | — | 规划中 | ✓ |
 | 动态 agent registry / status / heartbeat | 部分 | ✓ | ✓ | ✓ |
-| local usage source / usage rollup | — | 规划中 | ✓ | ✓ |
+| local usage source / usage rollup | — | ✓ | ✓ | ✓ |
 | 更多 native edit adapter | — | — | 规划中 | ✓ |
 | 服务端 Skills | — | — | 规划中 | ✓ |
 | 服务端 CLI（纯 Rust） | — | — | 规划中 | ✓ |
