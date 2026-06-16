@@ -521,6 +521,13 @@ fn scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
     let mut roots = agent::default_scan_roots(home, tool);
     roots.push(crate::config::config_dir().join("sources").join(tool));
     roots.push(crate::config::config_dir().join("cache").join(tool));
+    roots.push(crate::config::config_dir().join("logs").join(tool));
+    roots.push(
+        crate::config::config_dir()
+            .join("logs")
+            .join(tool)
+            .join("history"),
+    );
     dedup_paths(roots)
 }
 
@@ -945,8 +952,15 @@ fn collect_events_recursive(
     }
     match value {
         Value::Object(map) => {
+            let event_name = string_from_object(map, EVENT_NAME_KEYS);
             let prompt = prompt_text_from_object(map);
+            let output = output_text_from_object(map);
             let tool_name = tool_name_from_object(map);
+            let tool_call_id = string_from_object(map, TOOL_CALL_ID_KEYS);
+            let tool_arguments = tool_arguments_from_object(map);
+            let tool_result = tool_result_from_object(map);
+            let skill_name = string_from_object(map, SKILL_NAME_KEYS);
+            let approval_decision = string_from_object(map, APPROVAL_DECISION_KEYS);
             let window_title = string_from_object(map, WINDOW_KEYS);
             let path_value = file_path_from_object(map);
             let old_text = string_from_object(map, OLD_TEXT_KEYS);
@@ -954,12 +968,26 @@ fn collect_events_recursive(
 
             let event_type = if prompt.is_some() {
                 Some("prompt")
+            } else if tool_result.is_some()
+                || event_name.as_deref().is_some_and(is_tool_result_event)
+            {
+                Some("tool_result")
+            } else if event_name.as_deref().is_some_and(is_tool_approval_event)
+                || approval_decision.is_some()
+            {
+                Some("tool_approval")
+            } else if event_name.as_deref().is_some_and(is_skill_event) || skill_name.is_some() {
+                Some("skill")
             } else if old_text.is_some() || new_text.is_some() || path_value.is_some() {
                 Some("edit")
+            } else if output.is_some() {
+                Some("output")
             } else if tool_name.is_some() {
                 Some("tool")
             } else if window_title.is_some() {
                 Some("window")
+            } else if event_name.is_some() {
+                Some("other")
             } else {
                 None
             };
@@ -995,7 +1023,18 @@ fn collect_events_recursive(
                     }
                 });
                 let prompt_text = prompt.map(|s| truncate_chars(&s, MAX_CAPTURE_TEXT));
-                let metadata = event_metadata(kind, tool_name.as_deref(), window_title.as_deref());
+                let metadata = event_metadata(EventMetadataParts {
+                    kind,
+                    event_name: event_name.as_deref(),
+                    tool_name: tool_name.as_deref(),
+                    tool_call_id: tool_call_id.as_deref(),
+                    tool_arguments: tool_arguments.as_ref(),
+                    tool_result: tool_result.as_ref(),
+                    skill_name: skill_name.as_deref(),
+                    approval_decision: approval_decision.as_deref(),
+                    output_text: output.as_deref(),
+                    window_title: window_title.as_deref(),
+                });
                 let seed = format!(
                     "{}|{}|{}|{}|{}|{}|{}|{}",
                     tool,
@@ -1038,7 +1077,8 @@ fn collect_events_recursive(
                     diff_hunk,
                     metadata,
                 });
-                suppress_child_events = kind == "prompt";
+                suppress_child_events =
+                    matches!(kind, "prompt" | "output" | "tool" | "tool_result");
             }
 
             if !suppress_child_events {
@@ -1223,7 +1263,18 @@ fn event_from_csv(
         added_lines,
         removed_lines,
         diff_hunk,
-        metadata: event_metadata(kind, tool_name.as_deref(), window_title.as_deref()),
+        metadata: event_metadata(EventMetadataParts {
+            kind,
+            event_name: None,
+            tool_name: tool_name.as_deref(),
+            tool_call_id: None,
+            tool_arguments: None,
+            tool_result: None,
+            skill_name: None,
+            approval_decision: None,
+            output_text: None,
+            window_title: window_title.as_deref(),
+        }),
     })
 }
 
@@ -1997,11 +2048,52 @@ fn prompt_text_from_object(map: &Map<String, Value>) -> Option<String> {
     })
 }
 
+fn output_text_from_object(map: &Map<String, Value>) -> Option<String> {
+    if matches!(
+        string_from_object(map, &["role", "author_role"]).as_deref(),
+        Some("assistant" | "model")
+    ) {
+        if let Some(text) = content_text(map.get("content")) {
+            return Some(text);
+        }
+        if let Some(text) = string_from_object(map, &["text", "message", "response"]) {
+            return Some(text);
+        }
+    }
+    for key in OUTPUT_MESSAGE_KEYS {
+        if let Some(value) = get_case_insensitive(map, key) {
+            if let Some(text) = content_text(Some(value)).or_else(|| value_as_string(value)) {
+                let text = text.trim().to_string();
+                if !text.is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    if has_output_event_name(map) {
+        content_text(map.get("content")).or_else(|| string_from_object(map, &["text", "message"]))
+    } else {
+        None
+    }
+}
+
 fn has_user_event_name(map: &Map<String, Value>) -> bool {
     string_from_object(map, &["type", "event", "event_type", "hook_event_name"])
         .map(|s| {
             let lower = s.to_ascii_lowercase();
             lower.contains("prompt") || lower.contains("user")
+        })
+        .unwrap_or(false)
+}
+
+fn has_output_event_name(map: &Map<String, Value>) -> bool {
+    string_from_object(map, EVENT_NAME_KEYS)
+        .map(|s| {
+            let lower = s.to_ascii_lowercase();
+            lower.contains("response")
+                || lower.contains("assistant")
+                || lower.contains("completion")
+                || lower.contains("output")
         })
         .unwrap_or(false)
 }
@@ -2025,6 +2117,55 @@ fn content_text(value: Option<&Value>) -> Option<String> {
 
 fn tool_name_from_object(map: &Map<String, Value>) -> Option<String> {
     string_from_object(map, TOOL_NAME_KEYS).filter(|s| !s.trim().is_empty())
+}
+
+fn tool_arguments_from_object(map: &Map<String, Value>) -> Option<Value> {
+    TOOL_ARGUMENT_KEYS
+        .iter()
+        .find_map(|key| get_case_insensitive(map, key).cloned())
+}
+
+fn tool_result_from_object(map: &Map<String, Value>) -> Option<Value> {
+    TOOL_RESULT_KEYS
+        .iter()
+        .find_map(|key| get_case_insensitive(map, key).cloned())
+        .or_else(|| {
+            if has_tool_result_event_name(map) {
+                map.get("content")
+                    .cloned()
+                    .or_else(|| get_case_insensitive(map, "result").cloned())
+                    .or_else(|| get_case_insensitive(map, "output").cloned())
+            } else {
+                None
+            }
+        })
+}
+
+fn has_tool_result_event_name(map: &Map<String, Value>) -> bool {
+    string_from_object(map, EVENT_NAME_KEYS)
+        .map(|s| is_tool_result_event(&s))
+        .unwrap_or(false)
+}
+
+fn is_tool_result_event(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("tool.result")
+        || lower.contains("tool_result")
+        || lower.contains("tool.call.result")
+        || lower.contains("posttooluse")
+}
+
+fn is_tool_approval_event(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("tool.approve")
+        || lower.contains("tool_approve")
+        || lower.contains("tool.approval")
+        || lower.contains("approval")
+}
+
+fn is_skill_event(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("skill.use") || lower.contains("skill_use") || lower.contains("skill")
 }
 
 fn file_path_from_object(map: &Map<String, Value>) -> Option<String> {
@@ -2051,26 +2192,80 @@ fn repo_context(value: &Value) -> Option<git::RepoInfo> {
     (!repo.repo_url.is_empty()).then_some(repo)
 }
 
-fn event_metadata(
-    kind: &str,
-    tool_name: Option<&str>,
-    window_title: Option<&str>,
-) -> Option<String> {
+struct EventMetadataParts<'a> {
+    kind: &'a str,
+    event_name: Option<&'a str>,
+    tool_name: Option<&'a str>,
+    tool_call_id: Option<&'a str>,
+    tool_arguments: Option<&'a Value>,
+    tool_result: Option<&'a Value>,
+    skill_name: Option<&'a str>,
+    approval_decision: Option<&'a str>,
+    output_text: Option<&'a str>,
+    window_title: Option<&'a str>,
+}
+
+fn event_metadata(parts: EventMetadataParts<'_>) -> Option<String> {
     let mut map = Map::new();
-    map.insert("event_type".to_string(), Value::String(kind.to_string()));
-    if let Some(tool) = tool_name {
+    map.insert(
+        "event_type".to_string(),
+        Value::String(parts.kind.to_string()),
+    );
+    if let Some(name) = parts.event_name {
+        map.insert(
+            "event_name".to_string(),
+            Value::String(truncate_chars(name, 256)),
+        );
+    }
+    if let Some(tool) = parts.tool_name {
         map.insert(
             "tool_name".to_string(),
             Value::String(truncate_chars(tool, 256)),
         );
     }
-    if let Some(title) = window_title {
+    if let Some(skill) = parts.skill_name {
+        map.insert(
+            "skill_name".to_string(),
+            Value::String(truncate_chars(skill, 256)),
+        );
+    }
+    if let Some(decision) = parts.approval_decision {
+        map.insert(
+            "approval_decision".to_string(),
+            Value::String(truncate_chars(decision, 256)),
+        );
+    }
+    if let Some(call_id) = parts.tool_call_id {
+        map.insert(
+            "tool_call_id".to_string(),
+            Value::String(truncate_chars(call_id, 256)),
+        );
+    }
+    if let Some(arguments) = parts.tool_arguments.and_then(metadata_json_string) {
+        map.insert("tool_arguments".to_string(), Value::String(arguments));
+    }
+    if let Some(result) = parts.tool_result.and_then(metadata_json_string) {
+        map.insert("tool_result".to_string(), Value::String(result));
+    }
+    if let Some(output) = parts.output_text {
+        map.insert(
+            "assistant_output".to_string(),
+            Value::String(truncate_chars(output, MAX_CAPTURE_TEXT)),
+        );
+    }
+    if let Some(title) = parts.window_title {
         map.insert(
             "window_title".to_string(),
             Value::String(truncate_chars(title, MAX_CAPTURE_TEXT)),
         );
     }
     serde_json::to_string(&Value::Object(map)).ok()
+}
+
+fn metadata_json_string(value: &Value) -> Option<String> {
+    serde_json::to_string(value)
+        .ok()
+        .map(|s| truncate_chars(&s, MAX_CAPTURE_TEXT))
 }
 
 fn synthetic_file_path(
@@ -2526,6 +2721,20 @@ const PROMPT_KEYS: &[&str] = &[
     "message.content",
     "message",
 ];
+const OUTPUT_MESSAGE_KEYS: &[&str] = &[
+    "output",
+    "response",
+    "assistant_output",
+    "assistantOutput",
+    "output_text",
+    "outputText",
+    "output.messages",
+    "output.messages_delta",
+    "gen_ai.output.messages",
+    "gen_ai.output.messages_delta",
+    "gen_ai.response.message",
+    "gen_ai.completion",
+];
 const TOOL_NAME_KEYS: &[&str] = &[
     "tool_name",
     "toolName",
@@ -2533,6 +2742,46 @@ const TOOL_NAME_KEYS: &[&str] = &[
     "name",
     "tool.name",
     "gen_ai.tool.name",
+];
+const TOOL_CALL_ID_KEYS: &[&str] = &[
+    "tool_call_id",
+    "toolCallId",
+    "tool_call.id",
+    "gen_ai.tool.call.id",
+    "gen_ai.tool.call.exec.id",
+];
+const TOOL_ARGUMENT_KEYS: &[&str] = &[
+    "tool_arguments",
+    "toolArguments",
+    "tool_input",
+    "toolInput",
+    "arguments",
+    "args",
+    "input",
+    "tool.call.arguments",
+    "gen_ai.tool.call.arguments",
+];
+const TOOL_RESULT_KEYS: &[&str] = &[
+    "tool_result",
+    "toolResult",
+    "result",
+    "output",
+    "tool.call.result",
+    "gen_ai.tool.call.result",
+];
+const SKILL_NAME_KEYS: &[&str] = &[
+    "skill",
+    "skill_name",
+    "skillName",
+    "gen_ai.skill.name",
+    "gen_ai.skill.id",
+];
+const APPROVAL_DECISION_KEYS: &[&str] = &[
+    "approval",
+    "approval_decision",
+    "approvalDecision",
+    "approval.decision",
+    "decision",
 ];
 const FILE_PATH_KEYS: &[&str] = &[
     "file_path",
@@ -2564,6 +2813,13 @@ const WINDOW_KEYS: &[&str] = &[
     "title",
     "app_name",
     "appName",
+];
+const EVENT_NAME_KEYS: &[&str] = &[
+    "event.name",
+    "event",
+    "event_type",
+    "type",
+    "hook_event_name",
 ];
 
 #[cfg(test)]
@@ -2887,6 +3143,127 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("-let total"));
+        });
+    }
+
+    #[test]
+    fn json_scan_extracts_output_tool_call_and_tool_result_monitoring_records() {
+        with_home(|home| {
+            let dir = home.join("sources").join("opencode");
+            fs::create_dir_all(&dir).unwrap();
+            let lines = [
+                serde_json::json!({
+                    "event.name": "llm.response",
+                    "gen_ai.session.id": "sess-output-tool",
+                    "gen_ai.response.model": "gpt-5",
+                    "timestamp": "2026-06-16T10:10:00Z",
+                    "gen_ai.output.messages": [
+                        {"role": "assistant", "content": "assistant produced a deploy plan"}
+                    ],
+                    "gen_ai.usage.output_tokens": 23
+                }),
+                serde_json::json!({
+                    "event.name": "tool.call",
+                    "gen_ai.session.id": "sess-output-tool",
+                    "gen_ai.tool.name": "Read",
+                    "gen_ai.tool.call.id": "call-read-1",
+                    "gen_ai.tool.call.arguments": {"file_path": "src/main.rs"}
+                }),
+                serde_json::json!({
+                    "event.name": "tool.result",
+                    "gen_ai.session.id": "sess-output-tool",
+                    "gen_ai.tool.call.id": "call-read-1",
+                    "gen_ai.tool.call.result": {"content": "fn main() {}"}
+                }),
+            ]
+            .into_iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+            fs::write(dir.join("activity.jsonl"), lines).unwrap();
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["opencode".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+
+            assert_eq!(report.parsed_messages, 1);
+            assert_eq!(report.monitoring_events_parsed, 3);
+            assert_eq!(report.monitoring_records_inserted, 3);
+            let rows = monitoring_rows();
+            let types = rows
+                .iter()
+                .map(|row| event_type(&row.0))
+                .collect::<Vec<_>>();
+            assert_eq!(types, vec!["output", "tool", "tool_result"]);
+            assert!(rows[0].0.contains("assistant produced a deploy plan"));
+            assert!(rows[1].0.contains("call-read-1"));
+            assert!(rows[1].0.contains("src/main.rs"));
+            assert!(rows[2].0.contains("fn main() {}"));
+        });
+    }
+
+    #[test]
+    fn json_scan_extracts_skill_approval_and_explicit_other_agent_events() {
+        with_home(|home| {
+            let dir = home.join("sources").join("codex");
+            fs::create_dir_all(&dir).unwrap();
+            let lines = [
+                serde_json::json!({
+                    "event.name": "skill.use",
+                    "gen_ai.session.id": "sess-agent-events",
+                    "gen_ai.skill.name": "code-review",
+                    "timestamp": "2026-06-16T10:20:00Z"
+                }),
+                serde_json::json!({
+                    "event.name": "tool.approve",
+                    "gen_ai.session.id": "sess-agent-events",
+                    "gen_ai.tool.name": "Edit",
+                    "approval.decision": "approved",
+                    "timestamp": "2026-06-16T10:20:01Z"
+                }),
+                serde_json::json!({
+                    "event.name": "agent.custom.event",
+                    "gen_ai.session.id": "sess-agent-events",
+                    "custom.status": "kept",
+                    "timestamp": "2026-06-16T10:20:02Z"
+                }),
+            ]
+            .into_iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+            fs::write(dir.join("agent-events.jsonl"), lines).unwrap();
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+
+            assert_eq!(report.monitoring_events_parsed, 3);
+            let rows = monitoring_rows();
+            let types = rows
+                .iter()
+                .map(|row| event_type(&row.0))
+                .collect::<Vec<_>>();
+            assert_eq!(types, vec!["skill", "tool_approval", "other"]);
+            assert!(rows[0].0.contains("code-review"));
+            assert!(rows[1].0.contains("approved"));
+            assert!(rows[2].0.contains("agent.custom.event"));
         });
     }
 

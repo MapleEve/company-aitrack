@@ -8,6 +8,42 @@ pub struct Agent {
     pub has_native_prompt_hook: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalSourceKind {
+    HookJsonl,
+    SessionJsonl,
+    Sqlite,
+    IdeSnapshot,
+    GenericCache,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalSourceCapabilities {
+    pub prompt_input: bool,
+    pub assistant_output: bool,
+    pub tool_call: bool,
+    pub tool_result: bool,
+    pub token_usage: bool,
+    pub session_context: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalSourceSpec {
+    pub agent: &'static str,
+    pub kind: LocalSourceKind,
+    pub label: &'static str,
+    pub capabilities: LocalSourceCapabilities,
+}
+
+const FULL_LOCAL_SOURCE_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: true,
+    token_usage: true,
+    session_context: true,
+};
+
 impl Agent {
     pub fn marker_path(&self, home: &Path) -> PathBuf {
         home.join(self.marker)
@@ -257,8 +293,123 @@ pub const REGISTERED_AGENTS: &[Agent] = &[
     },
 ];
 
+const LOCAL_SOURCE_SPECS: &[LocalSourceSpec] = &[
+    LocalSourceSpec {
+        agent: "claude",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "codex",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "cursor",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "opencode",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-cn",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-work",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-work-cn",
+        kind: LocalSourceKind::HookJsonl,
+        label: "hook-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-cn",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-work",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-work-cn",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder",
+        kind: LocalSourceKind::IdeSnapshot,
+        label: "ide-snapshot",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-cn",
+        kind: LocalSourceKind::IdeSnapshot,
+        label: "ide-snapshot",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-work",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "wukong",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "trae",
+        kind: LocalSourceKind::GenericCache,
+        label: "generic-cache",
+        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+    },
+];
+
 pub fn registered_agents() -> &'static [Agent] {
     REGISTERED_AGENTS
+}
+
+pub fn local_source_specs() -> &'static [LocalSourceSpec] {
+    LOCAL_SOURCE_SPECS
 }
 
 pub fn registered_agent_names() -> Vec<&'static str> {
@@ -544,6 +695,62 @@ mod tests {
         assert!(!default_scan_agent_names().contains(&"roocode"));
         assert!(!default_scan_agent_names().contains(&"kilo-code"));
         assert!(!default_scan_agent_names().contains(&"gajae-code"));
+    }
+
+    #[test]
+    fn local_source_specs_cover_full_local_collection_matrix() {
+        let specs = local_source_specs();
+        let required = [
+            ("claude", LocalSourceKind::HookJsonl),
+            ("codex", LocalSourceKind::HookJsonl),
+            ("cursor", LocalSourceKind::HookJsonl),
+            ("opencode", LocalSourceKind::HookJsonl),
+            ("qoder", LocalSourceKind::HookJsonl),
+            ("qoder-cn", LocalSourceKind::HookJsonl),
+            ("qoder-work", LocalSourceKind::HookJsonl),
+            ("qoder-work-cn", LocalSourceKind::HookJsonl),
+            ("qoder", LocalSourceKind::Sqlite),
+            ("qoder-cn", LocalSourceKind::Sqlite),
+            ("qoder-work", LocalSourceKind::Sqlite),
+            ("qoder-work-cn", LocalSourceKind::Sqlite),
+            ("qoder", LocalSourceKind::IdeSnapshot),
+            ("qoder-cn", LocalSourceKind::IdeSnapshot),
+            ("qoder", LocalSourceKind::SessionJsonl),
+            ("qoder-work", LocalSourceKind::SessionJsonl),
+            ("wukong", LocalSourceKind::SessionJsonl),
+            ("trae", LocalSourceKind::GenericCache),
+        ];
+
+        for (agent, kind) in required {
+            let spec = specs
+                .iter()
+                .find(|spec| spec.agent == agent && spec.kind == kind)
+                .unwrap_or_else(|| panic!("{agent} {kind:?} source spec missing"));
+            assert!(
+                spec.capabilities.prompt_input,
+                "{agent} {kind:?} prompt missing"
+            );
+            assert!(
+                spec.capabilities.assistant_output,
+                "{agent} {kind:?} output missing"
+            );
+            assert!(
+                spec.capabilities.tool_call,
+                "{agent} {kind:?} tool call missing"
+            );
+            assert!(
+                spec.capabilities.tool_result,
+                "{agent} {kind:?} tool result missing"
+            );
+            assert!(
+                spec.capabilities.token_usage,
+                "{agent} {kind:?} token missing"
+            );
+            assert!(
+                spec.capabilities.session_context,
+                "{agent} {kind:?} session context missing"
+            );
+        }
     }
 
     #[test]
