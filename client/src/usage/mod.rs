@@ -2690,6 +2690,579 @@ mod tests {
         });
     }
 
+    #[test]
+    fn scan_now_status_and_default_tool_selection_cover_local_sources() {
+        with_home(|home| {
+            let dir = home.join("sources").join("opencode");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("usage.json"),
+                serde_json::json!({
+                    "session_id": "default-scan",
+                    "timestamp": "2026-06-16T11:00:00Z",
+                    "model": "gpt-5",
+                    "provider": "openai",
+                    "account": "employee@example.com",
+                    "input_tokens": 20,
+                    "output_tokens": 30,
+                    "message_count": 2,
+                    "prompt": "monitor local prompt text"
+                })
+                .to_string(),
+            )
+            .unwrap();
+
+            let report = tokio_test::block_on(scan_now(UsageScanOptions {
+                tools: vec![],
+                since: Some("2026-06-16".to_string()),
+                until: Some("2026-06-16".to_string()),
+            }))
+            .unwrap();
+            assert_eq!(report.parsed_messages, 1);
+            assert_eq!(report.monitoring_events_parsed, 1);
+
+            let current = status().unwrap();
+            assert_eq!(current.sessions, 1);
+            assert_eq!(current.rollups, 1);
+            assert_eq!(current.pending_monitoring_events, 1);
+
+            let skipped = tokio_test::block_on(scan_now(UsageScanOptions {
+                tools: vec!["opencode".to_string()],
+                since: Some("2026-06-17".to_string()),
+                until: Some("2026-06-17".to_string()),
+            }))
+            .unwrap();
+            assert_eq!(skipped.parsed_messages, 0);
+            assert_eq!(skipped.monitoring_events_parsed, 0);
+        });
+    }
+
+    #[test]
+    fn discovery_helpers_cover_roots_supported_files_and_skipped_dirs() {
+        with_home(|home| {
+            assert!(selected_scan_tools(&[]).contains(&"codex".to_string()));
+            assert_eq!(
+                selected_scan_tools(&[
+                    " Cursor ".to_string(),
+                    "cursor".to_string(),
+                    "".to_string(),
+                    "TRAE".to_string()
+                ]),
+                vec!["cursor".to_string(), "trae".to_string()]
+            );
+
+            assert!(scan_roots(home, "claude")
+                .iter()
+                .any(|p| p.ends_with(".claude/projects")));
+            assert!(scan_roots(home, "cursor")
+                .iter()
+                .any(|p| p.to_string_lossy().contains("Cursor/User/globalStorage")));
+            assert!(scan_roots(home, "trae")
+                .iter()
+                .any(|p| p.to_string_lossy().contains("Trae")));
+            assert!(scan_roots(home, "opencode")
+                .iter()
+                .any(|p| p.ends_with(".config/opencode")));
+            assert!(scan_roots(home, "custom")
+                .iter()
+                .any(|p| p.ends_with(".custom")));
+
+            let root = home.join("tree");
+            fs::create_dir_all(root.join("node_modules")).unwrap();
+            fs::create_dir_all(root.join("nested")).unwrap();
+            fs::write(root.join("a.jsonl"), "{}").unwrap();
+            fs::write(root.join("nested").join("b.sqlite3"), "").unwrap();
+            fs::write(root.join("node_modules").join("ignored.json"), "{}").unwrap();
+            fs::write(root.join("notes.txt"), "{}").unwrap();
+
+            let mut files = Vec::new();
+            let mut seen = HashSet::new();
+            collect_supported_files(&root, &mut files, &mut seen);
+            files.sort();
+            assert_eq!(files.len(), 2);
+            assert!(files.iter().any(|p| p.ends_with("a.jsonl")));
+            assert!(files.iter().any(|p| p.ends_with("b.sqlite3")));
+            assert!(skip_dir(&root.join("Cache")));
+            assert!(is_supported_file(&root.join("records.db")));
+            assert!(!is_supported_file(&root.join("notes.txt")));
+
+            let mut single = Vec::new();
+            let mut seen_single = HashSet::new();
+            collect_supported_files(&root.join("a.jsonl"), &mut single, &mut seen_single);
+            collect_supported_files(&root.join("a.jsonl"), &mut single, &mut seen_single);
+            assert_eq!(single.len(), 1);
+        });
+    }
+
+    #[test]
+    fn json_variants_cover_arrays_nested_usage_and_large_files() {
+        with_home(|home| {
+            let dir = home.join("cache").join("trae");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("nested.ndjson"),
+                format!(
+                    "not-json\n{}\n{}\n",
+                    serde_json::json!([
+                        {
+                            "conversationId": "nested-usage",
+                            "createdAt": "2026-06-16",
+                            "modelName": " gpt-5 ",
+                            "providerId": "openai",
+                            "email": "dev@example.com",
+                            "usage": {
+                                "totalTokens": 77,
+                                "messageCount": 3,
+                                "total_cost": "0.42"
+                            }
+                        }
+                    ]),
+                    serde_json::json!({
+                        "type": "user_message",
+                        "content": [
+                            {"text": "first prompt part"},
+                            {"content": "second prompt part"}
+                        ],
+                        "sessionId": "nested-usage",
+                        "timestamp": 1_789_000_000
+                    })
+                ),
+            )
+            .unwrap();
+            let result = scan_text_json_file("trae", &dir.join("nested.ndjson")).unwrap();
+            let usage = result
+                .messages
+                .iter()
+                .find(|message| message.tokens.input == 77)
+                .expect("nested usage total_tokens should be parsed");
+            assert_eq!(usage.message_count, 3);
+            assert_eq!(usage.source_cost, 0.42);
+            assert!(result.events.iter().any(|event| {
+                event.prompt_text.as_deref() == Some("first prompt part\nsecond prompt part")
+            }));
+
+            let oversized = dir.join("oversized.json");
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&oversized)
+                .unwrap();
+            file.set_len(MAX_JSON_BYTES + 1).unwrap();
+            let empty = scan_text_json_file("trae", &oversized).unwrap();
+            assert_eq!(empty.messages.len(), 0);
+            assert_eq!(empty.events.len(), 0);
+        });
+    }
+
+    #[test]
+    fn sqlite_scan_extracts_usage_and_monitoring_from_local_tables() {
+        with_home(|home| {
+            let dir = home.join("sources").join("trae");
+            fs::create_dir_all(&dir).unwrap();
+            let db_path = dir.join("state.sqlite");
+            {
+                let conn = Connection::open(&db_path).unwrap();
+                conn.execute_batch(
+                    r#"
+                    CREATE TABLE events (
+                      payload TEXT,
+                      body BLOB,
+                      input_tokens INTEGER,
+                      output_tokens TEXT,
+                      cost REAL,
+                      message_count INTEGER,
+                      model TEXT,
+                      provider TEXT,
+                      session_id TEXT,
+                      account TEXT,
+                      timestamp TEXT,
+                      prompt TEXT,
+                      tool_name TEXT,
+                      window_title TEXT,
+                      file_paths TEXT,
+                      old_string TEXT,
+                      new_string TEXT
+                    );
+                    CREATE TABLE boring (id INTEGER PRIMARY KEY, note TEXT);
+                    "#,
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO events
+                     (payload, body, input_tokens, output_tokens, cost, message_count, model, provider,
+                      session_id, account, timestamp, prompt, tool_name, window_title, file_paths,
+                      old_string, new_string)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                    params![
+                        serde_json::json!({
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": {"text": "sqlite prompt body"},
+                                    "created_at": "2026-06-16T12:00:00Z"
+                                }
+                            ]
+                        })
+                        .to_string(),
+                        vec![1_u8, 2, 3],
+                        10_i64,
+                        "15",
+                        1.5_f64,
+                        2_i64,
+                        "gpt-5",
+                        "openai",
+                        "sqlite-session",
+                        "operator@example.com",
+                        "2026-06-16T12:00:00Z",
+                        "",
+                        "ApplyPatch",
+                        "Editor Window",
+                        serde_json::json!(["src/sqlite.rs"]).to_string(),
+                        "old\n",
+                        "new\n"
+                    ],
+                )
+                .unwrap();
+            }
+
+            let result = scan_source_file("trae", &db_path).unwrap();
+            assert_eq!(result.messages.len(), 1);
+            assert_eq!(result.messages[0].tokens.input, 10);
+            assert_eq!(result.messages[0].tokens.output, 15);
+            assert_eq!(result.messages[0].message_count, 2);
+            assert!(result.events.len() >= 1);
+            assert!(result
+                .events
+                .iter()
+                .any(|event| event.prompt_text.as_deref() == Some("sqlite prompt body")));
+            assert!(result
+                .events
+                .iter()
+                .any(|event| event.file_path == "src/sqlite.rs"));
+            assert_eq!(quote_identifier("a\"b"), "\"a\"\"b\"");
+            assert!(is_interesting_column("window_title"));
+            assert!(!is_interesting_column("plain_note"));
+        });
+    }
+
+    #[test]
+    fn csv_usage_rows_cover_token_cost_and_quote_parsing() {
+        with_home(|home| {
+            let path = home.join("usage.csv");
+            fs::write(
+                &path,
+                concat!(
+                    "session_id,timestamp,prompt_tokens,completion_tokens,cached_input_tokens,",
+                    "cache_creation_input_tokens,reasoning_tokens,message_count,cost,model,provider,email,prompt\n",
+                    "\"acct:session\",2026-06-16,10.4,20.6,3,4,5,2,0.25,gpt-5,openai,dev@example.com,\"prompt, with comma\"\n",
+                    "empty,2026-06-16,0,0,0,0,0,1,0,gpt-5,openai,dev@example.com,\n"
+                ),
+            )
+            .unwrap();
+            let result = scan_csv_file("cursor", &path).unwrap();
+            assert_eq!(result.messages.len(), 1);
+            assert_eq!(result.messages[0].tokens.input, 10);
+            assert_eq!(result.messages[0].tokens.output, 21);
+            assert_eq!(result.messages[0].tokens.cache_read, 3);
+            assert_eq!(result.messages[0].tokens.cache_write, 4);
+            assert_eq!(result.messages[0].tokens.reasoning, 5);
+            assert_eq!(result.messages[0].message_count, 2);
+            assert_eq!(result.messages[0].source_cost, 0.25);
+            assert_eq!(result.messages[0].account, "dev@example.com");
+            assert_eq!(
+                result.events[0].prompt_text.as_deref(),
+                Some("prompt, with comma")
+            );
+            assert_eq!(
+                split_csv_line("\"a,b\",\"c\"\"d\",e"),
+                vec!["a,b", "c\"d", "e"]
+            );
+        });
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_now_without_api_keeps_usage_and_monitoring_pending() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = TempDir::new().unwrap();
+        std::env::set_var("AITRACK_HOME", dir.path());
+        std::env::set_var("AITRACK_SCAN_HOME", dir.path());
+        crate::config::save_config(&crate::config::Config {
+            api_url: String::new(),
+            credential: String::new(),
+            device_id: "device-sync-local".to_string(),
+        })
+        .unwrap();
+        let source = dir.path().join("sources").join("codex");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("usage.jsonl"),
+            serde_json::json!({
+                "session_id": "sync-local",
+                "timestamp": "2026-06-16T13:00:00Z",
+                "model": "gpt-5",
+                "input_tokens": 5,
+                "output_tokens": 7,
+                "prompt": "local sync prompt"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let report = sync_now(UsageSyncOptions {
+            scan: UsageScanOptions {
+                tools: vec!["codex".to_string()],
+                since: None,
+                until: None,
+            },
+            api_url: None,
+            credential: None,
+        })
+        .await
+        .unwrap();
+        assert_eq!(report.scan.parsed_messages, 1);
+        assert_eq!(report.enqueued_rollups, 1);
+        assert_eq!(report.uploaded, 0);
+        assert_eq!(report.pending, 1);
+        assert_eq!(report.pending_monitoring_events, 1);
+        std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subscription_snapshots_enqueue_and_upload_to_usage_endpoint() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/ai-track/usage/subscription"))
+            .and(header("X-AiTrack-Device", "device-subscriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = TempDir::new().unwrap();
+        std::env::set_var("AITRACK_HOME", dir.path());
+        std::env::set_var("AITRACK_SCAN_HOME", dir.path());
+        crate::config::save_config(&crate::config::Config {
+            api_url: mock_server.uri(),
+            credential: "aitrack_testtoken12345-testhmacsecret".to_string(),
+            device_id: "device-subscriptions".to_string(),
+        })
+        .unwrap();
+
+        let codex_sessions = dir.path().join(".codex").join("sessions").join("2026");
+        fs::create_dir_all(&codex_sessions).unwrap();
+        fs::write(
+            codex_sessions.join("rate.jsonl"),
+            serde_json::json!({
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "plan_type": "pro",
+                        "primary": {
+                            "used_percent": 25.0,
+                            "window_minutes": 300,
+                            "resets_at": "2999-01-01T00:00:00Z"
+                        },
+                        "secondary": {
+                            "used_percent": 80.0,
+                            "window_minutes": 10080,
+                            "resets_at": 32503680000.0
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("claude-rate-limits.json"),
+            serde_json::json!({
+                "five_hour": {
+                    "used_percentage": 40,
+                    "resets_at": "2999-01-01T00:00:00Z"
+                },
+                "seven_day": {
+                    "utilization": 10,
+                    "resets_at": 32503680000.0
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let conn = open_usage_db().unwrap();
+        assert_eq!(upsert_local_subscription_snapshots(&conn).unwrap(), 2);
+        assert_eq!(enqueue_dirty_subscriptions(&conn).unwrap(), 2);
+        assert_eq!(pending_outbox(&conn).unwrap(), 2);
+
+        let report = drain_outbox(
+            &conn,
+            &mock_server.uri(),
+            "aitrack_testtoken12345-testhmacsecret",
+            "device-subscriptions",
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.uploaded, 2);
+        assert_eq!(report.failed, 0);
+        assert_eq!(pending_outbox(&conn).unwrap(), 0);
+        let dirty: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM usage_subscription_snapshots WHERE dirty = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dirty, 0);
+        std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn outbox_http_failure_increments_retry_and_keeps_pending() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/ai-track/usage/rollup"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = TempDir::new().unwrap();
+        std::env::set_var("AITRACK_HOME", dir.path());
+        std::env::set_var("AITRACK_SCAN_HOME", dir.path());
+        crate::config::save_config(&crate::config::Config {
+            api_url: mock_server.uri(),
+            credential: "aitrack_testtoken12345-testhmacsecret".to_string(),
+            device_id: "device-failure".to_string(),
+        })
+        .unwrap();
+        let mut conn = open_usage_db().unwrap();
+        insert_usage_sessions(&mut conn, &[make_message(9)]).unwrap();
+        rebuild_rollups(&mut conn).unwrap();
+        assert_eq!(enqueue_dirty_rollups(&conn, "device-failure").unwrap(), 1);
+
+        let report = drain_outbox(
+            &conn,
+            &mock_server.uri(),
+            "aitrack_testtoken12345-testhmacsecret",
+            "device-failure",
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.uploaded, 0);
+        assert_eq!(report.failed, 1);
+        assert_eq!(pending_outbox(&conn).unwrap(), 1);
+        let retry_count: i64 = conn
+            .query_row("SELECT retry_count FROM usage_outbox", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(retry_count, 1);
+        std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
+    }
+
+    #[test]
+    fn fetch_pending_outbox_rejects_unknown_payload_type() {
+        with_home(|_| {
+            let conn = open_usage_db().unwrap();
+            conn.execute(
+                "INSERT INTO usage_outbox (payload_type, natural_key, payload_json, payload_sha256)
+                 VALUES ('bad', 'bad-key', '{}', 'bad-sha')",
+                [],
+            )
+            .unwrap();
+            let err = match fetch_pending_outbox(&conn) {
+                Ok(_) => panic!("bad payload type should fail"),
+                Err(err) => err.to_string(),
+            };
+            assert!(err.contains("unknown usage payload type bad"));
+        });
+    }
+
+    #[test]
+    fn parser_helpers_cover_edge_cases() {
+        let mut map = Map::new();
+        map.insert("totalTokens".to_string(), Value::from(99));
+        let tokens = token_buckets_from_object(&map).unwrap();
+        assert_eq!(tokens.input, 99);
+        map.insert("input_tokens".to_string(), Value::from(-5));
+        assert_eq!(token_buckets_from_object(&map).unwrap().input, 99);
+
+        assert_eq!(OutboxType::from_str("rollup"), Some(OutboxType::Rollup));
+        assert_eq!(
+            OutboxType::Subscription.endpoint(),
+            "/api/v1/ai-track/usage/subscription"
+        );
+        assert_eq!(OutboxType::Subscription.as_str(), "subscription");
+        assert_eq!(OutboxType::from_str("other"), None);
+
+        let prompt_obj = serde_json::json!({
+            "role": "human",
+            "content": {"text": "object prompt"}
+        });
+        assert_eq!(
+            prompt_text_from_object(prompt_obj.as_object().unwrap()).as_deref(),
+            Some("object prompt")
+        );
+        let user_event = serde_json::json!({
+            "event_type": "user_message",
+            "content": "event prompt"
+        });
+        assert_eq!(
+            prompt_text_from_object(user_event.as_object().unwrap()).as_deref(),
+            Some("event prompt")
+        );
+
+        let files = serde_json::json!({"files": ["src/main.rs", "src/lib.rs"]});
+        assert_eq!(
+            file_path_from_object(files.as_object().unwrap()).as_deref(),
+            Some("src/main.rs")
+        );
+        assert!(
+            synthetic_file_path("tool", "codex", "session-1", Some("Read File"))
+                .starts_with("__aitrack__/codex/Read_File/")
+        );
+        assert_eq!(sanitize_path_segment(" !! "), "");
+
+        let cursor_root = serde_json::json!({"usage": [{"account": ""}]});
+        assert_eq!(
+            account_from_context("cursor", "user@example.com:session", &cursor_root),
+            "user@example.com"
+        );
+        assert_eq!(
+            account_from_context("codex", "session", &cursor_root),
+            "local"
+        );
+
+        let nested = serde_json::json!({"outer": [{"cost": "1.75", "count": "2.4"}]});
+        assert_eq!(first_f64(&nested, &["cost"]), Some(1.75));
+        assert_eq!(first_i64(&nested, &["count"]), Some(2));
+        assert_eq!(value_as_string(&Value::from(42)).as_deref(), Some("42"));
+        assert_eq!(value_as_i64(&Value::from(42_u64)), Some(42));
+        assert_eq!(value_as_i64(&Value::from("42.6")), Some(43));
+        assert_eq!(value_as_f64(&Value::from("3.5")), Some(3.5));
+
+        assert_eq!(parse_timestamp_ms_str(""), None);
+        assert_eq!(
+            day_from_timestamp_ms(parse_timestamp_ms_str("2026-06-16").unwrap()),
+            "2026-06-16"
+        );
+        assert_eq!(
+            day_from_timestamp_ms(parse_timestamp_ms_str("1789000000").unwrap()),
+            "2026-09-10"
+        );
+        assert!(parse_timestamp_ms_str("not-a-date").is_none());
+        assert!(rfc3339_from_ms(1_789_000_000_000).starts_with("2026-"));
+        assert!(system_time_ms(std::time::UNIX_EPOCH).is_some());
+        assert!(!day_in_range("2026-06-16", Some("2026-06-17"), None));
+        assert!(!day_in_range("2026-06-16", None, Some("2026-06-15")));
+        assert_eq!(normalize_model("   "), "unknown");
+        assert_eq!(truncate_chars("abcdef", 3), "abc");
+        assert_eq!(titlecase("team"), "Team");
+        assert_eq!(titlecase(""), "");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn sync_uploads_json_rollup_to_usage_endpoint() {
         let mock_server = MockServer::start().await;
