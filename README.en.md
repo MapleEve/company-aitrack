@@ -150,7 +150,7 @@ Profile data is used solely to understand actual AI tool adoption — it is not 
 
 ### Prompt and Local Transcript Monitoring (v1.7+)
 
-The client can optionally install a `UserPromptSubmit` hook and can also scan local agent logs, JSONL files, SQLite databases, and caches with `aitrack usage scan|sync`. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from local transcripts.
+The client can optionally install a `UserPromptSubmit` hook and can also scan local agent logs, JSONL files, SQLite databases, and caches with `aitrack usage scan|sync` by agent, time window, and local cursor cache. The default mode is a recent-window incremental scan; explicit `--since/--until` flags provide small, targeted backfills. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from local transcripts.
 
 The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets, message count, and source cost by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
 
@@ -159,7 +159,7 @@ The `usage` command also maintains a separate usage rollup / subscription snapsh
 - The Rust client has been refactored to hexagonal architecture (domain / port / adapter three-layer), with all I/O routed through `StoragePort` / `UploadPort` interfaces — business logic fully decoupled from infrastructure
 - `aitrack update` subcommand: fetches the latest release from GitHub Releases and atomically replaces the current binary after ed25519 signature verification
 - Keyword library tamper protection: keywords are hardcoded as compile-time constants; `keyword_fingerprint()` computes a SHA-256 fingerprint for server-side verification
-- All three components have coverage ≥ 90% (Rust 295 tests / Java 225 tests / Go package tests)
+- All three components have coverage ≥ 90% (Rust 300 tests / Java and Go package tests)
 
 ---
 

@@ -150,7 +150,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 ### 프롬프트 및 로컬 transcript 모니터링(v1.7+)
 
-클라이언트는 선택적으로 `UserPromptSubmit` 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 로컬 agent 로그, JSONL, SQLite, 캐시도 스캔할 수 있습니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 로컬 transcript 에서 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
+클라이언트는 선택적으로 `UserPromptSubmit` 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 agent, 시간 창, 로컬 커서 캐시 기준으로 로컬 agent 로그, JSONL, SQLite, 캐시를 스캔할 수 있습니다. 기본 모드는 최근 창의 증분 스캔이며, 명시적인 `--since/--until` 로 작은 범위의 백필을 수행합니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 로컬 transcript 에서 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
 
 `usage` 서브커맨드는 별도의 usage rollup / subscription snapshot 데이터면도 유지합니다. day, agent, model, account 기준으로 token bucket, message count, source cost 를 집계하고 `/api/v1/ai-track/usage/*` API 를 통해 Java 또는 Go 서버로 업로드합니다.
 
@@ -159,7 +159,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 - Rust 클라이언트가 헥사고날 아키텍처(domain / port / adapter 3계층)로 리팩터링 완료. 모든 I/O는 `StoragePort` / `UploadPort` 인터페이스를 통해 라우팅되어 비즈니스 로직과 인프라가 완전히 분리
 - `aitrack update` 서브커맨드: GitHub Releases에서 최신 버전을 가져와 ed25519 서명 검증 후 현재 바이너리를 원자적으로 교체
 - 키워드 라이브러리 변조 방지: 키워드는 컴파일 타임 상수로 하드코딩되어 있으며, `keyword_fingerprint()`가 서버 측 검증을 위한 SHA-256 지문을 계산
-- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 295 tests / Java 225 tests / Go package tests)
+- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 300 tests / Java 및 Go package tests)
 
 ---
 

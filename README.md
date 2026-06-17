@@ -159,7 +159,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - Rust 客户端完成六边形架构重构（domain / port / adapter 三层），所有 I/O 通过 `StoragePort` / `UploadPort` 接口路由，业务逻辑与基础设施彻底解耦
 - `aitrack update` 子命令：从 GitHub Releases 拉取最新版本，ed25519 签名验证通过后原子替换当前二进制
 - 关键词库防篡改：关键词以编译期常量硬编码，`keyword_fingerprint()` 计算 SHA-256 指纹供服务端校验
-- 三端覆盖率均 ≥ 90%（Rust 295 tests / Java 225 tests / Go package tests）
+- 三端覆盖率均 ≥ 90%（Rust 300 tests / Java 和 Go package tests）
 
 ---
 

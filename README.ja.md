@@ -150,7 +150,7 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 
 ### プロンプトとローカル transcript 監視（v1.7+）
 
-クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` でローカル agent のログ、JSONL、SQLite、キャッシュもスキャンできます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、ローカル transcript から prompt、tool、window、編集監視イベントを復元できます。
+クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` で agent、時間ウィンドウ、ローカルカーソルキャッシュ単位にローカル agent のログ、JSONL、SQLite、キャッシュをスキャンできます。デフォルトは直近ウィンドウの増分スキャンで、明示的な `--since/--until` により小規模なバックフィルを行えます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、ローカル transcript から prompt、tool、window、編集監視イベントを復元できます。
 
 `usage` サブコマンドは独立した usage rollup / subscription snapshot データ面も維持します。day、agent、model、account ごとに token bucket、message count、source cost を集計し、`/api/v1/ai-track/usage/*` API 経由で Java または Go サーバーへアップロードします。
 
@@ -159,7 +159,7 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 - Rust クライアントをヘキサゴナルアーキテクチャ（domain / port / adapter の3層）にリファクタリング完了。すべての I/O は `StoragePort` / `UploadPort` インターフェースを通じてルーティングされ、ビジネスロジックとインフラが完全に分離
 - `aitrack update` サブコマンド：GitHub Releases から最新バージョンを取得し、ed25519 署名検証後に現在のバイナリをアトミックに置換
 - キーワードライブラリ改ざん防止：キーワードはコンパイル時定数としてハードコードされ、`keyword_fingerprint()` がサーバー側検証用の SHA-256 フィンガープリントを計算
-- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 295 tests / Java 225 tests / Go package tests）
+- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 300 tests / Java と Go package tests）
 
 ---
 
