@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use rusqlite::types::ValueRef;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -22,8 +22,14 @@ use crate::domain::model::Record;
 use crate::{git, uploader};
 
 const MAX_UPLOAD_ITEMS: i64 = 500;
-const MAX_SCAN_FILES_PER_AGENT: usize = 2500;
+const DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30;
+const MS_PER_DAY: i64 = 24 * 60 * 60 * 1000;
+const MAX_SCAN_FILES_PER_AGENT: usize = 200;
+const MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800;
+const MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000;
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_JSONL_LINES_PER_FILE: usize = 2000;
+const MAX_CSV_ROWS_PER_FILE: usize = 2000;
 const MAX_SQLITE_ROWS_PER_TABLE: usize = 2000;
 const MAX_EVENTS_PER_FILE: usize = 1000;
 const MAX_CAPTURE_TEXT: usize = 4096;
@@ -218,6 +224,35 @@ struct ScanResult {
     events: Vec<MonitoringEvent>,
 }
 
+#[derive(Debug, Clone)]
+struct SourceFile {
+    path: PathBuf,
+    mtime_ms: i64,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ScanWindow {
+    since_day: Option<String>,
+    until_day: Option<String>,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FileScanPlan {
+    min_mtime_ms: i64,
+    max_candidates: usize,
+    max_entries: usize,
+}
+
+#[derive(Default)]
+struct FileCollector {
+    files: Vec<SourceFile>,
+    seen: HashSet<PathBuf>,
+    inspected_entries: usize,
+}
+
 pub async fn scan_now(options: UsageScanOptions) -> Result<UsageScanReport> {
     let mut conn = open_usage_db()?;
     scan_into(&mut conn, options, None).await
@@ -287,7 +322,7 @@ async fn scan_into(
     options: UsageScanOptions,
     credential_override: Option<&str>,
 ) -> Result<UsageScanReport> {
-    let scan = scan_local_sources(&options)?;
+    let scan = scan_local_sources(conn, &options)?;
     let inserted = insert_usage_sessions(conn, &scan.messages)?;
     let monitoring_inserted = insert_monitoring_events(conn, &scan.events, credential_override)?;
     let rollups = rebuild_rollups(conn)?;
@@ -407,6 +442,20 @@ CREATE TABLE IF NOT EXISTS usage_monitoring_seen (
   event_type TEXT NOT NULL,
   inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS usage_scan_file_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  mtime_ms INTEGER NOT NULL,
+  window_start_ms INTEGER NOT NULL,
+  window_end_ms INTEGER NOT NULL,
+  scanned_at_ms INTEGER NOT NULL,
+  UNIQUE(tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_scan_file_cache_file
+  ON usage_scan_file_cache(tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms);
 "#;
 
 fn ensure_usage_schema(conn: &Connection) -> Result<()> {
@@ -422,6 +471,36 @@ fn ensure_usage_schema(conn: &Connection) -> Result<()> {
         "source_cost",
         "REAL NOT NULL DEFAULT 0",
     )?;
+    ensure_usage_scan_file_cache_schema(conn)?;
+    Ok(())
+}
+
+fn ensure_usage_scan_file_cache_schema(conn: &Connection) -> Result<()> {
+    let has_id_column: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('usage_scan_file_cache') WHERE name = 'id'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_id_column == 0 {
+        conn.execute("DROP TABLE IF EXISTS usage_scan_file_cache", [])?;
+        conn.execute_batch(
+            r#"
+            CREATE TABLE usage_scan_file_cache (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              tool TEXT NOT NULL,
+              path TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              mtime_ms INTEGER NOT NULL,
+              window_start_ms INTEGER NOT NULL,
+              window_end_ms INTEGER NOT NULL,
+              scanned_at_ms INTEGER NOT NULL,
+              UNIQUE(tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms)
+            );
+            CREATE INDEX IF NOT EXISTS idx_usage_scan_file_cache_file
+              ON usage_scan_file_cache(tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms);
+            "#,
+        )?;
+    }
     Ok(())
 }
 
@@ -454,28 +533,102 @@ fn quote_sql_string(raw: &str) -> String {
     format!("'{}'", raw.replace('\'', "''"))
 }
 
-fn scan_local_sources(options: &UsageScanOptions) -> Result<ScanResult> {
+impl ScanWindow {
+    fn from_options(options: &UsageScanOptions) -> Self {
+        let now = now_ms();
+        let until_start_ms = options.until.as_deref().and_then(parse_timestamp_ms_str);
+        let raw_start_ms = options
+            .since
+            .as_deref()
+            .and_then(parse_timestamp_ms_str)
+            .unwrap_or_else(|| {
+                until_start_ms
+                    .unwrap_or(now)
+                    .saturating_sub(DEFAULT_SCAN_LOOKBACK_DAYS.saturating_mul(MS_PER_DAY))
+            });
+        let since_day = options
+            .since
+            .clone()
+            .unwrap_or_else(|| day_from_timestamp_ms(raw_start_ms));
+        let start_ms = parse_timestamp_ms_str(&since_day).unwrap_or(raw_start_ms);
+        let end_ms = until_start_ms
+            .map(|ms| ms.saturating_add(MS_PER_DAY - 1))
+            .unwrap_or(i64::MAX);
+
+        Self {
+            since_day: Some(since_day),
+            until_day: options.until.clone(),
+            start_ms,
+            end_ms,
+        }
+    }
+
+    fn plan(&self) -> FileScanPlan {
+        FileScanPlan {
+            min_mtime_ms: self.start_ms,
+            max_candidates: MAX_SCAN_CANDIDATES_PER_AGENT,
+            max_entries: MAX_SCAN_DIR_ENTRIES_PER_AGENT,
+        }
+    }
+}
+
+impl FileScanPlan {
+    #[cfg(test)]
+    fn unbounded_for_tests() -> Self {
+        Self {
+            min_mtime_ms: i64::MIN,
+            max_candidates: MAX_SCAN_CANDIDATES_PER_AGENT,
+            max_entries: MAX_SCAN_DIR_ENTRIES_PER_AGENT,
+        }
+    }
+}
+
+impl FileCollector {
+    fn at_limit(&self, plan: &FileScanPlan) -> bool {
+        self.files.len() >= plan.max_candidates || self.inspected_entries >= plan.max_entries
+    }
+
+    fn push_file(&mut self, file: SourceFile, plan: &FileScanPlan) {
+        if self.files.len() >= plan.max_candidates {
+            return;
+        }
+        if self.seen.insert(file.path.clone()) {
+            self.files.push(file);
+        }
+    }
+}
+
+fn scan_local_sources(conn: &Connection, options: &UsageScanOptions) -> Result<ScanResult> {
     let home = scan_home().context("cannot find home directory")?;
     let tools = selected_scan_tools(&options.tools);
-    let since = options.since.as_deref();
-    let until = options.until.as_deref();
+    let window = ScanWindow::from_options(options);
+    let since = window.since_day.as_deref();
+    let until = window.until_day.as_deref();
+    let plan = window.plan();
 
     let mut result = ScanResult::default();
     for tool in tools {
         let roots = scan_roots(&home, &tool);
-        let mut files = Vec::new();
-        let mut seen_paths = HashSet::new();
+        let mut collector = FileCollector::default();
         for root in roots {
-            collect_supported_files(&root, &mut files, &mut seen_paths);
-            if files.len() >= MAX_SCAN_FILES_PER_AGENT {
+            collect_supported_files(&root, &plan, &mut collector);
+            if collector.at_limit(&plan) {
                 break;
             }
         }
-        files.sort();
+        let mut files = collector.files;
+        files.sort_by(|a, b| {
+            b.mtime_ms
+                .cmp(&a.mtime_ms)
+                .then_with(|| a.path.cmp(&b.path))
+        });
         files.truncate(MAX_SCAN_FILES_PER_AGENT);
 
         for file in files {
-            let mut chunk = scan_source_file(&tool, &file)?;
+            if !should_scan_source_file(conn, &tool, &file, &window)? {
+                continue;
+            }
+            let mut chunk = scan_source_file(&tool, &file.path)?;
             chunk
                 .messages
                 .retain(|m| day_in_range(&m.day, since, until));
@@ -485,6 +638,7 @@ fn scan_local_sources(options: &UsageScanOptions) -> Result<ScanResult> {
             });
             result.messages.extend(chunk.messages);
             result.events.extend(chunk.events);
+            mark_source_file_scanned(conn, &tool, &file, &window)?;
         }
     }
 
@@ -541,16 +695,28 @@ fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     out
 }
 
-fn collect_supported_files(root: &Path, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
-    if out.len() >= MAX_SCAN_FILES_PER_AGENT || !root.exists() {
+fn collect_supported_files(root: &Path, plan: &FileScanPlan, collector: &mut FileCollector) {
+    if collector.at_limit(plan) || !root.exists() {
         return;
     }
     let Ok(meta) = fs::metadata(root) else {
         return;
     };
     if meta.is_file() {
-        if is_supported_file(root) && seen.insert(root.to_path_buf()) {
-            out.push(root.to_path_buf());
+        let mtime_ms = meta
+            .modified()
+            .ok()
+            .and_then(system_time_ms)
+            .unwrap_or_else(now_ms);
+        if is_supported_file(root) && mtime_ms >= plan.min_mtime_ms {
+            collector.push_file(
+                SourceFile {
+                    path: root.to_path_buf(),
+                    mtime_ms,
+                    size_bytes: meta.len(),
+                },
+                plan,
+            );
         }
         return;
     }
@@ -562,10 +728,11 @@ fn collect_supported_files(root: &Path, out: &mut Vec<PathBuf>, seen: &mut HashS
         return;
     };
     for entry in entries.flatten() {
-        if out.len() >= MAX_SCAN_FILES_PER_AGENT {
+        if collector.at_limit(plan) {
             break;
         }
-        collect_supported_files(&entry.path(), out, seen);
+        collector.inspected_entries = collector.inspected_entries.saturating_add(1);
+        collect_supported_files(&entry.path(), plan, collector);
     }
 }
 
@@ -591,6 +758,68 @@ fn is_supported_file(path: &Path) -> bool {
             | Some("sqlite")
             | Some("sqlite3")
     )
+}
+
+fn should_scan_source_file(
+    conn: &Connection,
+    tool: &str,
+    file: &SourceFile,
+    window: &ScanWindow,
+) -> Result<bool> {
+    let path = file.path.to_string_lossy();
+    let size_bytes = i64::try_from(file.size_bytes).unwrap_or(i64::MAX);
+    let cached: Option<i64> = conn
+        .query_row(
+            "SELECT 1
+             FROM usage_scan_file_cache
+             WHERE tool = ?1
+               AND path = ?2
+               AND size_bytes = ?3
+               AND mtime_ms = ?4
+               AND window_start_ms <= ?5
+               AND window_end_ms >= ?6
+             LIMIT 1",
+            params![
+                tool,
+                path.as_ref(),
+                size_bytes,
+                file.mtime_ms,
+                window.start_ms,
+                window.end_ms
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(cached.is_none())
+}
+
+fn mark_source_file_scanned(
+    conn: &Connection,
+    tool: &str,
+    file: &SourceFile,
+    window: &ScanWindow,
+) -> Result<()> {
+    let path = file.path.to_string_lossy();
+    let size_bytes = i64::try_from(file.size_bytes).unwrap_or(i64::MAX);
+    conn.execute(
+        r#"
+        INSERT INTO usage_scan_file_cache
+          (tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms, scanned_at_ms)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms)
+        DO UPDATE SET scanned_at_ms = excluded.scanned_at_ms
+        "#,
+        params![
+            tool,
+            path.as_ref(),
+            size_bytes,
+            file.mtime_ms,
+            window.start_ms,
+            window.end_ms,
+            now_ms()
+        ],
+    )?;
+    Ok(())
 }
 
 fn scan_source_file(tool: &str, path: &Path) -> Result<ScanResult> {
@@ -619,7 +848,9 @@ fn scan_text_json_file(tool: &str, path: &Path) -> Result<ScanResult> {
     let mut result = ScanResult::default();
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     if matches!(ext, "jsonl" | "ndjson" | "log") {
-        for (idx, line) in text.lines().enumerate() {
+        let lines = text.lines().enumerate().collect::<Vec<_>>();
+        let start = lines.len().saturating_sub(MAX_JSONL_LINES_PER_FILE);
+        for (idx, line) in lines.into_iter().skip(start) {
             let trimmed = line.trim();
             if trimmed.is_empty() || !trimmed.starts_with(['{', '[']) {
                 continue;
@@ -657,7 +888,7 @@ fn scan_csv_file(tool: &str, path: &Path) -> Result<ScanResult> {
         .collect();
 
     let mut result = ScanResult::default();
-    for (idx, line) in lines.enumerate() {
+    for (idx, line) in lines.take(MAX_CSV_ROWS_PER_FILE).enumerate() {
         let values = split_csv_line(line);
         if values.is_empty() {
             continue;
@@ -3360,6 +3591,141 @@ mod tests {
     }
 
     #[test]
+    fn default_scan_uses_recent_window_and_explicit_window_backfills_old_usage() {
+        with_home(|home| {
+            let dir = home.join("sources").join("codex");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("old-session.jsonl"),
+                serde_json::json!({
+                    "session_id": "old-session",
+                    "timestamp": "2000-01-01T00:00:00Z",
+                    "model": "gpt-5",
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "prompt": "old prompt should require explicit backfill"
+                })
+                .to_string(),
+            )
+            .unwrap();
+
+            let mut conn = open_usage_db().unwrap();
+            let default_report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(default_report.parsed_messages, 0);
+            assert_eq!(default_report.monitoring_events_parsed, 0);
+
+            let backfill_report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: Some("2000-01-01".to_string()),
+                    until: Some("2000-01-01".to_string()),
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(backfill_report.parsed_messages, 1);
+            assert_eq!(backfill_report.sessions_inserted, 1);
+            assert_eq!(backfill_report.monitoring_events_parsed, 1);
+        });
+    }
+
+    #[test]
+    fn scan_file_cache_skips_unchanged_default_scan_and_reopens_changed_file() {
+        with_home(|home| {
+            let dir = home.join("sources").join("codex");
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("active-session.jsonl");
+            fs::write(
+                &path,
+                serde_json::json!({
+                    "session_id": "active-session",
+                    "timestamp": "2026-06-16T10:00:00Z",
+                    "model": "gpt-5",
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "prompt": "first prompt"
+                })
+                .to_string(),
+            )
+            .unwrap();
+
+            let mut conn = open_usage_db().unwrap();
+            let first = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(first.parsed_messages, 1);
+            assert_eq!(first.sessions_inserted, 1);
+
+            let second = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(second.parsed_messages, 0);
+            assert_eq!(second.monitoring_events_parsed, 0);
+
+            fs::write(
+                &path,
+                format!(
+                    "{}\n{}",
+                    serde_json::json!({
+                        "session_id": "active-session",
+                        "timestamp": "2026-06-16T10:00:00Z",
+                        "model": "gpt-5",
+                        "input_tokens": 10,
+                        "output_tokens": 20,
+                        "prompt": "first prompt"
+                    }),
+                    serde_json::json!({
+                        "session_id": "active-session",
+                        "timestamp": "2026-06-16T10:05:00Z",
+                        "model": "gpt-5",
+                        "input_tokens": 7,
+                        "output_tokens": 9,
+                        "prompt": "second prompt"
+                    })
+                ),
+            )
+            .unwrap();
+
+            let third = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: None,
+                    until: None,
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(third.parsed_messages, 2);
+            assert_eq!(third.sessions_inserted, 1);
+        });
+    }
+
+    #[test]
     fn discovery_helpers_cover_roots_supported_files_and_skipped_dirs() {
         with_home(|home| {
             assert!(selected_scan_tools(&[]).contains(&"codex".to_string()));
@@ -3397,9 +3763,13 @@ mod tests {
             fs::write(root.join("node_modules").join("ignored.json"), "{}").unwrap();
             fs::write(root.join("notes.txt"), "{}").unwrap();
 
-            let mut files = Vec::new();
-            let mut seen = HashSet::new();
-            collect_supported_files(&root, &mut files, &mut seen);
+            let mut collector = FileCollector::default();
+            collect_supported_files(&root, &FileScanPlan::unbounded_for_tests(), &mut collector);
+            let mut files = collector
+                .files
+                .into_iter()
+                .map(|file| file.path)
+                .collect::<Vec<_>>();
             files.sort();
             assert_eq!(files.len(), 2);
             assert!(files.iter().any(|p| p.ends_with("a.jsonl")));
@@ -3408,11 +3778,18 @@ mod tests {
             assert!(is_supported_file(&root.join("records.db")));
             assert!(!is_supported_file(&root.join("notes.txt")));
 
-            let mut single = Vec::new();
-            let mut seen_single = HashSet::new();
-            collect_supported_files(&root.join("a.jsonl"), &mut single, &mut seen_single);
-            collect_supported_files(&root.join("a.jsonl"), &mut single, &mut seen_single);
-            assert_eq!(single.len(), 1);
+            let mut single = FileCollector::default();
+            collect_supported_files(
+                &root.join("a.jsonl"),
+                &FileScanPlan::unbounded_for_tests(),
+                &mut single,
+            );
+            collect_supported_files(
+                &root.join("a.jsonl"),
+                &FileScanPlan::unbounded_for_tests(),
+                &mut single,
+            );
+            assert_eq!(single.files.len(), 1);
         });
     }
 

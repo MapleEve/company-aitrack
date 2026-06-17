@@ -168,7 +168,7 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 ### 本地 usage / transcript 扫描流
 
-1. `aitrack usage scan|sync` 递归扫描已登记 agent 的本机日志、JSONL、SQLite、CSV 和缓存
+1. `aitrack usage scan|sync` 按 agent、时间窗口和本地游标缓存扫描已登记 agent 的本机日志、JSONL、SQLite、CSV 和缓存；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
 2. 提取 token bucket、message count 和 source cost，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
 3. 提取 prompt、tool、window 和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
 4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`

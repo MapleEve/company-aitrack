@@ -685,6 +685,31 @@ print('yes' if raw.get('total_tokens', 0) > 0 and raw.get('message_count', 0) > 
         fail "Local source matrix coverage ${MATRIX_COVERAGE}% < ${MIN_E2E_COVERAGE}% (${MATRIX_PASS}/${MATRIX_TOTAL})"
     fi
 
+    CACHE_AGENT="${REQUIRED_LOCAL_SOURCE_AGENTS[0]}"
+    CACHE_REPORT="/tmp/aitrack-usage-sync-${impl}-${CACHE_AGENT}-cached.json"
+    if (cd "${GIT_REPO}" && env "${E2E_ENV[@]}" "AITRACK_SCAN_HOME=${AITRACK_HOME}" "${AITRACK_BIN}" usage sync --tool "${CACHE_AGENT}" >"${CACHE_REPORT}"); then
+        CACHE_COUNTS=$(python3 -c "
+import json, sys
+with open('${CACHE_REPORT}', 'r', encoding='utf-8') as f:
+    raw = f.read()
+start = raw.find('{')
+if start < 0:
+    raise SystemExit('no json object in cache report')
+data = json.loads(raw[start:])
+scan = data.get('scan', {})
+print(f\"{scan.get('parsed_messages', -1)} {scan.get('monitoring_events_parsed', -1)}\")
+")
+        CACHE_MESSAGES="${CACHE_COUNTS%% *}"
+        CACHE_EVENTS="${CACHE_COUNTS##* }"
+        if [ "${CACHE_MESSAGES}" = "0" ] && [ "${CACHE_EVENTS}" = "0" ]; then
+            ok "Local scan cache skips unchanged ${CACHE_AGENT} source on immediate second sync"
+        else
+            fail "Local scan cache did not skip unchanged ${CACHE_AGENT} source (parsed_messages=${CACHE_MESSAGES}, monitoring_events_parsed=${CACHE_EVENTS})"
+        fi
+    else
+        fail "usage sync --tool ${CACHE_AGENT} cache verification failed"
+    fi
+
     # Cleanup this run's temps
     rm -rf "${AITRACK_HOME}" "${GIT_REPO}"
 }

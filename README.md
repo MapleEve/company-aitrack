@@ -150,7 +150,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 ### Prompt 与本地 transcript 监控（v1.7+）
 
-客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 扫描本机 agent 日志、JSONL、SQLite 和缓存。`prompt_summary` 用于随编辑记录上报有界 prompt 内容；无 native hook 的 agent 也可通过本地 transcript 扫描补齐 prompt、tool、window 和编辑监控事件。
+客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按 agent、时间窗口和本地游标缓存扫描本机 agent 日志、JSONL、SQLite 和缓存；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界 prompt 内容；无 native hook 的 agent 也可通过本地 transcript 扫描补齐 prompt、tool、window 和编辑监控事件。
 
 `usage` 子命令同时维护独立的 usage rollup / subscription snapshot 数据面，按 day、agent、model、account 聚合 token bucket、message count 和 source cost，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 

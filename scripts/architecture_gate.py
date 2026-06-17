@@ -132,6 +132,17 @@ def assert_agent_source_specs() -> None:
 def assert_usage_parser_surface() -> None:
     text = read("client/src/usage/mod.rs")
     for symbol in [
+        "DEFAULT_SCAN_LOOKBACK_DAYS",
+        "MAX_SCAN_CANDIDATES_PER_AGENT",
+        "MAX_SCAN_DIR_ENTRIES_PER_AGENT",
+        "MAX_JSONL_LINES_PER_FILE",
+        "MAX_CSV_ROWS_PER_FILE",
+        "ScanWindow",
+        "FileScanPlan",
+        "usage_scan_file_cache",
+        "ensure_usage_scan_file_cache_schema",
+        "should_scan_source_file",
+        "mark_source_file_scanned",
         "output_text_from_object",
         "tool_arguments_from_object",
         "tool_result_from_object",
@@ -146,11 +157,25 @@ def assert_usage_parser_surface() -> None:
             fail(f"usage parser missing {symbol}")
 
     for test_name in [
+        "default_scan_uses_recent_window_and_explicit_window_backfills_old_usage",
+        "scan_file_cache_skips_unchanged_default_scan_and_reopens_changed_file",
         "json_scan_extracts_output_tool_call_and_tool_result_monitoring_records",
         "json_scan_extracts_skill_approval_and_explicit_other_agent_events",
     ]:
         if test_name not in text:
             fail(f"missing usage parser regression test {test_name}")
+
+    expected_limits = {
+        "DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30": "default usage scan window must stay bounded",
+        "MAX_SCAN_FILES_PER_AGENT: usize = 200": "per-agent scan file cap must stay bounded",
+        "MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800": "per-agent candidate cap must stay bounded",
+        "MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000": "directory traversal cap must stay bounded",
+        "MAX_JSONL_LINES_PER_FILE: usize = 2000": "jsonl line cap must stay bounded",
+        "MAX_CSV_ROWS_PER_FILE: usize = 2000": "csv row cap must stay bounded",
+    }
+    for needle, message in expected_limits.items():
+        if needle not in text:
+            fail(message)
 
 
 def assert_e2e_matrix_gate() -> None:
@@ -160,6 +185,8 @@ def assert_e2e_matrix_gate() -> None:
         fail("client e2e coverage threshold is not 90")
     if "MATRIX_COVERAGE" not in text:
         fail("client e2e matrix coverage calculation missing")
+    if "Local scan cache skips unchanged" not in text:
+        fail("client e2e does not verify unchanged local scan cache behavior")
 
     registered = [
         name
