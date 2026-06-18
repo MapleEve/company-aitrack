@@ -89,6 +89,19 @@ class StatsServiceTest {
     }
 
     @Test
+    void getStats_groupByTool_delegatesToAggregateByTool() {
+        Instant now = Instant.now();
+        when(editRecordRepository.aggregateByTool())
+                .thenReturn(List.<Object[]>of(makeRow("custom-tool-alpha", 4L, 44L, 8L, 3L, 1L, 0L, now)));
+
+        List<StatsRow> rows = statsService.getStats("tool");
+
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getGroup()).isEqualTo("custom-tool-alpha");
+        assertThat(rows.get(0).getEdits()).isEqualTo(4L);
+    }
+
+    @Test
     void getStats_unknownGroupBy_defaultsToTokenKey() {
         when(editRecordRepository.aggregateByTokenKey()).thenReturn(List.of());
 

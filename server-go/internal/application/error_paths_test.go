@@ -43,6 +43,7 @@ func (r *errEditRepo) AggregateByTokenKey() ([]model.StatsRow, error) { return n
 func (r *errEditRepo) AggregateByRepo() ([]model.StatsRow, error)     { return nil, nil }
 func (r *errEditRepo) AggregateByDevice() ([]model.StatsRow, error)   { return nil, nil }
 func (r *errEditRepo) AggregateByHostname() ([]model.StatsRow, error) { return nil, nil }
+func (r *errEditRepo) AggregateByTool() ([]model.StatsRow, error)     { return nil, nil }
 
 // errTokenRepo is a TokenPort that always returns errors.
 type errTokenRepo struct {
@@ -280,7 +281,7 @@ func TestStatsService_GetStats_RepoError(t *testing.T) {
 	deviceRepo := &errDeviceRepo{}
 	svc := application.NewStatsService(editRepo, deviceRepo)
 
-	for _, groupBy := range []string{"token", "repo", "device", "hostname"} {
+	for _, groupBy := range []string{"token", "repo", "device", "hostname", "tool"} {
 		_, err := svc.GetStats(groupBy)
 		if err == nil {
 			t.Errorf("GetStats(%q): expected error when aggregate fails", groupBy)
@@ -323,6 +324,7 @@ func (r *errAggEditRepo) AggregateByTokenKey() ([]model.StatsRow, error) { retur
 func (r *errAggEditRepo) AggregateByRepo() ([]model.StatsRow, error)     { return nil, r.aggErr }
 func (r *errAggEditRepo) AggregateByDevice() ([]model.StatsRow, error)   { return nil, r.aggErr }
 func (r *errAggEditRepo) AggregateByHostname() ([]model.StatsRow, error) { return nil, r.aggErr }
+func (r *errAggEditRepo) AggregateByTool() ([]model.StatsRow, error)     { return nil, r.aggErr }
 
 // ─── string helpers ───────────────────────────────────────────────────────────
 

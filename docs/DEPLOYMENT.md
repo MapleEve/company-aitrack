@@ -293,7 +293,7 @@ curl http://localhost:8080/api/v1/ai-track/devices \
   -H 'Authorization: Bearer aitrack_...'
 ```
 
-`hooks.claude/codex/cursor` 为 `false` 的设备需人工核查是否绕过了监控。
+`hooks` 是动态 agent key map；native hook 或注册 agent 状态异常的设备需人工核查是否绕过了监控。
 
 ### 数据备份（H2）
 

@@ -12,19 +12,20 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  AI 编码工具（Claude Code / Codex CLI / Cursor）  │
-│  PostToolUse / afterFileEdit / UserPromptSubmit 钩子│
+│  AI 编码工具 / agent frameworks                    │
+│  native edit adapter + registry/status/local usage │
 └────────────────────┬────────────────────────────┘
                      │ stdin JSON
                      ▼
 ┌─────────────────────────────────────────────────┐
 │  Rust 客户端  aitrack                            │
 │  · 适配器解析  · Myers/LCS diff                  │
-│  · record_sig  · SQLite 本地存储                  │
+│  · record_sig  · 本地 scanner/outbox              │
 │  · flush 上传  · 节流心跳                         │
 └────────────────────┬────────────────────────────┘
                      │ POST /api/v1/ai-track/edits
                      │ POST /api/v1/ai-track/heartbeat
+                     │ POST /api/v1/ai-track/usage/*
                      ▼
 ┌────────────────────────────┐  ┌────────────────────────────┐
 │  Java 服务端               │  │  Go 服务端                  │
@@ -32,6 +33,29 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 │  10 步校验链               │  │  10 步校验链（完全等价）     │
 └────────────────────────────┘  └────────────────────────────┘
 ```
+
+### Agent registry 与数据域
+
+aitrack 的开源边界是通用部署与运行时解耦，不是去掉员工、管理员或治理语义。系统把 agent 支持拆成三层：
+
+| 层级 | 当前边界 |
+|------|----------|
+| native edit adapter | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成文件编辑类 `EditRecord` |
+| registry/status/heartbeat | 服务端心跳 `hooks` 为动态 map，可接收任意 agent registry key 的安装状态 |
+| local usage source | 本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态可作为用量来源，也可补齐 prompt、tool、window 和可还原编辑监控事件 |
+
+`EditRecord` 是监控事件域，必须包含设备信息、时间、agent、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。usage rollup / snapshot 是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。token-only / usage-only 只能进入用量域，不能写成监控事件。
+
+### 当前 agent 框架支持矩阵
+
+| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | 是 | 是 | `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地 rate-limit snapshot |
+| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | session rate-limit snapshot |
+| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
+| default local-scan agents | 否 | 否 | 本地 agent 目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、message count、source cost | 否 |
+
+默认本地扫描覆盖：`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用 canonical key，避免同一路径重复入库。这些 key 的动态心跳可见性不等于 native edit adapter 已完成；它们当前通过本地 source/cache 扫描把可提取字段送入监控事件域或 usage 标量域。
 
 ---
 
@@ -46,7 +70,8 @@ src/
   main.rs / cli.rs / config.rs / lib.rs   — 命令分发、配置、入口
   git.rs / init.rs / uploader.rs / heartbeat.rs / update.rs
   (init.rs 说明：`aitrack init` 不带任何工具标志时进入自动探测模式，
-   依次检测 ~/.claude、~/.codex、~/.cursor 目录，对发现的工具全量安装钩子；
+   遍历动态 agent registry 的本地 marker 路径；native adapter 工具安装
+   真实编辑钩子，其他已登记工具进入 status/heartbeat/local usage 路线；
    旧版本不带标志时直接退出并提示"no tools selected"；
    `init --claude` 安装前检测 ~/.claude/settings.json 中是否已存在非 aitrack 的
    PostToolUse 钩子，若存在则向 stderr 输出冲突警告，但安装流程不中止)
@@ -69,7 +94,7 @@ src/
       mod.rs / schema.rs / models.rs / queries.rs / vec.rs / keyword_store.rs
     http/                   — UploadPort 的 HTTP 实现（HttpUploader）
       mod.rs / upload.rs
-    event/                  — 输入适配器（钩子事件解析）
+    event/                  — 输入适配器（Claude/Codex/Cursor native edit hook 事件解析）
       mod.rs / claude.rs / codex.rs / cursor.rs
 
   db/                       — 旧 db 模块（向后兼容保留）
@@ -83,7 +108,7 @@ Rust 客户端严格遵循六边形架构三层分离：
 
 - **domain/**（纯领域）：`model.rs`（`EditRecord`、`ApiConfig`）、`crypto.rs`（HMAC 计算）、`diff.rs`（Myers/LCS）、`keywords.rs`（关键词常量），无任何框架依赖
 - **port/**（输出端口抽象）：`StoragePort` trait（本地 SQLite 读写契约）、`UploadPort` trait（HTTP 上报契约），均为纯 Rust trait，不依赖具体实现
-- **adapter/**（适配器实现）：`adapter/sqlite/`（`SqliteStorage` 实现 `StoragePort`）+ `adapter/http/`（`HttpUploader` 实现 `UploadPort`）+ `adapter/event/`（claude/codex/cursor 输入事件解析）
+- **adapter/**（适配器实现）：`adapter/sqlite/`（`SqliteStorage` 实现 `StoragePort`）+ `adapter/http/`（`HttpUploader` 实现 `UploadPort`）+ `adapter/event/`（Claude/Codex/Cursor native edit hook 事件解析）
 
 ### HttpUploader 数据流
 
@@ -115,13 +140,13 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 1. AI 工具触发 PostToolUse/afterFileEdit 钩子
 2. aitrack capture 从 stdin 读取 JSON
-3. 按 --tool 选择适配器（claude/codex/cursor）解析 payload
+3. 按 `--tool` 选择 adapter；Claude/Codex/Cursor 解析 native edit payload，其他 agent 通过本地 usage / transcript 扫描进入监控链路
 4. 调用 similar crate 计算 Myers/LCS diff
    → added_lines, removed_lines, diff_hunk
 5. spawn git 获取 repo 元数据
    → repo_url, branch, current_sha
 6. 获取 OS hostname
-7. 从 prompt_context 表查询最近一次提示词 → prompt_summary（可选，仅 claude）
+7. 从 prompt_context 表查询最近一次有界 prompt 文本 → prompt_summary（可选）
 8. 计算 record_sig
    → HMAC_SHA256(hmac_secret, canonical_string)（不包含 prompt_summary）
 8b. 执行 backfill_repo_info（queries.rs）
@@ -134,12 +159,19 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
     → 服务端 10 步校验链
     → 更新 synced/retry_count
 
-### 提示词捕获流（UserPromptSubmit，仅 Claude Code）
+### 提示词捕获流（UserPromptSubmit）
 
 1. Claude Code 触发 UserPromptSubmit 钩子
 2. aitrack prompt-capture 从 stdin 读取 JSON（{"session_id": "...", "prompt": "..."}）
-3. 截断至 512 字符
+3. 在本地写入有界 prompt 文本
 4. INSERT INTO prompt_context（session_id, prompt_text）
+
+### 本地 usage / transcript 扫描流
+
+1. `aitrack usage scan|sync` 按 agent、时间窗口和本地游标缓存扫描已登记 agent 的本机日志、JSONL、SQLite、CSV 和缓存；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
+2. 提取 token bucket、message count 和 source cost，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
+3. 提取 prompt、tool、window 和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
+4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`
 
 ---
 
@@ -256,7 +288,7 @@ CREATE INDEX IF NOT EXISTS edits_hnsw ON edit_records
   USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL;
 ```
 
-参考脚本：`server-java/src/main/resources/db-postgres-init.sql`。
+配套脚本：`server-java/src/main/resources/db-postgres-init.sql`。
 
 ### Phase DB-3 — 语义检索 API（已交付）
 
@@ -304,7 +336,7 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 ### Phase 3 已交付（2026 Q4）
 
 - **开发者使用画像 API**：`GET /api/v1/ai-track/profiles/{token_key}`，Java + Go 双端实现
-- **多维画像计算**：使用频率（daily/weekly 趋势）、使用深度（行数分布、p50/p90、comment_density）、languages（按 23 种文件扩展名统计编程语言分布）、prompt_patterns（意图分类：generate/fix_debug/refactor/explain/test/other）、工具分布（claude/codex/cursor）
+- **多维画像计算**：使用频率（daily/weekly 趋势）、使用深度（行数分布、p50/p90、comment_density）、languages（按 23 种文件扩展名统计编程语言分布）、prompt_patterns（意图分类：generate/fix_debug/refactor/explain/test/other）、工具分布（动态 agent/tool key）
 - **日常聚合 Job**：Java `ProfileAggregationJob`（@Scheduled 每日 02:00）；Go 同等实现
 - **鉴权**：X-Admin-Key，403/404/200，不依赖 ParadeDB（Java H2 模式亦支持）
 
@@ -363,9 +395,9 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 #### 提示词捕获
 
-- 新增 `UserPromptSubmit` 钩子（仅 Claude Code）：claude Code 用户提交 prompt 时触发，aitrack 将 prompt 文本（截断至 512 字符）写入本地 `prompt_context` 表
-- `records` 表新增 `prompt_summary TEXT` 列（可空），capture 流程从 `prompt_context` 查询当前 session 的最近一条提示词并附加
-- `prompt_summary` 不参与 `record_sig` 计算（仅用于画像分析，不影响防篡改机制）
+- 新增 `UserPromptSubmit` 钩子：用户提交 prompt 时触发，aitrack 将有界 prompt 内容写入本地 `prompt_context` 表
+- `records` 表新增 `prompt_summary TEXT` 列（可空），capture / transcript 扫描流程附加当前 session 的有界 prompt 内容
+- `prompt_summary` 不参与 `record_sig` 计算（用于审计和画像分析，不影响防篡改机制）
 - 上传时 `prompt_summary` 作为可选字段随 edit 记录上报
 
 #### 画像维度更新

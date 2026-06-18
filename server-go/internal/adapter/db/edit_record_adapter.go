@@ -140,11 +140,17 @@ func (r *EditRecordAdapter) AggregateByHostname() ([]model.StatsRow, error) {
 	return r.aggregate("hostname")
 }
 
+// AggregateByTool aggregates stats grouped by tool.
+func (r *EditRecordAdapter) AggregateByTool() ([]model.StatsRow, error) {
+	return r.aggregate("tool")
+}
+
 var allowedGroupCols = map[string]bool{
 	"token_key": true,
 	"repo_url":  true,
 	"device_id": true,
 	"hostname":  true,
+	"tool":      true,
 }
 
 func (r *EditRecordAdapter) aggregate(groupCol string) ([]model.StatsRow, error) {

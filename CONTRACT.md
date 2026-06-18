@@ -32,18 +32,46 @@ The client stores only `credential` (never the two parts separately). Internally
 
 ---
 
+## Agent Registry and Data Domains
+
+aitrack is a general, self-hosted, open-source monitoring and governance tool for employee AI coding activity. The protocol separates agent registration, edit evidence, and scalar usage metrics:
+
+- **Native edit evidence**: Claude Code, Codex CLI, and Cursor currently have native edit hook adapters. These adapters can produce `EditRecord` payloads because they expose enough local file-edit event data to build a signed diff record.
+- **Registered agents**: other agent keys may appear in registry, status, heartbeat, and local usage source flows. Native edit adapters remain the strongest source for signed file diffs, while local transcript scans may still produce prompt, tool, window, and reconstructable edit monitoring events.
+- **EditRecord domain**: `POST /api/v1/ai-track/edits` accepts signed monitoring evidence: file path or synthetic monitoring path, repo metadata when available, Myers/LCS line counts and diff hunk when available, device identity, metadata, bounded prompt content, and `record_sig`.
+- **Usage rollup domain**: usage rollups and snapshots are scalar usage metrics, such as request counts, token counts, cost estimates, or local client activity totals. A token-only or usage-only source MUST NOT be represented as an `EditRecord`.
+- **Local usage source boundary**: local sources are discovered from local logs, JSONL files, SQLite databases, caches, and local client state. The client may discover local credentials or entry points from those local states when the agent exposes them; users are not required to manually paste third-party service tokens into aitrack.
+
+The heartbeat `hooks` map is intentionally dynamic and keyed by agent registry key. Dynamic heartbeat support does not imply that every registered agent has a completed native edit adapter.
+
+### Current Agent Framework Support
+
+| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | yes | yes | `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | local rate-limit snapshot |
+| `codex` | yes | no | `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | session rate-limit snapshot |
+| `cursor` | yes | no | Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
+| default local-scan agents | no | no | local agent directories, app data, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | no |
+
+Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path.
+
+---
+
 ## Client Commands
 
 ```
-aitrack init    [--claude] [--codex] [--cursor] [--api-url URL] [--credential CRED]
-aitrack remove  [--claude] [--codex] [--cursor]
-aitrack capture --tool <claude|codex|cursor>   (default: claude)  [--api-url URL] [--credential CRED]
-aitrack prompt-capture --tool <claude>   (reads UserPromptSubmit stdin, stores prompt)
+aitrack init    [--claude] [--codex] [--cursor] [--tool <name> ...] [--api-url URL] [--credential CRED]
+aitrack remove  [--claude] [--codex] [--cursor] [--tool <name> ...]
+aitrack capture --tool <name>   (default: claude)  [--api-url URL] [--credential CRED]
+aitrack prompt-capture --tool <name>   (reads UserPromptSubmit stdin for agents with native prompt hooks, stores bounded prompt content)
 aitrack inspect [--limit N]  (default 20, max 200)  [--pending] [--current-token]
 aitrack stats
 aitrack status
 aitrack clean   [--all] [--force]
 aitrack heartbeat
+aitrack usage scan [--tool <name> ...] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+aitrack usage sync [--tool <name> ...] [--api-url URL] [--credential CRED]
+aitrack usage status
 ```
 
 `--credential` takes the single combined credential string issued by `POST /admin/tokens`.
@@ -60,6 +88,8 @@ aitrack heartbeat
 - `device_id`: UUIDv4 generated on first run, persisted to `config.toml`
 
 ### records Table Schema
+
+The `records` table stores the EditRecord evidence domain. It is not a generic usage rollup table.
 
 ```sql
 CREATE TABLE IF NOT EXISTS records (
@@ -169,7 +199,7 @@ Headers:
       "device_id": "<uuid>",
       "hostname": "MacBook-Pro.local",
       "record_sig": "<hex>",
-      "prompt_summary": "fix the auth middleware to handle token expiry"
+      "prompt_summary": "fix_debug"
     }
   ]
 }
@@ -212,10 +242,12 @@ Body:
   "token_key_masked": "<masked>",
   "client_version": "1.0.0",
   "ts": <unix seconds>,
-  "hooks": {"claude": true, "codex": false, "cursor": false},
+  "hooks": {"claude": true, "codex": false, "cursor": false, "opencode": true},
   "pending_count": 5
 }
 ```
+
+`hooks` is a dynamic object keyed by agent registry key. Claude, Codex, and Cursor are the current native edit hook adapters. Other keys report registration/status/heartbeat state unless and until an agent-specific native edit adapter is implemented.
 
 Throttle: sent at end of each `capture`, only if >1h since last heartbeat (tracked in config or DB).
 `aitrack heartbeat` forces immediate send.
@@ -304,7 +336,7 @@ All install/remove operations MUST be idempotent (dedup on install, clean empty 
 ## Capture Flow
 
 1. Read stdin JSON
-2. Select adapter by `--tool` (claude/codex/cursor)
+2. Select adapter by `--tool`; native edit adapters currently parse Claude/Codex/Cursor, while registered agents without a native edit adapter do not emit `EditRecord`
 3. Parse payload per adapter struct
 4. Compute diff using `similar` (Myers LCS)
 5. Spawn `git` for repo metadata: `rev-parse --git-dir`, `remote get-url origin`, `branch --show-current`, `rev-parse HEAD`
@@ -325,7 +357,7 @@ On adapter parse failure: write a local log line (hardening point H6, do NOT sil
 |---|-------|-------------|
 | H1 | record_sig HMAC | Prevents local DB record tampering |
 | H2 | record_sig binding device_id+token | Prevents cross-device record forgery |
-| H3 | Heartbeat with hook status | Detects silent hook uninstall |
+| H3 | Heartbeat with native hook and registered agent status | Detects silent hook uninstall and local agent status drift |
 | H4 | Myers/LCS diff (similar crate) | Prevents inflated line count gaming |
 | H5 | Server rate limit per (token, file_path)/hour | Prevents flooding / edit count inflation |
 | H6 | Parse failure logging | No silent swallowing of adapter errors |
@@ -487,4 +519,4 @@ Find edit records semantically similar to a given embedding vector using pgvecto
 
 **Computation**: Includes ACCEPTED + FLAGGED records, excludes REJECTED. Computed on-demand (Phase 4 will add caching).
 
-**`prompt_patterns`**: Categorized from `prompt_summary` text using keyword matching. Only counts records that have non-null `prompt_summary`. Categories: `generate` (generate/create/write/implement/add), `fix_debug` (fix/debug/error/bug/broken/failing), `refactor` (refactor/clean/improve/reorganize/rename), `explain` (explain/what/how/why/understand/describe), `test` (test/spec/mock/assert/verify), `other` (remainder).
+**`prompt_patterns`**: Counted by classifying bounded `prompt_summary` content into intent categories. Only counts records that have non-null `prompt_summary`. Categories: `generate`, `fix_debug`, `refactor`, `explain`, `test`, `other`.

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# aitrack 🛡️
+# aitrack self-hosted AI coding governance 🛡️
 
 > *「Bring AI coding behavior into trusted auditing — give your engineering effectiveness team real data.」*
 
@@ -19,7 +19,7 @@
 
 <br>
 
-aitrack installs lightweight hooks into Claude Code, Codex CLI, and Cursor,<br>generating HMAC-signed records at every edit event,<br>filtering noise and tampering through a 10-step server validation chain,<br>so engineering effectiveness teams get trustworthy, auditable, quantifiable AI usage data.
+aitrack is a general, self-hosted, open-source monitoring and governance tool for employee AI coding activity.<br>It provides native edit hook adapters for Claude Code, Codex CLI, and Cursor,<br>generates HMAC-signed edit evidence at every supported edit event,<br>and manages additional AI coding tools through a dynamic agent registry, heartbeat status, and local usage sources.
 
 <br>
 
@@ -35,7 +35,7 @@ aitrack installs lightweight hooks into Claude Code, Codex CLI, and Cursor,<br>g
   <img src="./docs/assets/readme/problem.en.png" alt="Problem" width="100%" />
 </p>
 
-AI coding tools (Claude Code, Codex CLI, Cursor) have entered engineering teams at scale, creating three governance challenges that are hard to ignore:
+AI coding tools have entered engineering teams at scale, creating three governance challenges that are hard to ignore:
 
 | Pain Point | Reality |
 |------------|---------|
@@ -54,7 +54,7 @@ AI coding tools (Claude Code, Codex CLI, Cursor) have entered engineering teams 
 | Role | Core Need |
 |------|-----------|
 | **Engineering Effectiveness Teams** | Objectively quantify actual AI tool output, identify low-efficiency usage patterns, support monthly effectiveness reports |
-| **Engineering Managers** | Real-time visibility into hook installation status and suspicious data flags — no longer dependent on developer self-reporting |
+| **Engineering Managers** | Real-time visibility into native hook and registered agent status plus suspicious data flags — no longer dependent on developer self-reporting |
 | **Privacy-conscious · Self-hosting Teams** | All data stays on self-hosted infrastructure, never passes through any third-party cloud service, meeting compliance requirements |
 
 ---
@@ -75,6 +75,24 @@ aitrack consists of three independent components communicating via Protocol v1.2
 - `POST /admin/tokens` returns a single `credential` field (`<token>-<hmac_secret>`), simplifying issuance and client configuration
 - `hostname` field (new in v1.1) makes activity from a single token across multiple machines reviewable per device
 - Local client database `~/.aitrack/records.db` permissions 0600, `hmac_secret` encrypted with AES-256-GCM at rest
+
+**Agent and data-domain boundaries:**
+
+- Claude Code, Codex CLI, and Cursor currently have native edit hook adapters that can produce `EditRecord` payloads with diff, line counts, repository metadata, and `record_sig`
+- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; local transcript scans can recover prompt, tool, window, and reconstructable edit monitoring events even when no native hook is available
+- `EditRecord` is the edit evidence domain; usage rollups and snapshots are scalar usage domains, so token-only or usage-only data cannot be represented as edit records
+- Local usage sources include local logs, JSONL files, SQLite databases, caches, and local client state; aitrack discovers available local credentials or entry points where possible and does not require users to paste third-party service tokens
+
+**Current agent framework support:**
+
+| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | yes | yes | yes: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | yes: local rate-limit snapshot |
+| `codex` | yes | no | yes: `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | yes: session rate-limit snapshot |
+| `cursor` | yes | no | yes: Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
+| default local-scan agents | no | no | local agent directories, app data, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | no |
+
+Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path. When local JSON, JSONL, NDJSON, CSV, SQLite, or cache files expose prompt, tool, window, edit, or token fields, aitrack routes them into the matching monitoring or usage data plane.
 
 ---
 
@@ -105,11 +123,11 @@ Every edit record generates a `record_sig` at local database insert time, coveri
 
 ### Engineering Effectiveness Metrics
 
-Query aggregated stats by developer, repository, or device via `GET /api/v1/ai-track/stats?group_by=token|repo|device` to support effectiveness reports.
+Query aggregated stats by developer, repository, device, hostname, or agent/tool via `GET /api/v1/ai-track/stats?group_by=token|repo|device|hostname|tool` to support effectiveness reports.
 
 ### Per-hostname Manual Review
 
-`GET /api/v1/ai-track/devices` shows each device's heartbeat status and hook installation state. When a hook is silently removed, the next execution of any `aitrack` command automatically reports the anomalous state — administrators can follow up proactively.
+`GET /api/v1/ai-track/devices` shows each device's heartbeat status and dynamic agent hooks map. When a hook is silently removed, the next execution of any `aitrack` command automatically reports the anomalous state — administrators can follow up proactively.
 
 ### Server-side Vector Storage and Semantic Search (v1.3+)
 
@@ -130,18 +148,18 @@ The server database has been upgraded to **ParadeDB** (PostgreSQL + pg_search + 
 
 Profile data is used solely to understand actual AI tool adoption — it is not used as a direct basis for individual performance evaluation.
 
-### Prompt Summary Capture (v1.5+)
+### Prompt and Local Transcript Monitoring (v1.7+)
 
-The client can optionally install a `UserPromptSubmit` hook (Claude Code only) to capture a prompt summary (≤ 512 characters) and submit it as a `prompt_summary` field alongside edit records. The profile API adds a `prompt_patterns` intent classification dimension (generate / fix_debug / refactor / explain / test / other), extending the analysis from "how much AI" to "how AI is used" quality insights.
+The client can optionally install a `UserPromptSubmit` hook and can also scan local agent logs, JSONL files, SQLite databases, and caches with `aitrack usage scan|sync` by agent, time window, and local cursor cache. The default mode is a recent-window incremental scan; explicit `--since/--until` flags provide small, targeted backfills. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from local transcripts.
 
-> **Off by default**: `prompt_summary` collection is disabled by default and requires explicit admin configuration to activate. Only summary classification labels and hashes are collected — the original prompt text is never captured.
+The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets, message count, and source cost by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
 
 ### Hexagonal Architecture and Secure Auto-Update (v1.6+)
 
 - The Rust client has been refactored to hexagonal architecture (domain / port / adapter three-layer), with all I/O routed through `StoragePort` / `UploadPort` interfaces — business logic fully decoupled from infrastructure
 - `aitrack update` subcommand: fetches the latest release from GitHub Releases and atomically replaces the current binary after ed25519 signature verification
 - Keyword library tamper protection: keywords are hardcoded as compile-time constants; `keyword_fingerprint()` computes a SHA-256 fingerprint for server-side verification
-- All three components have coverage ≥ 90% (Rust 291 tests / Java 218 tests / Go 244 tests)
+- All three components have coverage ≥ 90% (Rust 300 tests / Java and Go package tests)
 
 ---
 
@@ -178,7 +196,7 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # Or extract binary from distribution package to /usr/local/bin/
 
-# Install Claude Code hook
+# Install a native edit hook (Claude Code example; use --tool <name> for other registered tools)
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
@@ -201,12 +219,12 @@ TOKEN="aitrack_abcdef1234567890abcdef1234567890"  # replace with the token issue
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer $TOKEN"
 
-# All device heartbeats and hook installation status — investigate hook anomalies
+# All device heartbeats and agent status — investigate hook or registry anomalies
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-`group_by` also accepts `repo` (by repository), `device` (by device UUID), and `hostname` (by machine name). See [docs/API.md](docs/API.md) for full details.
+`group_by` also accepts `repo` (by repository), `device` (by device UUID), `hostname` (by machine name), and `tool` (by agent/tool key). See [docs/API.md](docs/API.md) for full details.
 
 ### 5. Coverage Verification (Docker)
 
@@ -240,7 +258,7 @@ bash e2e/run.sh both
 | **Token hash storage** | Server stores only `sha256(token)` — plaintext returned only once at issuance |
 | **Local-first** | All data stored on self-hosted infrastructure, never passes through any third-party cloud service |
 | **Constant-time comparison** | HMAC verification uses constant-time comparison to prevent timing attacks |
-| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; since v1.5, prompt summaries can optionally be collected (summary only, not the full prompt; off by default, requires explicit admin configuration); never collects complete code content, conversation history, or keyboard input; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
+| **Transparent, configurable collection** | Collects file paths, diffs, line counts, and repo metadata by default; prompt hooks and local transcript scans can collect bounded prompt/tool/window monitoring events; usage rollups only record scalar usage metrics; complete workspace files and keyboard input are not collected; collection scope is controlled by enterprise admin configuration, and profile data is not used as a direct basis for individual performance evaluation |
 
 ---
 

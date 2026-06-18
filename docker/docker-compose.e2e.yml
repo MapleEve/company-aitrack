@@ -31,13 +31,24 @@ services:
     environment:
       AITRACK_ADMIN_KEY: "e2e-admin-key"
       AITRACK_SECRET_KEY: ""
-      AITRACK_DB_PATH: "/tmp/aitrack_e2e.db"
+      DATABASE_URL: "postgres://aitrack:aitrack_secret@postgres-go:5432/aitrack_e2e?sslmode=disable"
+    depends_on:
+      postgres-go:
+        condition: service_healthy
+
+  postgres-go:
+    profiles: ["go"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aitrack
+      POSTGRES_PASSWORD: aitrack_secret
+      POSTGRES_DB: aitrack_e2e
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/ai-track/stats 2>&1 | grep -q 'rows\\|\\[\\|{' && echo ok || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U aitrack -d aitrack_e2e"]
       interval: 5s
       timeout: 5s
       retries: 12
-      start_period: 10s
+      start_period: 5s
 
   e2e-java:
     profiles: ["java"]
@@ -68,7 +79,7 @@ services:
       SERVER_IMPL: "go"
     depends_on:
       server-go:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ../e2e:/e2e:ro
     command: ["/e2e/run.sh"]

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# aitrack 🛡️
+# aitrack セルフホスト AI コーディングガバナンス 🛡️
 
 > *「AI コーディングの行動を信頼できる監査へ。エンジニアリング効率チームにリアルなデータを。」*
 
@@ -19,7 +19,7 @@
 
 <br>
 
-aitrack は Claude Code、Codex CLI、Cursor などの AI コーディングツールに軽量フックをインストールし、<br>編集イベントごとに HMAC 署名付きレコードを生成、<br>10ステップのサーバー検証チェーンでノイズや改ざんをフィルタリングして、<br>エンジニアリング効率チームに信頼できる・監査可能・定量化できる AI 使用データを提供します。
+aitrack は、従業員の AI コーディング活動を監視・ガバナンスするための、汎用・セルフホスト・オープンソースのツールです。<br>Claude Code、Codex CLI、Cursor には native edit hook adapter を提供し、<br>対応する編集イベントごとに HMAC 署名付きの編集証拠を生成します。<br>そのほかの AI コーディングツールは、動的 agent registry、ハートビート状態、ローカル使用量ソースを通じて管理します。
 
 <br>
 
@@ -35,7 +35,7 @@ aitrack は Claude Code、Codex CLI、Cursor などの AI コーディングツ�
   <img src="./docs/assets/readme/problem.ja.png" alt="課題" width="100%" />
 </p>
 
-AI コーディングツール（Claude Code、Codex CLI、Cursor）が開発チームに大規模導入される中、避けられない3つのガバナンス課題が生じています：
+AI コーディングツールが開発チームに大規模導入される中、避けられない3つのガバナンス課題が生じています：
 
 | 課題 | 現状 |
 |------|------|
@@ -76,6 +76,24 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 - `hostname` フィールド（v1.1 で新規追加）により、1つのトークンを複数マシンで使用した場合にデバイス次元での手動レビューが可能
 - クライアントのローカルデータベース `~/.aitrack/records.db` のパーミッションは 0600、`hmac_secret` は AES-256-GCM で暗号化して保存
 
+**Agent とデータドメインの境界：**
+
+- Claude Code、Codex CLI、Cursor は現在 native edit hook adapter を持ち、diff、行数、リポジトリメタデータ、`record_sig` を含む `EditRecord` を生成できます
+- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できます。native hook がない場合でも、ローカル transcript スキャンから prompt、tool、window、復元可能な編集監視イベントを補完できます
+- `EditRecord` は編集証拠ドメインです。usage rollup / snapshot はスカラー使用量ドメインであり、token-only または usage-only データを編集レコードとして扱うことはできません
+- ローカル使用量ソースには、ローカルログ、JSONL、SQLite、キャッシュ、ローカルクライアント状態が含まれます。aitrack は利用可能なローカル認証情報または入口を自動検出し、ユーザーにサードパーティの token 貼り付けを求めません
+
+**現在対応している agent framework：**
+
+| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | あり | あり | あり: `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | あり | あり: ローカル rate-limit snapshot |
+| `codex` | あり | なし | あり: `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | あり | あり: session rate-limit snapshot |
+| `cursor` | あり | なし | あり: Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | あり | なし |
+| default local-scan agents | なし | なし | ローカル agent ディレクトリ、アプリデータ、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、message count、source cost | なし |
+
+デフォルトのローカルスキャンは `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode` を対象にします。明示的な `--tool` では `roocode`、`kilo-code`、`gajae-code` も alias として受け付けます。デフォルトスキャンは canonical key を使い、同じローカルパスの二重取り込みを避けます。ローカル JSON、JSONL、NDJSON、CSV、SQLite、キャッシュに prompt、tool、window、edit、token フィールドが含まれていれば、aitrack は対応する監視または usage データ面へ取り込みます。
+
 ---
 
 ## 得られるもの
@@ -105,11 +123,11 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 
 ### エンジニアリング効率の計測
 
-`GET /api/v1/ai-track/stats?group_by=token|repo|device` で開発者・リポジトリ・デバイス次元の集計統計を取得し、効率レポートをサポートします。
+`GET /api/v1/ai-track/stats?group_by=token|repo|device|hostname|tool` で開発者・リポジトリ・デバイス・ホスト名・agent/tool 次元の集計統計を取得し、効率レポートをサポートします。
 
 ### hostname 次元での手動調査
 
-`GET /api/v1/ai-track/devices` で各デバイスのハートビート状態とフックインストール状況を確認できます。フックがサイレントに削除された場合、次の `aitrack` コマンド実行時に異常状態が自動的に報告され、管理者が能動的にフォローアップできます。
+`GET /api/v1/ai-track/devices` で各デバイスのハートビート状態と動的 agent hooks map を確認できます。フックがサイレントに削除された場合、次の `aitrack` コマンド実行時に異常状態が自動的に報告され、管理者が能動的にフォローアップできます。
 
 ### サーバー側ベクトルストレージとセマンティック検索（v1.3+）
 
@@ -130,18 +148,18 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 
 プロファイルデータは AI ツールの実際の採用効果を把握するためのみに使用され、個人のパフォーマンス評価の直接的な根拠としては使用されません。
 
-### プロンプト要約キャプチャ（v1.5+）
+### プロンプトとローカル transcript 監視（v1.7+）
 
-クライアントはオプションで `UserPromptSubmit` フック（Claude Code 限定）をインストールし、プロンプト要約（≤ 512 文字）をキャプチャして `prompt_summary` フィールドとして編集レコードと共に送信できます。プロファイル API に `prompt_patterns` 意図分類次元（generate / fix_debug / refactor / explain / test / other）が追加され、「どれだけ AI を使ったか」から「どのように AI を使ったか」の品質分析へと拡張されます。
+クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` で agent、時間ウィンドウ、ローカルカーソルキャッシュ単位にローカル agent のログ、JSONL、SQLite、キャッシュをスキャンできます。デフォルトは直近ウィンドウの増分スキャンで、明示的な `--since/--until` により小規模なバックフィルを行えます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、ローカル transcript から prompt、tool、window、編集監視イベントを復元できます。
 
-> **デフォルト無効**：`prompt_summary` の収集はデフォルトで無効になっており、管理者が明示的に設定した場合にのみ有効になります。収集されるのは要約分類ラベルとハッシュのみで、プロンプト原文は収集されません。
+`usage` サブコマンドは独立した usage rollup / subscription snapshot データ面も維持します。day、agent、model、account ごとに token bucket、message count、source cost を集計し、`/api/v1/ai-track/usage/*` API 経由で Java または Go サーバーへアップロードします。
 
 ### ヘキサゴナルアーキテクチャとセキュアな自動更新（v1.6+）
 
 - Rust クライアントをヘキサゴナルアーキテクチャ（domain / port / adapter の3層）にリファクタリング完了。すべての I/O は `StoragePort` / `UploadPort` インターフェースを通じてルーティングされ、ビジネスロジックとインフラが完全に分離
 - `aitrack update` サブコマンド：GitHub Releases から最新バージョンを取得し、ed25519 署名検証後に現在のバイナリをアトミックに置換
 - キーワードライブラリ改ざん防止：キーワードはコンパイル時定数としてハードコードされ、`keyword_fingerprint()` がサーバー側検証用の SHA-256 フィンガープリントを計算
-- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 291 tests / Java 218 tests / Go 244 tests）
+- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 300 tests / Java と Go package tests）
 
 ---
 
@@ -178,7 +196,7 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # または配布パッケージからバイナリを /usr/local/bin/ に展開
 
-# Claude Code フックのインストール
+# native edit hook のインストール（Claude Code の例。ほかの登録ツールは --tool <name> を使用）
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
@@ -201,12 +219,12 @@ TOKEN="aitrack_abcdef1234567890abcdef1234567890"  # ステップ2で発行した
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer $TOKEN"
 
-# 全デバイスのハートビートとフックインストール状態を確認 — フック異常の調査
+# 全デバイスのハートビートと agent 状態を確認 — フックまたは登録状態の異常を調査
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-`group_by` には `repo`（リポジトリ別）、`device`（デバイス UUID 別）、`hostname`（マシン名別）も指定できます。詳細は [docs/API.md](docs/API.md) を参照してください。
+`group_by` には `repo`（リポジトリ別）、`device`（デバイス UUID 別）、`hostname`（マシン名別）、`tool`（agent/tool key 別）も指定できます。詳細は [docs/API.md](docs/API.md) を参照してください。
 
 ### 5. カバレッジ検証（Docker）
 
@@ -240,7 +258,7 @@ bash e2e/run.sh both
 | **トークンハッシュ保存** | サーバーは `sha256(token)` のみを保存 — 平文は発行時に一度のみ返される |
 | **ローカルファースト** | すべてのデータがセルフホスティングインフラに保存され、サードパーティのクラウドサービスを一切経由しない |
 | **定数時間比較** | HMAC 検証はタイミング攻撃を防ぐために定数時間比較を使用 |
-| **透明で設定可能な収集** | デフォルトではファイルパス、diff、行数、リポジトリメタデータを収集。v1.5 以降、プロンプト要約をオプションで収集可能（完全なプロンプトではなく要約のみ。デフォルト無効、管理者の明示的な設定が必要）。完全なコード内容、会話履歴、キーボード入力は収集しない。収集範囲は企業管理者の設定で制御され、プロファイルデータは個人のパフォーマンス評価の直接的な根拠として使用されない |
+| **透明で設定可能な収集** | デフォルトではファイルパス、diff、行数、リポジトリメタデータを収集。prompt hook とローカル transcript スキャンにより、有界の prompt/tool/window 監視イベントを収集可能。usage rollup は使用量のスカラー指標のみを記録する。完全なワークスペースファイルやキーボード入力は収集しない。収集範囲は企業管理者の設定で制御され、プロファイルデータは個人のパフォーマンス評価の直接的な根拠として使用されない |
 
 ---
 

@@ -71,6 +71,8 @@ func (s *StatsService) GetStats(groupBy string) ([]model.StatsRow, error) {
 		rows, err = s.editRepo.AggregateByDevice()
 	case "hostname":
 		rows, err = s.editRepo.AggregateByHostname()
+	case "tool":
+		rows, err = s.editRepo.AggregateByTool()
 	default:
 		rows, err = s.editRepo.AggregateByTokenKey()
 	}

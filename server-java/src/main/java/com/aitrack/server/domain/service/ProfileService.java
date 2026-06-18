@@ -310,7 +310,7 @@ public class ProfileService {
     );
 
     /**
-     * Classifies a prompt summary string into an intent category.
+     * Classifies a prompt intent label or legacy summary string into an intent category.
      * Priority order: fix_debug > test > refactor > explain > generate > other
      */
     String classifyPrompt(String prompt) {

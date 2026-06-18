@@ -66,21 +66,21 @@ client/src/
 ├── adapter/
 │   ├── sqlite/      ← SqliteStorage implements StoragePort
 │   ├── http/        ← HttpUploader implements UploadPort（真实 POST 逻辑）
-│   └── event/       ← claude/codex/cursor 事件适配
+│   └── event/       ← native edit 事件适配；动态 agent registry 在 agent.rs
 ├── update.rs        ← aitrack update 子命令（ed25519 签名验证）
 └── testkit/         ← factories.rs（测试工厂，使用 domain::model）
 ```
 
 ### 测试模块覆盖情况
 
-| 模块 | 测试数（Sprint 2） | 行覆盖率 |
-|------|--------|----------|
-| `domain/` | — | ≥ 90% |
-| `port/` | — | ≥ 90% |
-| `adapter/` | — | ≥ 90% |
-| **TOTAL** | **291** | **90.71%** |
+| 模块 | 覆盖目标 | 当前门禁 |
+|------|----------|----------|
+| `domain/` | 纯业务逻辑、HMAC、diff、关键词分类 | Rust 覆盖率 LINE ≥ 90% |
+| `port/` | 存储 / 上传端口契约 | Rust 覆盖率 LINE ≥ 90% |
+| `adapter/` | SQLite、HTTP、事件适配、本地 usage source | Rust 覆盖率 LINE ≥ 90% |
+| **TOTAL** | client 全量单测 + 覆盖率 | **300 tests；LINE ≥ 90%** |
 
-> Sprint 2 六边形架构重构后，测试随领域模块重组，总测试数从 143 增至 291，整体行覆盖率提升至 90.71%。
+> v1.7 local-source 扩展后，Rust 客户端单测覆盖动态 agent registry、usage rollup、transcript 监控、窗口化扫描和文件游标缓存。
 
 测试均为 `#[cfg(test)]` 内联模块。HTTP mock 使用 `wiremock`，临时文件使用 `tempfile`。
 
@@ -295,7 +295,7 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 
 | 组件 | 工具 | 命令 | 门槛 | 当前覆盖率 |
 |------|------|------|------|------------|
-| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **90.71%** |
+| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **300 tests；LINE ≥ 90%** |
 | Java 服务端 | JaCoCo | `mvn verify` | LINE ≥ 90% | **LINE ≥ 90%** |
 | Go 服务端 | go cover | `go tool cover -func cover.out` | total ≥ 90% | **95.3%** |
 

@@ -2,7 +2,8 @@
 # Full-chain e2e: real aitrack binary → real server (Java or Go).
 #
 # Usage (from repo root):
-#   bash e2e/run-client-e2e.sh [java|go|both]
+#   bash e2e/run-client-e2e.sh [java|go|both|external]
+#   AITRACK_E2E_SERVER_URL=http://localhost:18080 bash e2e/run-client-e2e.sh external
 #
 # What this proves:
 #   - The compiled Rust binary reads stdin hook JSON, runs the capture pipeline
@@ -26,11 +27,55 @@ ADMIN_KEY="e2e-client-admin-key"
 SERVER_PORT="18080"   # distinct port to avoid conflict with run.sh
 PASS_COUNT=0
 FAIL_COUNT=0
+MIN_E2E_COVERAGE=90
+CLIENT_E2E_NET="aitrack-client-e2e-net-$$"
+PG_CONTAINER="aitrack-client-e2e-postgres-$$"
+REQUIRED_LOCAL_SOURCE_AGENTS=(
+    claude
+    codex
+    cursor
+    trae
+    qwen
+    baidu-comate
+    wenxin
+    antigravity
+    opencode
+    qoder
+    qoder-cn
+    qoder-work
+    qoder-work-cn
+    wukong
+    hermes
+    openclaw
+    gemini
+    copilot
+    cline
+    roo-code
+    kiro
+    zed
+    goose
+    amp
+    droid
+    pi
+    mux
+    crush
+    codebuff
+    kilo
+    kilocode
+    kimi
+    gjc
+    grok
+    synthetic
+    warp
+    zcode
+)
 
 # Global cleanup: remove any containers we started
 cleanup_containers() {
     docker rm -f "aitrack-client-e2e-java-$$" 2>/dev/null || true
     docker rm -f "aitrack-client-e2e-go-$$"   2>/dev/null || true
+    docker rm -f "${PG_CONTAINER}" 2>/dev/null || true
+    docker network rm "${CLIENT_E2E_NET}" 2>/dev/null || true
 }
 trap cleanup_containers EXIT INT TERM
 
@@ -46,7 +91,9 @@ fail() { echo -e "  ${RED}FAIL${NC}  $*"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 # ── pre-flight checks ──────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
-    echo "ERROR: docker is required"; exit 1
+    if [ "${TARGET}" != "external" ]; then
+        echo "ERROR: docker is required"; exit 1
+    fi
 fi
 if ! command -v cargo &>/dev/null; then
     echo "ERROR: cargo is required"; exit 1
@@ -72,12 +119,12 @@ fi
 log "Binary ready: ${AITRACK_BIN}"
 
 # ── Step 2: build server images if needed ─────────────────────────────────────
-if ! docker image inspect aitrack-server-java:e2e &>/dev/null; then
+if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-java:e2e &>/dev/null; then
     log "Building aitrack-server-java:e2e image..."
     (cd "${REPO_ROOT}" && docker build -f docker/Dockerfile.server-java \
         -t aitrack-server-java:e2e . 2>&1 | tail -5)
 fi
-if ! docker image inspect aitrack-server-go:e2e &>/dev/null; then
+if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-go:e2e &>/dev/null; then
     log "Building aitrack-server-go:e2e image..."
     (cd "${REPO_ROOT}" && docker build -f docker/Dockerfile.server-go \
         -t aitrack-server-go:e2e . 2>&1 | tail -5)
@@ -120,6 +167,22 @@ api_get() {
     local path="$2"
     local token="$3"
     curl -s -H "Authorization: Bearer ${token}" "${server_url}${path}"
+}
+
+write_usage_source_fixture() {
+    local root="$1"
+    local agent="$2"
+    local source_dir="${root}/sources/${agent}"
+    mkdir -p "${source_dir}"
+    cat > "${source_dir}/activity.jsonl" <<JSON
+{"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1}
+{"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3}
+{"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}}
+{"timestamp":"2026-06-16T14:00:03Z","event.name":"tool.result","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.result":{"content":"${agent} tool result"}}
+{"timestamp":"2026-06-16T14:00:04Z","event.name":"skill.use","gen_ai.session.id":"matrix-${agent}","gen_ai.skill.name":"review"}
+{"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"}
+{"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}
+JSON
 }
 
 # ── Core e2e function run against one server implementation ──────────────────
@@ -536,6 +599,117 @@ print('yes' if found else 'no')
         ok "GET /devices: at least one device registered (device_id match depends on heartbeat path)"
     fi
 
+    # ── Test 6: local usage source matrix ─────────────────────────────────────
+    echo ""
+    echo "--- Test: local usage source matrix coverage ---"
+
+    MATRIX_PASS=0
+    MATRIX_TOTAL=${#REQUIRED_LOCAL_SOURCE_AGENTS[@]}
+
+    for agent in "${REQUIRED_LOCAL_SOURCE_AGENTS[@]}"; do
+        agent_fail=0
+        write_usage_source_fixture "${AITRACK_HOME}" "${agent}"
+
+        if (cd "${GIT_REPO}" && env "${E2E_ENV[@]}" "AITRACK_SCAN_HOME=${AITRACK_HOME}" "${AITRACK_BIN}" usage sync --tool "${agent}" >/tmp/aitrack-usage-sync-${impl}-${agent}.json); then
+            ok "usage sync --tool ${agent} exited 0"
+        else
+            fail "usage sync --tool ${agent} failed"
+            agent_fail=1
+            continue
+        fi
+
+        USAGE_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_sessions WHERE agent='${agent}';" 2>/dev/null || echo "0")
+        if [ "${USAGE_ROWS}" -ge 1 ]; then
+            ok "Local usage.sqlite: ${agent} usage rows inserted (${USAGE_ROWS})"
+        else
+            fail "Local usage.sqlite: ${agent} has no usage rows"
+            agent_fail=1
+        fi
+
+        OUTPUT_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
+            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"output\"%';" 2>/dev/null || echo "0")
+        TOOL_RESULT_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
+            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"tool_result\"%';" 2>/dev/null || echo "0")
+        SKILL_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
+            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"skill\"%';" 2>/dev/null || echo "0")
+        APPROVAL_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
+            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"tool_approval\"%';" 2>/dev/null || echo "0")
+        OTHER_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
+            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"other\"%';" 2>/dev/null || echo "0")
+        if [ "${OUTPUT_ROWS}" -ge 1 ] && [ "${TOOL_RESULT_ROWS}" -ge 1 ] && [ "${SKILL_ROWS}" -ge 1 ] && [ "${APPROVAL_ROWS}" -ge 1 ] && [ "${OTHER_ROWS}" -ge 1 ]; then
+            ok "Local records.db: ${agent} output/tool_result/skill/approval/other rows inserted"
+        else
+            fail "Local records.db: ${agent} output=${OUTPUT_ROWS} tool_result=${TOOL_RESULT_ROWS} skill=${SKILL_ROWS} approval=${APPROVAL_ROWS} other=${OTHER_ROWS}"
+            agent_fail=1
+        fi
+
+        sleep 1
+        MATRIX_EDITS_RESP=$(api_get "${server_url}" "/api/v1/ai-track/edits?page=0&size=200" "${TOKEN}")
+        MATRIX_SERVER_RECORDS=$(echo "${MATRIX_EDITS_RESP}" | AGENT="${agent}" python3 -c "
+import json, os, sys
+raw = json.load(sys.stdin)
+items = raw.get('records', [])
+agent = os.environ['AGENT']
+print(sum(1 for item in items if item.get('tool') == agent))
+" 2>/dev/null || echo "0")
+        if [ "${MATRIX_SERVER_RECORDS}" -ge 1 ]; then
+            ok "Server: ${agent} monitoring records received (${MATRIX_SERVER_RECORDS})"
+        else
+            fail "Server: ${agent} monitoring records missing — response: ${MATRIX_EDITS_RESP}"
+            agent_fail=1
+        fi
+
+        MATRIX_USAGE_RESP=$(api_get "${server_url}" "/api/v1/ai-track/usage/summary?agent=${agent}&limit=50" "${TOKEN}")
+        MATRIX_SERVER_USAGE=$(echo "${MATRIX_USAGE_RESP}" | python3 -c "
+import json, sys
+raw = json.load(sys.stdin)
+print('yes' if raw.get('total_tokens', 0) > 0 and raw.get('message_count', 0) > 0 else 'no')
+" 2>/dev/null || echo "no")
+        if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
+            ok "Server: ${agent} usage summary includes tokens and messages"
+        else
+            fail "Server: ${agent} usage summary missing tokens/messages — response: ${MATRIX_USAGE_RESP}"
+            agent_fail=1
+        fi
+
+        if [ "${agent_fail}" -eq 0 ]; then
+            MATRIX_PASS=$((MATRIX_PASS + 1))
+        fi
+    done
+
+    MATRIX_COVERAGE=$((MATRIX_PASS * 100 / MATRIX_TOTAL))
+    if [ "${MATRIX_COVERAGE}" -ge "${MIN_E2E_COVERAGE}" ]; then
+        ok "Local source matrix coverage ${MATRIX_COVERAGE}% >= ${MIN_E2E_COVERAGE}% (${MATRIX_PASS}/${MATRIX_TOTAL})"
+    else
+        fail "Local source matrix coverage ${MATRIX_COVERAGE}% < ${MIN_E2E_COVERAGE}% (${MATRIX_PASS}/${MATRIX_TOTAL})"
+    fi
+
+    CACHE_AGENT="${REQUIRED_LOCAL_SOURCE_AGENTS[0]}"
+    CACHE_REPORT="/tmp/aitrack-usage-sync-${impl}-${CACHE_AGENT}-cached.json"
+    if (cd "${GIT_REPO}" && env "${E2E_ENV[@]}" "AITRACK_SCAN_HOME=${AITRACK_HOME}" "${AITRACK_BIN}" usage sync --tool "${CACHE_AGENT}" >"${CACHE_REPORT}"); then
+        CACHE_COUNTS=$(python3 -c "
+import json, sys
+with open('${CACHE_REPORT}', 'r', encoding='utf-8') as f:
+    raw = f.read()
+start = raw.find('{')
+if start < 0:
+    raise SystemExit('no json object in cache report')
+data = json.loads(raw[start:])
+scan = data.get('scan', {})
+print(f\"{scan.get('parsed_messages', -1)} {scan.get('monitoring_events_parsed', -1)}\")
+")
+        CACHE_MESSAGES="${CACHE_COUNTS%% *}"
+        CACHE_EVENTS="${CACHE_COUNTS##* }"
+        if [ "${CACHE_MESSAGES}" = "0" ] && [ "${CACHE_EVENTS}" = "0" ]; then
+            ok "Local scan cache skips unchanged ${CACHE_AGENT} source on immediate second sync"
+        else
+            fail "Local scan cache did not skip unchanged ${CACHE_AGENT} source (parsed_messages=${CACHE_MESSAGES}, monitoring_events_parsed=${CACHE_EVENTS})"
+        fi
+    else
+        fail "usage sync --tool ${CACHE_AGENT} cache verification failed"
+    fi
+
     # Cleanup this run's temps
     rm -rf "${AITRACK_HOME}" "${GIT_REPO}"
 }
@@ -566,9 +740,33 @@ run_e2e_impl() {
             return 1
         fi
     else
+        docker network create "${CLIENT_E2E_NET}" >/dev/null 2>&1 || true
+        docker rm -f "${PG_CONTAINER}" >/dev/null 2>&1 || true
+        if ! docker run -d --name "${PG_CONTAINER}" \
+            --network "${CLIENT_E2E_NET}" \
+            -e POSTGRES_USER=aitrack \
+            -e POSTGRES_PASSWORD=aitrack_secret \
+            -e POSTGRES_DB=aitrack_client_e2e \
+            postgres:16-alpine >/dev/null 2>&1; then
+            log "ERROR: failed to start Postgres for ${impl} client e2e"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            return 1
+        fi
+        pg_timeout=30
+        while ! docker exec "${PG_CONTAINER}" pg_isready -U aitrack -d aitrack_client_e2e >/dev/null 2>&1; do
+            if [ "${pg_timeout}" -le 0 ]; then
+                log "ERROR: Postgres did not become ready for ${impl} client e2e"
+                docker logs "${PG_CONTAINER}" 2>&1 | tail -20 || true
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+                return 1
+            fi
+            sleep 1
+            pg_timeout=$((pg_timeout - 1))
+        done
         if ! docker run -d --name "${container}" \
+            --network "${CLIENT_E2E_NET}" \
             -e AITRACK_ADMIN_KEY="${ADMIN_KEY}" \
-            -e AITRACK_DB_PATH="/tmp/aitrack_client_e2e.db" \
+            -e DATABASE_URL="postgres://aitrack:aitrack_secret@${PG_CONTAINER}:5432/aitrack_client_e2e?sslmode=disable" \
             -p "${SERVER_PORT}:8080" \
             "${image}" >/dev/null 2>&1; then
             log "ERROR: failed to start ${impl} container"
@@ -597,6 +795,10 @@ run_e2e_impl() {
 
     log "Stopping ${impl} server..."
     docker rm -f "${container}" 2>/dev/null || true
+    if [ "${impl}" = "go" ]; then
+        docker rm -f "${PG_CONTAINER}" 2>/dev/null || true
+        docker network rm "${CLIENT_E2E_NET}" 2>/dev/null || true
+    fi
 
     echo ""
     if [ $impl_fail -eq 0 ]; then
@@ -611,6 +813,18 @@ run_e2e_impl() {
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 overall=0
+
+if [ "${TARGET}" = "external" ]; then
+    if [ -z "${AITRACK_E2E_SERVER_URL:-}" ]; then
+        echo "ERROR: AITRACK_E2E_SERVER_URL is required for external target"
+        exit 1
+    fi
+    if ! wait_for_server "${AITRACK_E2E_SERVER_URL}"; then
+        overall=1
+    else
+        run_against_server external "${AITRACK_E2E_SERVER_URL}"
+    fi
+fi
 
 if [ "${TARGET}" = "java" ] || [ "${TARGET}" = "both" ]; then
     if ! run_e2e_impl java; then

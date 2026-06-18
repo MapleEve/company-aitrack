@@ -47,7 +47,7 @@ Configuration is environment-variable-only. No `config.yaml` is supported.
 | `POST` | `/api/v1/ai-track/edits` | Bearer + HMAC | Ingest a batch of edit records |
 | `GET` | `/api/v1/ai-track/edits` | Bearer | Query edit records (paginated) |
 | `POST` | `/api/v1/ai-track/heartbeat` | Bearer + HMAC | Record client heartbeat |
-| `GET` | `/api/v1/ai-track/stats` | Bearer | Aggregate stats (`group_by=token\|repo\|device`) |
+| `GET` | `/api/v1/ai-track/stats` | Bearer | Aggregate stats (`group_by=token\|repo\|device\|hostname\|tool`) |
 | `GET` | `/api/v1/ai-track/devices` | Bearer | List known devices |
 
 ### POST /admin/tokens

@@ -54,20 +54,50 @@ type EditBatchResponse struct {
 	Flagged  []IndexedReason `json:"flagged"`
 }
 
-// HeartbeatHooks reports which tool hooks are installed.
-type HeartbeatHooks struct {
-	Claude bool `json:"claude"`
-	Codex  bool `json:"codex"`
-	Cursor bool `json:"cursor"`
-}
+// HeartbeatHooks reports installed hooks by agent key.
+type HeartbeatHooks map[string]bool
 
 // HeartbeatRequest is the body of POST /api/v1/ai-track/heartbeat.
 type HeartbeatRequest struct {
-	DeviceID       string          `json:"device_id"`
-	Hostname       string          `json:"hostname"`
-	TokenKeyMasked string          `json:"token_key_masked"`
-	ClientVersion  string          `json:"client_version"`
-	TS             int64           `json:"ts"`
-	Hooks          *HeartbeatHooks `json:"hooks"`
-	PendingCount   int             `json:"pending_count"`
+	DeviceID       string         `json:"device_id"`
+	Hostname       string         `json:"hostname"`
+	TokenKeyMasked string         `json:"token_key_masked"`
+	ClientVersion  string         `json:"client_version"`
+	TS             int64          `json:"ts"`
+	Hooks          HeartbeatHooks `json:"hooks"`
+	PendingCount   int            `json:"pending_count"`
+}
+
+// UsageRollupRequest is the scalar usage rollup ingestion body.
+type UsageRollupRequest struct {
+	Items []UsageRollupItem `json:"items"`
+}
+
+// UsageRollupItem is a day/model/account token bucket aggregate.
+type UsageRollupItem struct {
+	DeviceID         string  `json:"device_id"`
+	Day              string  `json:"day"`
+	Agent            string  `json:"agent"`
+	Model            string  `json:"model"`
+	Account          string  `json:"account"`
+	TokensIn         int64   `json:"tokens_in"`
+	TokensOut        int64   `json:"tokens_out"`
+	TokensCacheRead  int64   `json:"tokens_cache_read"`
+	TokensCacheWrite int64   `json:"tokens_cache_write"`
+	TokensReasoning  int64   `json:"tokens_reasoning"`
+	MessageCount     int64   `json:"message_count"`
+	SourceCost       float64 `json:"source_cost"`
+}
+
+// UsageSubscriptionSnapshotRequest is a scalar subscription/quota snapshot.
+type UsageSubscriptionSnapshotRequest struct {
+	DeviceID              string  `json:"device_id"`
+	Agent                 string  `json:"agent"`
+	Account               string  `json:"account"`
+	Plan                  *string `json:"plan"`
+	QuotaSessionRemaining *int64  `json:"quota_session_remaining"`
+	QuotaWeeklyRemaining  *int64  `json:"quota_weekly_remaining"`
+	QuotaResetAt          *string `json:"quota_reset_at"`
+	ReaderStatus          string  `json:"reader_status"`
+	SnapshottedAt         string  `json:"snapshotted_at"`
 }

@@ -25,6 +25,8 @@ type EditRecordPort interface {
 	AggregateByDevice() ([]model.StatsRow, error)
 	// AggregateByHostname aggregates stats grouped by hostname.
 	AggregateByHostname() ([]model.StatsRow, error)
+	// AggregateByTool aggregates stats grouped by tool name.
+	AggregateByTool() ([]model.StatsRow, error)
 }
 
 // EditRecordCounter is the narrow port used by the validation domain service

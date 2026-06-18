@@ -42,4 +42,7 @@ public interface EditRecordPort {
 
     /** Aggregates stats grouped by hostname. */
     List<Object[]> aggregateByHostname();
+
+    /** Aggregates stats grouped by tool name. */
+    List<Object[]> aggregateByTool();
 }

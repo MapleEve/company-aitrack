@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# aitrack 企业级 AI 代码度量 🛡️
+# aitrack 自托管 AI 编码治理 🛡️
 
 > *「把 AI 编码行为纳入可信审计，还给研发效能团队一份真实数据。」*
 
@@ -19,7 +19,7 @@
 
 <br>
 
-aitrack 为 Claude Code、Codex CLI、Cursor 等 AI 编码工具安装轻量钩子，<br>在每次编辑事件发生时生成带 HMAC 签名的记录，<br>通过 10 步服务端校验链过滤噪声与篡改，<br>让研发效能团队获得一份可信、可查、可量化的 AI 使用数据。
+aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。<br>它为 Claude Code、Codex CLI、Cursor 提供 native edit hook adapter，<br>在每次编辑事件发生时生成带 HMAC 签名的编辑证据，<br>并通过动态 agent registry、心跳与本地用量来源管理更多 AI 编码工具。
 
 <br>
 
@@ -35,7 +35,7 @@ aitrack 为 Claude Code、Codex CLI、Cursor 等 AI 编码工具安装轻量钩�
   <img src="./docs/assets/readme/problem.zh-CN.png" alt="问题" width="100%" />
 </p>
 
-AI 编码工具（Claude Code、Codex CLI、Cursor）大规模进入研发团队，带来了三个难以回避的治理挑战：
+AI 编码工具大规模进入研发团队，带来了三个难以回避的治理挑战：
 
 | 痛点 | 现状 |
 |------|------|
@@ -54,7 +54,7 @@ AI 编码工具（Claude Code、Codex CLI、Cursor）大规模进入研发团队
 | 角色 | 核心需求 |
 |------|----------|
 | **研发效能团队** | 客观量化 AI 工具实际产出，识别低效使用模式，支撑效能月报 |
-| **工程效能管理者** | 实时感知钩子安装状态、可疑数据标记，避免被动依赖开发者自报告 |
+| **工程效能管理者** | 实时感知 native hook 与注册 agent 状态、可疑数据标记，避免被动依赖开发者自报告 |
 | **数据敏感·自托管团队** | 所有数据留存于自建服务，不经过任何第三方云服务，满足合规要求 |
 
 ---
@@ -75,6 +75,24 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - `POST /admin/tokens` 返回单一 `credential` 字段（`<token>-<hmac_secret>`），简化签发与客户端配置
 - `hostname` 字段（v1.1 新增）使同一 token 在多台机器上的活动可按设备维度人工审查
 - 客户端本地数据库 `~/.aitrack/records.db` 权限 0600，`hmac_secret` AES-256-GCM 加密存储
+
+**Agent 与数据域边界：**
+
+- Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成包含 diff、行数、仓库信息和 `record_sig` 的 `EditRecord`
+- 其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线；本地 transcript 扫描可补齐 prompt、tool、window 和可还原编辑监控事件
+- `EditRecord` 是监控事件域；usage rollup / snapshot 是标量用量域，token-only 或 usage-only 数据不能伪装成监控事件
+- 本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态；aitrack 自动发现可用凭证或入口，不要求用户手动粘第三方 token
+
+**当前 agent 框架支持：**
+
+| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
+|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
+| `claude` | ✅ | ✅ | ✅ `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | ✅ | ✅ 本地 rate-limit snapshot |
+| `codex` | ✅ | — | ✅ `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | ✅ | ✅ session rate-limit snapshot |
+| `cursor` | ✅ | — | ✅ Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | ✅ | — |
+| default local-scan agents | — | — | ✅ 本地 agent 目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | ✅ token、message count、source cost | — |
+
+默认本地扫描覆盖：`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用 canonical key，避免同一路径重复入库。只要本地 JSON、JSONL、NDJSON、CSV、SQLite 或缓存中包含 prompt、tool、window、edit 或 token 字段，就可以进入对应监控或 usage 数据面。
 
 ---
 
@@ -105,11 +123,11 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 ### 研发效能度量
 
-通过 `GET /api/v1/ai-track/stats?group_by=token|repo|device` 按开发者、仓库或设备维度聚合统计，支撑效能报告。
+通过 `GET /api/v1/ai-track/stats?group_by=token|repo|device|hostname|tool` 按开发者、仓库、设备、机器名或 agent/tool 维度聚合统计，支撑效能报告。
 
 ### 按 hostname 维度人工排查
 
-`GET /api/v1/ai-track/devices` 展示每台设备的心跳状态与钩子安装情况。钩子被静默移除时，下次任意命令执行后心跳自动上报异常状态，管理员可主动跟进。
+`GET /api/v1/ai-track/devices` 展示每台设备的心跳状态与动态 agent hooks map。钩子被静默移除时，下次任意命令执行后心跳自动上报异常状态，管理员可主动跟进。
 
 ### 服务端向量化存储与语义检索（v1.3+）
 
@@ -130,18 +148,18 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 画像数据仅用于了解 AI 工具实际采用效果，不作为个人绩效考核的直接依据。
 
-### Prompt 摘要捕获（v1.5+）
+### Prompt 与本地 transcript 监控（v1.7+）
 
-客户端可选安装 `UserPromptSubmit` 钩子（仅限 Claude Code），捕获提示词摘要（≤ 512 字符）并作为 `prompt_summary` 字段随编辑记录上报。画像 API 新增 `prompt_patterns` 意图分类维度（generate / fix_debug / refactor / explain / test / other），从"使用了多少 AI"延伸至"怎么用 AI"的质量分析。
+客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按 agent、时间窗口和本地游标缓存扫描本机 agent 日志、JSONL、SQLite 和缓存；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界 prompt 内容；无 native hook 的 agent 也可通过本地 transcript 扫描补齐 prompt、tool、window 和编辑监控事件。
 
-> **默认不启用**：`prompt_summary` 采集默认关闭，需管理员显式配置后才生效。采集的是摘要分类标签与哈希，不采集 prompt 原文。
+`usage` 子命令同时维护独立的 usage rollup / subscription snapshot 数据面，按 day、agent、model、account 聚合 token bucket、message count 和 source cost，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 
 ### 六边形架构与安全自动更新（v1.6+）
 
 - Rust 客户端完成六边形架构重构（domain / port / adapter 三层），所有 I/O 通过 `StoragePort` / `UploadPort` 接口路由，业务逻辑与基础设施彻底解耦
 - `aitrack update` 子命令：从 GitHub Releases 拉取最新版本，ed25519 签名验证通过后原子替换当前二进制
 - 关键词库防篡改：关键词以编译期常量硬编码，`keyword_fingerprint()` 计算 SHA-256 指纹供服务端校验
-- 三端覆盖率均 ≥ 90%（Rust 291 tests / Java 218 tests / Go 244 tests）
+- 三端覆盖率均 ≥ 90%（Rust 300 tests / Java 和 Go package tests）
 
 ---
 
@@ -178,7 +196,7 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # 或从分发包解压二进制到 /usr/local/bin/
 
-# 安装 Claude Code 钩子
+# 安装 native edit hook（Claude Code 示例；其他注册工具可用 --tool <name>）
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
@@ -201,12 +219,12 @@ TOKEN="aitrack_abcdef1234567890abcdef1234567890"  # 替换为步骤 2 签发的 
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer $TOKEN"
 
-# 查看所有设备心跳与钩子安装状态 — 排查钩子异常
+# 查看所有设备心跳与 agent 状态 — 排查钩子或注册状态异常
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-`group_by` 还支持 `repo`（按仓库）、`device`（按设备 UUID）、`hostname`（按机器名）。详见 [docs/API.md](docs/API.md)。
+`group_by` 还支持 `repo`（按仓库）、`device`（按设备 UUID）、`hostname`（按机器名）和 `tool`（按 agent/tool key）。详见 [docs/API.md](docs/API.md)。
 
 ### 5. 服务端覆盖率验证（Docker）
 
@@ -241,7 +259,7 @@ bash e2e/run.sh both
 | **token 哈希存储** | 服务端仅存储 `sha256(token)`，明文仅签发时返回一次 |
 | **本地优先** | 所有数据存储于自建服务，不经过任何第三方云服务 |
 | **常量时间比较** | HMAC 验证使用常量时间比较，防止 timing attack |
-| **采集范围透明可控** | 默认采集文件路径、diff、行数、repo 元数据；v1.5 起可选采集 prompt 摘要（非完整 prompt，仅摘要；默认不启用，需管理员显式配置）；不采集完整代码内容、对话历史或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
+| **采集范围透明可控** | 默认采集文件路径、diff、行数、repo 元数据；prompt hook 与本地 transcript 扫描可采集有界 prompt/tool/window 监控事件；usage rollup 只记录用量标量；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
 
 ---
 
@@ -251,7 +269,7 @@ bash e2e/run.sh both
 |------|------|
 | [CONTRACT.md](CONTRACT.md) | 客户端/服务端协议契约（端点、字段定义、签名规范、钩子模板） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计（组件图、数据流、部署拓扑） |
-| [docs/API.md](docs/API.md) | API 参考（所有端点、请求/响应结构） |
+| [docs/API.md](docs/API.md) | API 文档（所有端点、请求/响应结构） |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Docker、PostgreSQL 切换、生产配置） |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发者指南（本地构建、模块结构、贡献流程） |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | 安全模型（威胁建模、HMAC 规范、防御层次） |
@@ -277,4 +295,3 @@ bash e2e/run.sh both
 ---
 
 [MIT License](LICENSE) © 2026 MapleEve
-

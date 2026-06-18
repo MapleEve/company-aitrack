@@ -31,7 +31,7 @@ The following are permitted without contacting the author:
 The following require written authorization from the author before proceeding:
 
   · Any company, team, studio, or organization integrating this project into
-    internal tooling or external-facing products
+    private tooling or external-facing products
   · Delivering technical services to paying clients using this project as a
     foundation (outsourcing, B2B SaaS, consulting, etc.)
   · Building commercial software products, paid subscriptions, or paid hosting
@@ -57,14 +57,14 @@ WeChat Official Account: 等枫再来
   · 在自己控制的硬件或服务器上，为个人开发工作流运行 aitrack
   · 个人文章、视频、副业或社交媒体内容创作（小红书、公众号、B站等）
   · 以非营利为目的发布的 demo、教程、博客、播客
-  · 在个人仓库发布的派生项目——须在 README 显著位置标注来源：
+  · 在个人仓库发布的派生项目——须在 README 显著位置保留 attribution：
     Derived from MapleEve/company-aitrack
 
 ▌ 商业使用（须事先取得书面授权）
 
 下列情形必须联系作者获得书面授权，方可进行：
 
-  · 企业、团队、工作室或机构将本项目纳入内部工具链或对外产品
+  · 企业、团队、工作室或机构将本项目纳入组织工具链或对外产品
   · 以本项目为基础向付费客户交付技术服务（外包、B 端 SaaS、咨询等）
   · 基于本项目构建商业软件、付费订阅或付费托管服务
   · 以营利为目的开设的培训课程、工作坊或付费社群

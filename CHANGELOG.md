@@ -4,6 +4,42 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 
 ---
 
+## [v1.7.0] — 2026-06-18
+
+### Release summary
+
+v1.7.0 expands aitrack from three fixed native hook adapters into a broader local agent telemetry platform. The release keeps `EditRecord` monitoring events separate from scalar usage rollups, adds Java and Go usage APIs, and lets the Rust client collect local agent usage from logs, transcripts, JSON/JSONL/NDJSON, CSV, SQLite databases, caches, and local client state without requiring users to paste third-party service tokens.
+
+GitHub Release body: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.md).
+
+### Added
+
+- **Dynamic agent registry / status / heartbeat**: agent keys are now represented as dynamic registry entries in client status and heartbeat payloads instead of a fixed three-tool map.
+- **Expanded local source matrix**: default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`, with aliases for `roocode`, `kilo-code`, and `gajae-code`.
+- **Usage data plane**: new `usage_sessions`, `usage_daily_model_rollups`, `usage_subscription_snapshots`, and `usage_outbox` client tables; Java and Go services now expose `/api/v1/ai-track/usage/rollup`, `/api/v1/ai-track/usage/subscription`, and `/api/v1/ai-track/usage/summary`.
+- **Transcript monitoring recovery**: local transcripts can recover bounded prompt, tool, window, and reconstructable edit monitoring events for agents without native edit hooks.
+- **Quota / subscription snapshots**: Claude and Codex local state can feed subscription and quota snapshots into the usage data plane.
+
+### Changed
+
+- **Bounded local scanning**: default local scans use a recent 30-day window, per-agent candidate/file/directory caps, JSONL/CSV row caps, and a persistent file cursor cache keyed by tool, path, size, mtime, and scan window.
+- **Small backfill workflow**: explicit `--since/--until` remains available for targeted historical backfills instead of forcing full recursive local scans.
+- **Canonical agent keys**: default scans use canonical agent keys to avoid double-ingesting the same local source path while still accepting common aliases on explicit `--tool`.
+- **Public documentation**: README, API, privacy, architecture, and roadmap docs now describe the monitoring-event domain, usage-rollup domain, and supported agent framework boundary.
+
+### Fixed
+
+- Avoided repeated re-reading of unchanged local transcript and usage files on immediate follow-up syncs.
+- Avoided unbounded recursive scanning across large local agent data directories.
+- Added architecture checks to prevent scan bounds, cache schema, local source matrix, and E2E coverage gates from regressing.
+
+### Testing / CI
+
+- Rust client unit suite: **300 tests**.
+- Client E2E matrix gate: **37 / 37** required local source agents covered, with minimum local-source E2E coverage set to **90%**.
+- Client E2E now verifies that an immediate second `usage sync` against unchanged local sources parses **0** messages and **0** monitoring events.
+- PR CI gates include Rust/Java/Go build and coverage gates, architecture gate, Java+Go E2E, Rust client local-source E2E, Codecov, FOSSA, and automated review checks.
+
 ## [v1.6.3] — 2026-05-25
 
 ### Fixed

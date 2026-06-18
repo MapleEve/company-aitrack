@@ -1,8 +1,8 @@
 /// Return the agent-framework label to store in the `provider` field.
 ///
-/// Records the name of the AI coding tool (`"claude"`, `"codex"`, `"cursor"`),
-/// not the underlying LLM API provider.  URL-based heuristics are intentionally
-/// absent — the framework name is known at parse time.
+/// Records the agent/tool key, not the underlying LLM API provider. URL-based
+/// heuristics are intentionally absent — the framework name is known at parse
+/// time.
 pub fn infer_provider(tool: &str) -> &str {
     tool
 }

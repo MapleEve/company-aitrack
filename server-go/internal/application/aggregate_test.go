@@ -18,13 +18,17 @@ func insertEditRecord(t *testing.T, repo *dbadapter.EditRecordAdapter, status, t
 }
 
 func insertEditRecordWithHostname(t *testing.T, repo *dbadapter.EditRecordAdapter, status, tokenKey, repoURL, deviceID, hostname string) {
+	insertEditRecordWithHostnameAndTool(t, repo, status, tokenKey, repoURL, deviceID, hostname, "claude")
+}
+
+func insertEditRecordWithHostnameAndTool(t *testing.T, repo *dbadapter.EditRecordAdapter, status, tokenKey, repoURL, deviceID, hostname, tool string) {
 	t.Helper()
 	n := int64(5)
 	rec := &model.EditRecord{
 		TokenKey:     tokenKey,
 		DeviceID:     deviceID,
 		Hostname:     hostname,
-		Tool:         "claude",
+		Tool:         tool,
 		Provider:     "anthropic",
 		SessionID:    "sess-001",
 		RepoURL:      repoURL,
@@ -87,6 +91,33 @@ func TestAggregateByHostname(t *testing.T) {
 	}
 	if len(rows) < 2 {
 		t.Errorf("expected 2 hostname groups, got %d", len(rows))
+	}
+}
+
+func TestAggregateByTool(t *testing.T) {
+	db := openTestDB(t)
+	repo := dbadapter.NewEditRecordAdapter(db)
+	insertEditRecordWithHostnameAndTool(t, repo, "ACCEPTED", "k1", "git@github.com:org/repo.git", "dev1", "host-A.local", "claude-code")
+	insertEditRecordWithHostnameAndTool(t, repo, "FLAGGED", "k1", "git@github.com:org/repo.git", "dev2", "host-B.local", "claude-code")
+	insertEditRecordWithHostnameAndTool(t, repo, "REJECTED", "k2", "git@github.com:org/other.git", "dev3", "host-C.local", "cursor-nightly")
+
+	rows, err := repo.AggregateByTool()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byTool := map[string]model.StatsRow{}
+	for _, row := range rows {
+		byTool[row.Group] = row
+	}
+
+	claude := byTool["claude-code"]
+	if claude.Edits != 2 || claude.Accepted != 1 || claude.Flagged != 1 || claude.Rejected != 0 {
+		t.Errorf("claude-code stats = %+v, want edits=2 accepted=1 flagged=1 rejected=0", claude)
+	}
+	cursor := byTool["cursor-nightly"]
+	if cursor.Edits != 1 || cursor.Accepted != 0 || cursor.Flagged != 0 || cursor.Rejected != 1 {
+		t.Errorf("cursor-nightly stats = %+v, want edits=1 rejected=1", cursor)
 	}
 }
 
@@ -201,3 +232,49 @@ func TestStatsService_AllGroupBys(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsService_GetStatsByTool(t *testing.T) {
+	rows := []model.StatsRow{
+		{Group: "claude-code", Edits: 2, Accepted: 1, Flagged: 1},
+		{Group: "cursor-nightly", Edits: 1, Rejected: 1},
+	}
+	statsSvc := application.NewStatsService(&toolStatsEditRepo{toolRows: rows}, &statsDeviceRepo{})
+
+	got, err := statsSvc.GetStats("tool")
+	if err != nil {
+		t.Fatalf("GetStats(\"tool\"): %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetStats(\"tool\") returned %d rows, want 2", len(got))
+	}
+	if got[0].Group != "claude-code" || got[1].Group != "cursor-nightly" {
+		t.Fatalf("GetStats(\"tool\") groups = %+v, want dynamic tool names preserved", got)
+	}
+}
+
+type toolStatsEditRepo struct {
+	toolRows []model.StatsRow
+}
+
+func (r *toolStatsEditRepo) Save(_ *model.EditRecord) error { return nil }
+func (r *toolStatsEditRepo) CountByTokenKeyAndFilePathSince(_, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
+func (r *toolStatsEditRepo) Query(_, _ string, _, _ int) ([]model.EditRecord, int64, error) {
+	return nil, 0, nil
+}
+func (r *toolStatsEditRepo) AggregateByTokenKey() ([]model.StatsRow, error) { return nil, nil }
+func (r *toolStatsEditRepo) AggregateByRepo() ([]model.StatsRow, error)     { return nil, nil }
+func (r *toolStatsEditRepo) AggregateByDevice() ([]model.StatsRow, error)   { return nil, nil }
+func (r *toolStatsEditRepo) AggregateByHostname() ([]model.StatsRow, error) { return nil, nil }
+func (r *toolStatsEditRepo) AggregateByTool() ([]model.StatsRow, error) {
+	return r.toolRows, nil
+}
+
+type statsDeviceRepo struct{}
+
+func (r *statsDeviceRepo) Upsert(_ *model.Device) error { return nil }
+func (r *statsDeviceRepo) FindByDeviceID(_ string) (*model.Device, error) {
+	return nil, nil
+}
+func (r *statsDeviceRepo) ListAll() ([]*model.Device, error) { return nil, nil }

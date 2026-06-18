@@ -3,13 +3,14 @@ use chrono::Utc;
 use reqwest::Client;
 use rusqlite::Connection;
 use serde::Serialize;
+use std::collections::HashMap;
 
 use crate::adapter::sqlite::{
     ensure_kv_table, get_last_heartbeat, pending_count_all, set_last_heartbeat,
 };
 use crate::config::{load_config, mask_token, split_credential};
 use crate::domain::crypto::compute_request_sig;
-use crate::init::{has_claude_hook, has_codex_hook, has_cursor_hook};
+use crate::init::detect_tool_statuses;
 
 const HEARTBEAT_INTERVAL_SECS: i64 = 3600; // 1 hour
 
@@ -20,15 +21,8 @@ struct HeartbeatPayload {
     token_key_masked: String,
     client_version: String,
     ts: i64,
-    hooks: HookStatus,
+    hooks: HashMap<String, bool>,
     pending_count: i64,
-}
-
-#[derive(Serialize)]
-struct HookStatus {
-    claude: bool,
-    codex: bool,
-    cursor: bool,
 }
 
 /// Send a heartbeat to the server.
@@ -68,9 +62,7 @@ pub async fn send_heartbeat(
     let cfg = load_config();
     let home = dirs::home_dir().expect("cannot find home directory");
 
-    let claude_installed = has_claude_hook(&home.join(".claude").join("settings.json"));
-    let codex_installed = has_codex_hook(&home.join(".codex").join("config.toml"));
-    let cursor_installed = has_cursor_hook(&home.join(".cursor").join("hooks.json"));
+    let hooks = detect_tool_statuses(&home);
 
     let pending = pending_count_all(conn);
     let token_key_masked = mask_token(&token);
@@ -86,11 +78,7 @@ pub async fn send_heartbeat(
         token_key_masked,
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         ts: now,
-        hooks: HookStatus {
-            claude: claude_installed,
-            codex: codex_installed,
-            cursor: cursor_installed,
-        },
+        hooks,
         pending_count: pending,
     };
 
@@ -201,6 +189,28 @@ mod tests {
         let force = true;
         let would_skip = !force && elapsed < 3600;
         assert!(!would_skip, "force=true must never skip");
+    }
+
+    #[test]
+    fn agent_heartbeat_payload_hooks_serialize_as_dynamic_map() {
+        let mut hooks = std::collections::HashMap::new();
+        hooks.insert("claude".to_string(), true);
+        hooks.insert("qwen".to_string(), false);
+
+        let payload = super::HeartbeatPayload {
+            device_id: "device".to_string(),
+            hostname: "host".to_string(),
+            token_key_masked: "aitrack_abcd...wxyz".to_string(),
+            client_version: "1.0.0".to_string(),
+            ts: 1,
+            hooks,
+            pending_count: 0,
+        };
+
+        let json = serde_json::to_value(payload).unwrap();
+        assert_eq!(json["hooks"]["claude"], true);
+        assert_eq!(json["hooks"]["qwen"], false);
+        assert!(json["hooks"]["cursor"].is_null());
     }
 
     #[tokio::test]

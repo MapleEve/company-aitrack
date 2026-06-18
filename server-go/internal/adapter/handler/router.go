@@ -8,7 +8,7 @@ import (
 )
 
 // NewRouter wires all handlers into a chi router.
-func NewRouter(admin *AdminHandler, edits *EditsHandler, hb *HeartbeatHandler, stats *StatsHandler, search *SearchHandler, similar *SimilarHandler, profileH *ProfileHandler) http.Handler {
+func NewRouter(admin *AdminHandler, edits *EditsHandler, hb *HeartbeatHandler, stats *StatsHandler, search *SearchHandler, similar *SimilarHandler, profileH *ProfileHandler, usageH *UsageHandler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
@@ -21,6 +21,9 @@ func NewRouter(admin *AdminHandler, edits *EditsHandler, hb *HeartbeatHandler, s
 		r.Get("/edits/search", search.Search)
 		r.Post("/edits/similar", similar.Similar)
 		r.Post("/heartbeat", hb.Heartbeat)
+		r.Post("/usage/rollup", usageH.SubmitRollups)
+		r.Post("/usage/subscription", usageH.SubmitSubscription)
+		r.Get("/usage/summary", usageH.Summary)
 		r.Get("/stats", stats.Stats)
 		r.Get("/devices", stats.Devices)
 		r.Get("/profiles/{token_key}", profileH.Profile)

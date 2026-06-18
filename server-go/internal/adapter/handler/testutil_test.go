@@ -75,6 +75,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	tokenAdapter := dbadapter.NewTokenAdapter(database)
 	editAdapter := dbadapter.NewEditRecordAdapter(database)
 	deviceAdapter := dbadapter.NewDeviceAdapter(database)
+	usageAdapter := dbadapter.NewUsageAdapter(database)
 
 	policy := service.ValidationPolicy{
 		RateLimitPerHour: cfg.RateLimitPerHour,
@@ -85,6 +86,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	ingestSvc := application.NewIngestService(validationSvc, ev, editAdapter)
 	heartbeatSvc := application.NewHeartbeatService(deviceAdapter)
 	statsSvc := application.NewStatsService(editAdapter, deviceAdapter)
+	usageSvc := application.NewUsageService(usageAdapter)
 
 	auth := handler.NewAuthMiddleware(tokenSvc, sig, cfg)
 	adminH := handler.NewAdminHandler(tokenSvc, cfg)
@@ -94,7 +96,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	searchH := handler.NewSearchHandler(database, cfg.AdminKey, true /* PostgreSQL */)
 	similarH := handler.NewSimilarHandler(database, cfg.AdminKey, true /* PostgreSQL */)
 	profileH := handler.NewProfileHandler(database, cfg.AdminKey)
-	router := handler.NewRouter(adminH, editsH, hbH, statsH, searchH, similarH, profileH)
+	usageH := handler.NewUsageHandler(auth, usageSvc)
+	router := handler.NewRouter(adminH, editsH, hbH, statsH, searchH, similarH, profileH, usageH)
 
 	// Pre-create a token for API tests
 	resp, err := tokenSvc.CreateToken(&model.CreateTokenRequest{Owner: "tester"})
