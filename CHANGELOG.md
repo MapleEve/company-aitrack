@@ -4,13 +4,13 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.
 
 ---
 
-## [Unreleased] — v1.7.0 draft
+## [v1.7.0] — 2026-06-18
 
 ### Release summary
 
 v1.7.0 expands aitrack from three fixed native hook adapters into a broader local agent telemetry platform. The release keeps `EditRecord` monitoring events separate from scalar usage rollups, adds Java and Go usage APIs, and lets the Rust client collect local agent usage from logs, transcripts, JSON/JSONL/NDJSON, CSV, SQLite databases, caches, and local client state without requiring users to paste third-party service tokens.
 
-GitHub Release body draft: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.md).
+GitHub Release body: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.md).
 
 ### Added
 
@@ -39,14 +39,6 @@ GitHub Release body draft: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v
 - Client E2E matrix gate: **37 / 37** required local source agents covered, with minimum local-source E2E coverage set to **90%**.
 - Client E2E now verifies that an immediate second `usage sync` against unchanged local sources parses **0** messages and **0** monitoring events.
 - PR CI gates include Rust/Java/Go build and coverage gates, architecture gate, Java+Go E2E, Rust client local-source E2E, Codecov, FOSSA, and automated review checks.
-
-### Release checklist before tagging
-
-- Bump release versions from `1.6.3` to `1.7.0` in `client/Cargo.toml` and `server-java/pom.xml`.
-- Update the roadmap header date/status from draft to released.
-- Run the full PR gate on the release commit, then publish with tag `v1.7.0` through `.github/workflows/release.yml`.
-
----
 
 ## [v1.6.3] — 2026-05-25
 

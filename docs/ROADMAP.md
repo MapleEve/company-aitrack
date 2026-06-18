@@ -1,8 +1,8 @@
 # AiTrack 产品路线图
 
-**版本**：v1.7 draft
-**更新日期**：2026-06-17
-**当前状态**：v1.7.0 待发布；v1.7 后续强化、v1.8（2026 Q4）与 v2.0（2027 Q1）规划中
+**版本**：v1.7
+**更新日期**：2026-06-18
+**当前状态**：v1.7.0 已交付；v1.7 后续强化、v1.8（2026 Q4）与 v2.0（2027 Q1）规划中
 
 ---
 
@@ -20,7 +20,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 
 ---
 
-## 已交付 / 待发布版本（v1.0.0 – v1.7.0）
+## 已交付版本（v1.0.0 – v1.7.0）
 
 ### 核心功能概览
 
@@ -32,7 +32,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 | v1.5 | prompt 捕获前置：UserPromptSubmit hook + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
 | v1.6.0 | 六边形架构重构（domain / port / adapter）；`aitrack update` 子命令（ed25519 签名验证）；关键词完整性指纹（SHA-256）；testapp 端到端真实链路 | 已交付 |
 | v1.6.1 | Go 服务端完全迁移为 PostgreSQL-only（移除 SQLite 回退）；E2E 竞态修复；CI 改用原生工具链（llvm-cov / mvn verify）替代 Docker 构建验证 | 已交付 |
-| v1.7.0 | 动态 agent registry/status/heartbeat；37 个默认 local-source agent；usage rollup / subscription snapshot 数据面；Java + Go usage API；本地 transcript 监控恢复；30 天默认窗口、按需小回填和文件游标缓存；local-source E2E 与架构门禁 | 待发布 |
+| v1.7.0 | 动态 agent registry/status/heartbeat；37 个默认 local-source agent；usage rollup / subscription snapshot 数据面；Java + Go usage API；本地 transcript 监控恢复；30 天默认窗口、按需小回填和文件游标缓存；local-source E2E 与架构门禁 | 已交付 |
 
 ### 当前 agent 支持边界
 
@@ -43,7 +43,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 - local usage source：已支持按本机日志、JSONL、NDJSON、SQLite、CSV、缓存和本地客户端状态接入 usage rollup / snapshot，按 token bucket、message count 和 source cost 聚合；同时可将 transcript 中的 prompt、tool、window 和可还原编辑监控事件补入 `EditRecord` 上报链路。
 - 扫描性能边界：默认 30 天近窗口增量扫描；显式 `--since/--until` 做小范围回填；每个 agent 有候选、文件数、目录遍历和行数上限；本地文件游标缓存可跳过未变化来源。
 
-### 当前成功指标（v1.7.0 待发布基线）
+### 当前成功指标（v1.7.0 基线）
 
 - 捕获成功率 ≥ 99%
 - 误拒率 < 0.1%
@@ -130,7 +130,7 @@ bounded local scan（v1.7）
 
 ## 能力矩阵
 
-| 能力 | v1.6 | v1.7（待发布 / Q3） | v1.8（Q4） | v2.0（2027 Q1） |
+| 能力 | v1.6 | v1.7（当前 / Q3） | v1.8（Q4） | v2.0（2027 Q1） |
 |------|:-----------:|:----------:|:----------:|:---------------:|
 | 精确行数统计（Myers diff） | ✓ | ✓ | ✓ | ✓ |
 | HMAC-SHA256 双层签名 | ✓ | ✓ | ✓ | ✓ |
@@ -168,7 +168,7 @@ bounded local scan（v1.7）
 
 AiTrack 仅提供私有化自托管部署，不提供 SaaS 服务。
 
-- **当前（v1.7 待发布）**：通过 Docker 镜像自行构建部署；Java / Go 服务端与 Rust 客户端均由 CI 覆盖率和 E2E 门禁验证
+- **当前（v1.7）**：通过 Docker 镜像自行构建部署；Java / Go 服务端与 Rust 客户端均由 CI 覆盖率和 E2E 门禁验证
 - **v1.7 后续起**：DockerHub 提供官方预构建镜像，`docker-compose up` 即可完成全套部署
 - **数据主权**：所有采集数据存储在企业自有数据库中，不上报任何外部服务
 

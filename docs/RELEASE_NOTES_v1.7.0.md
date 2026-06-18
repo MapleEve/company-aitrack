@@ -1,4 +1,4 @@
-# v1.7.0 Release Notes Draft
+# v1.7.0 Release Notes
 
 ## Summary
 
@@ -34,10 +34,3 @@ Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as alias
 - Local source E2E matrix: 37 / 37 required agents covered.
 - Client E2E cache assertion: immediate second sync of unchanged source parses 0 messages and 0 monitoring events.
 - PR gate includes Rust, Java, Go, architecture, coverage, Java+Go E2E, Rust local-source E2E, Codecov, FOSSA, and automated review checks.
-
-## Before Publishing
-
-- Update release versions from `1.6.3` to `1.7.0` in `client/Cargo.toml` and `server-java/pom.xml`.
-- Change the changelog and roadmap status from draft to released.
-- Run all PR checks on the release commit.
-- Tag `v1.7.0` or run the release workflow with `allow_release=true` and `tag_name=v1.7.0`.
