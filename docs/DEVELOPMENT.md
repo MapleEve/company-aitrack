@@ -49,9 +49,9 @@ cargo llvm-cov --open
 
 覆盖率门槛：LINE ≥ 90%，低于此值 Docker 构建会失败。
 
-### 模块结构（Sprint 2 六边形架构）
+### 客户端模块结构（v1.7）
 
-Sprint 2 重构后，旧 `db/`、`adapters/`、顶层 `crypto.rs`、顶层 `diff.rs` 已删除，全部逻辑迁入以下三层：
+客户端采用六边形架构。旧 `db/`、`adapters/`、顶层 `crypto.rs`、顶层 `diff.rs` 已删除，核心逻辑按领域、端口、适配器和本地来源扫描拆分：
 
 ```
 client/src/
@@ -66,10 +66,20 @@ client/src/
 ├── adapter/
 │   ├── sqlite/      ← SqliteStorage implements StoragePort
 │   ├── http/        ← HttpUploader implements UploadPort（真实 POST 逻辑）
-│   └── event/       ← native edit 事件适配；动态 agent registry 在 agent.rs
+│   └── event/       ← 原生编辑事件适配（claude / codex / cursor）
+├── agent.rs         ← 动态工具注册表、默认扫描 key、别名和本地来源根目录
+├── usage/           ← 本地用量扫描、用量汇总、额度快照、扫描游标缓存
 ├── update.rs        ← aitrack update 子命令（ed25519 签名验证）
 └── testkit/         ← factories.rs（测试工厂，使用 domain::model）
 ```
+
+v1.7.0 当前支持边界：
+
+- 原生编辑钩子适配器：`claude`、`codex`、`cursor`。
+- 原生提示词钩子：仅 `claude`。
+- 默认本地扫描：37 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- 本地来源类型：本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态。
+- 默认扫描窗口：近 30 天；显式 `--since/--until` 用于小范围回填；扫描游标缓存会跳过未变化来源。
 
 ### 测试模块覆盖情况
 
@@ -77,10 +87,10 @@ client/src/
 |------|----------|----------|
 | `domain/` | 纯业务逻辑、HMAC、diff、关键词分类 | Rust 覆盖率 LINE ≥ 90% |
 | `port/` | 存储 / 上传端口契约 | Rust 覆盖率 LINE ≥ 90% |
-| `adapter/` | SQLite、HTTP、事件适配、本地 usage source | Rust 覆盖率 LINE ≥ 90% |
+| `adapter/` | SQLite、HTTP、事件适配、本地用量来源 | Rust 覆盖率 LINE ≥ 90% |
 | **TOTAL** | client 全量单测 + 覆盖率 | **300 tests；LINE ≥ 90%** |
 
-> v1.7 local-source 扩展后，Rust 客户端单测覆盖动态 agent registry、usage rollup、transcript 监控、窗口化扫描和文件游标缓存。
+> v1.7 本地来源扩展后，Rust 客户端单测覆盖动态工具注册表、用量汇总、会话记录监控、窗口化扫描和文件游标缓存。
 
 测试均为 `#[cfg(test)]` 内联模块。HTTP mock 使用 `wiremock`，临时文件使用 `tempfile`。
 
@@ -113,6 +123,24 @@ let big = tampered_oversized_lines(1);  // added_lines = 99,999,999
 ```
 
 从配置的更新服务器拉取最新版本元数据，验证 ed25519 签名后执行就地更新。签名验证失败时中止并报错，不执行替换。
+
+### usage 子命令
+
+```bash
+# 扫描默认 37 个工具 key，只写入本地 usage.sqlite
+./target/debug/aitrack usage scan
+
+# 针对单个工具做小范围回填
+./target/debug/aitrack usage scan --tool codex --since 2026-06-01 --until 2026-06-18
+
+# 扫描、汇总并上传用量；本地会话记录中可还原的监控事件会进入 EditRecord 上报链路
+./target/debug/aitrack usage sync --api-url http://localhost:8080 --credential <credential>
+
+# 查看本地用量账本状态
+./target/debug/aitrack usage status
+```
+
+`usage scan` 和 `usage sync` 默认使用近 30 天窗口。每个工具有候选数、文件数、目录遍历数和行数上限；未变化文件会被游标缓存跳过。
 
 ### sqlite-vec（可选向量扩展）
 
@@ -244,7 +272,7 @@ Go 服务端需设置 `DATABASE_URL`，无内嵌 SQLite 回退（v1.6.1 已移�
 
 ## E2E 测试
 
-e2e 测试套件位于 `e2e/`，对 Java 和 Go 两套实现各跑一轮，证明协议兼容性。Sprint 2 新增基于 `testapp` 的真实链路 E2E 测试，无需外部服务进程。
+e2e 测试套件位于 `e2e/`，对 Java 和 Go 两套实现各跑一轮，证明协议兼容性。六边形架构重构后新增基于 `testapp` 的真实链路 E2E 测试，无需外部服务进程。
 
 ### Go runner（模拟客户端）
 
@@ -267,6 +295,7 @@ go test ./... -coverprofile=cover.out
 ```
 
 典型 E2E 场景（`e2e/mock_chain_test.go`）：
+
 - 正常 accepted：sig_match → POST /edits → 200 accepted=1
 - sig_mismatch 拒绝：篡改 record_sig → rejected
 - 未授权 401：无效 token → 401
@@ -305,7 +334,7 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 
 ## 本地钩子配置更新（重新激活）
 
-`aitrack init --claude` 会将 aitrack 的钩子配置写入 `~/.claude/settings.json`（`hooks` 字段）。当 aitrack 发布新版本并更新了钩子配置（例如 Phase 4 新增了 `UserPromptSubmit` 钩子用于提示词捕获）时，**已安装旧版本的用户必须重新执行 init 命令**，才能激活新版钩子。
+`aitrack init --claude` 会将 aitrack 的钩子配置写入 `~/.claude/settings.json`（`hooks` 字段）。当 aitrack 发布新版本并更新钩子配置（例如新增 `UserPromptSubmit` 钩子用于提示词捕获）时，**已安装旧版本的用户必须重新执行 init 命令**，才能激活新版钩子。
 
 ```bash
 # 重新激活最新钩子配置（安全：只写入 ~/.claude/settings.json，不影响本地代码库）
@@ -333,9 +362,9 @@ grep -A 5 '"UserPromptSubmit"' ~/.claude/settings.json
 aitrack status
 ```
 
-> 注意：`aitrack init --claude` 会覆盖 `~/.claude/settings.json` 中已有的 aitrack 钩子条目，但不会删除其他（如 vibe-island 等）工具写入的钩子。
+> 注意：`aitrack init --claude` 会覆盖 `~/.claude/settings.json` 中已有的 aitrack 钩子条目，但不会删除其他工具写入的钩子。
 
-**自动检测模式**：不传任何工具 flag 时，`aitrack init` 会检测 `~/.claude`、`~/.codex`、`~/.cursor` 目录是否存在，对检测到的工具自动安装钩子。若均未检测到，打印提示并退出。
+**自动检测模式**：不传任何工具 flag 时，`aitrack init` 会检测 `~/.claude`、`~/.codex`、`~/.cursor` 目录是否存在，对检测到的原生编辑适配工具自动安装钩子。若均未检测到，打印提示并退出。其他已登记工具可通过 `--tool <name>` 写入注册/状态路径，但不会因此获得原生编辑适配能力。
 
 **第三方冲突告警**：Claude 安装时若发现 `settings.json` 中已存在非 aitrack 的 PostToolUse hook command，通过 stderr 警告用户，但不中止安装。
 

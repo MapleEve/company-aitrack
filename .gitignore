@@ -3,6 +3,8 @@ client/target/
 server-java/target/
 **/target/
 **/cover*.out
+*.profraw
+*.profdata
 *.class
 *.jar
 *.war

@@ -2,8 +2,6 @@
 
 本文档描述 aitrack 三个组件的测试体系、工厂模式、覆盖率门槛和 Docker 内验证流程。
 
-> 测试目标、分层策略、风险优先级和质量治理方法见 `plans/test-strategy.md`。
-
 ---
 
 ## 三层测试架构
@@ -104,7 +102,7 @@ codecov -f coverage.out -F server-go
 1. **确定性（Seed-based）**：给定相同种子，每次生成相同数据
 2. **Builder 风格**：默认合法实例 + 字段级覆盖
 3. **负例工厂**：明确命名的篡改方法（`tampered_*`, `Tampered*`）
-4. **HMAC 内嵌**：工厂内部计算正确的 `record_sig`，保证默认实例通过签名验证
+4. **HMAC 内建**：工厂负责计算正确的 `record_sig`，保证默认实例通过签名验证
 
 ### Rust（`client/src/testkit/factories.rs` → `crate::domain::model::Record`）
 
@@ -513,4 +511,4 @@ jobs:
 
 - **Java 构建必须在 Docker 内进行**：本机无 JDK 17/Maven，`Dockerfile.server-java` 使用 `maven:3.9-eclipse-temurin-17` 镜像完成全部构建和测试。
 - **Go 服务端无 CGO 依赖**：`modernc.org/sqlite` 已于 v1.6.1 移除，PostgreSQL 驱动 pgx 为纯 Go 实现；`CGO_ENABLED=0` 构建，无跨平台链接问题。
-- **E2E 不修改真实编辑器配置**：所有操作在容器隔离环境中进行，不触碰 `~/.aitrack/`、`~/.claude/` 等目录。
+- **E2E 不修改真实编辑器配置**：所有操作在容器隔离环境中进行，不触碰 `~/.aitrack/`、`~/.claude/`、`~/.codex/`、`~/.cursor/` 等目录。

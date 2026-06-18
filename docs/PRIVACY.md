@@ -1,24 +1,28 @@
-# aitrack 隐私说明 / aitrack Privacy Notice
+# aitrack 隐私说明
 
-版本：v1.6 · 最后更新：2026-06-16
+版本：v1.7.0 · 最后更新：2026-06-18
 
 ---
 
-## 1. 概览 / Overview
+## 1. 概览
 
 本文档说明 aitrack 收集哪些数据、收集原因、存储位置、可见范围，以及您对数据的控制权。
 
-**aitrack 是什么**：一个通用、自托管、开源的员工 AI 编码监控与治理平台。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可记录这些工具对代码库所做的变更。其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线，并通过本地 transcript 扫描补齐 prompt、tool、window 和可还原编辑监控事件。
+**aitrack 是什么**：一个通用、自托管、开源的 AI 编码使用审计与治理平台。v1.7.0 的公开支持范围包括原生编辑证据、动态状态心跳和本地用量扫描三层能力。
+
+**当前支持范围**：Claude Code、Codex CLI、Cursor 具备原生编辑适配器，可生成带 diff、行数、仓库信息和签名的编辑证据；原生提示词钩子仅支持 Claude Code。其他已登记工具主要通过本地状态、会话、日志、缓存和用量文件扫描，以及心跳状态上报纳入可见范围。默认本地扫描覆盖 37 个规范工具 key。
 
 **本文档的目的**：任何记录开发者行为的工具都应当对其行为保持透明。这不是法律免责声明——而是对"我的数据去哪了？"这一问题的直接回答。
 
-**自托管设计**：aitrack 没有云端组件。部署 aitrack 时，您就是运营方。所有数据均保留在您自己的基础设施内。任何数据都不会发送给 aitrack 项目维护者或任何第三方服务。
+**本地优先与自托管设计**：aitrack 没有云端组件。部署 aitrack 时，您就是运营方。采集、缓存、签名和上传都以您的本机与自有服务端为边界；任何数据都不会发送给 aitrack 项目维护者或第三方服务。
 
 ---
 
-## 2. 我们收集什么 / What We Collect
+## 2. 我们收集什么
 
-每条记录对应 AI 工具触发的一个文件编辑事件。以下是所有收集的字段：
+aitrack 采集分为编辑证据、提示词/会话监控事件、状态心跳、用量汇总和额度/订阅快照几个数据域。默认只上报可解释的摘要、标量和证据；纯 token、额度或订阅快照不会被伪装成文件编辑监控事件。
+
+文件编辑类 `EditRecord` 可能包含以下字段：
 
 | 数据项 | 收集内容 | 收集原因 | 存储位置 |
 |--------|----------|----------|----------|
@@ -31,38 +35,38 @@
 | **分支（branch）** | 当前 Git 分支名 | 区分主干与功能分支 | 本地 SQLite + 服务端数据库 |
 | **提交哈希（current_sha）** | 编辑时的 HEAD commit SHA | 将编辑关联到特定代码快照 | 本地 SQLite + 服务端数据库 |
 | **主机名（hostname）** | 机器的操作系统 hostname，如 `MacBook-Pro.local` | 在同一凭证跨多台机器使用时识别来源机器；不用于访问控制 | 本地 SQLite + 服务端数据库 |
-| **AI 工具类型（tool）** | EditRecord 中来自 native adapter 或本地 transcript 扫描；heartbeat/status 可包含其他注册 agent key | 按工具区分使用模式 | 本地 SQLite + 服务端数据库 |
-| **Prompt / tool 监控内容（prompt_summary / metadata）** | 本地 prompt hook 或 transcript 扫描得到的有界 prompt、tool、window 事件内容 | 审计员工 AI 编码使用方式 | 本地 SQLite + 服务端数据库 |
+| **AI 工具类型（tool）** | `EditRecord` 中来自原生适配器或本地会话扫描；心跳/状态可包含其他已登记工具 key | 按工具区分使用模式 | 本地 SQLite + 服务端数据库 |
+| **提示词与工具事件（prompt_summary / metadata）** | 本地提示词钩子或会话扫描得到的有界提示词、工具调用、窗口上下文和可还原编辑事件 | 审计 AI 编码使用方式 | 本地 SQLite + 服务端数据库 |
 | **Token 标识符（token_key）** | 管理员分配的凭证中的 token 部分，格式 `aitrack_<hex>` | 将记录归因到特定开发者席位 | 仅本地 SQLite（用于本地过滤，不随上传 payload 发送） |
 | **设备 ID（device_id）** | 首次运行时生成的 UUIDv4，持久化至本地配置 | 区分使用同一凭证的多台设备 | 本地 SQLite + 服务端数据库 |
 | **记录签名（record_sig）** | 绑定以上所有字段的 HMAC-SHA256 签名 | 检测本地记录是否被篡改或伪造 | 本地 SQLite + 服务端数据库 |
 
 **关于 diff_hunk 的说明**：这是变更部分的差异，不是完整文件。如果 AI 修改了一个函数，您得到的是该函数的前后对比——文件中的其他内容不会被包含。差异算法使用 Myers/LCS 最小编辑距离，因此 diff 尽可能小。
 
-**数据域边界**：上表描述的是 `EditRecord` 监控事件域。usage rollup / snapshot 属于标量用量域，可包含请求数、token 数、成本估算或本地客户端活跃统计。token-only 或 usage-only 数据不能伪装成监控事件，也不会生成 diff、行数或 `record_sig` 编辑证据。
+**数据域边界**：上表描述的是 `EditRecord` 监控事件域。用量汇总和快照属于标量用量域，可包含请求数、token 数、成本估算或本地客户端活跃统计。只有 token、额度或订阅信息的数据不能伪装成监控事件，也不会生成 diff、行数或 `record_sig` 编辑证据。
 
-**本地用量来源**：aitrack 可从本机日志、JSONL、SQLite、缓存和本地客户端状态中发现用量来源，并在本地状态允许时自动发现凭证或入口。用户不需要手动粘贴第三方 token 才能接入本地用量来源。
+**本地用量来源**：aitrack 可从本机日志、JSON、JSONL、NDJSON、CSV、SQLite、缓存、会话记录和本地客户端状态中发现用量来源。提示词和会话记录只按配置和本地可读文件处理；用户不需要手动粘贴第三方服务 token 才能接入本地用量来源。
 
 ---
 
-## 3. 我们不收集什么 / What We Do Not Collect
+## 3. 我们不收集什么
 
 以下数据**不在收集范围内**，并通过技术手段强制保证：
 
 | 不收集的数据 | 技术保障方式 |
 |-------------|-------------|
 | **完整文件内容** | 仅存储 `diff_hunk`（变更部分）。捕获流程不读取或存储工具钩子 payload 之外的任何内容。 |
-| **完整 AI 响应内容** | usage / transcript 扫描面只提取 prompt、tool、window、编辑事件和 token bucket、message count、source cost，不把完整 assistant response 作为独立数据面上传。 |
+| **完整 AI 响应内容** | 本地会话扫描只在来源可读且配置允许时提取有界字段，例如提示词、工具、窗口、编辑事件和用量标量；不会把完整助手响应作为独立数据面上传。 |
 | **密码、私钥、证书** | 捕获流程包含文件路径合理性检查，自动跳过匹配以下模式的文件：`*.key`、`*.pem`、`*.pfx`、`*.p12`、`*.env`、`*secret*`、`*password*` 等敏感文件名。这些路径不会生成任何记录。 |
-| **完整 AI 对话历史** | 本地 hook / transcript 扫描只抽取 prompt、tool、window、编辑事件和 token bucket、message count、source cost 字段，不把完整对话历史作为独立数据面上传。 |
+| **完整 AI 对话历史** | 本地钩子和会话扫描只抽取必要字段，不把完整对话历史作为独立数据面上传。 |
 | **凭证中的 HMAC secret 部分** | 凭证由 `<token>-<hmac_secret>` 组成。`hmac_secret` 仅在本地用于计算签名，从不通过网络发送。 |
 | **与编码无关的个人身份信息** | aitrack 不访问开发环境以外的任何系统。 |
 
 ---
 
-## 4. 数据如何存储 / How Data Is Stored
+## 4. 数据如何存储
 
-### 本地存储（客户端侧）/ Local storage (client side)
+### 本地存储（客户端侧）
 
 - 目录：`~/.aitrack/`
 - 数据库：`~/.aitrack/records.db`（SQLite）
@@ -72,13 +76,13 @@
   - 文件权限：0600
   - 包含：API URL、凭证（token + hmac_secret 合并值）、设备 ID
 
-### 服务端存储 / Server-side storage
+### 服务端存储
 
 - 数据库：PostgreSQL / ParadeDB（Java 本地开发可用 H2，Go 服务端生产必须使用 PostgreSQL）
 - 仅有直接数据库访问权限的管理员可查询原始记录
 - 所有数据保留在您自己的基础设施内——不涉及外部服务
 
-### 加密 / Encryption
+### 加密
 
 - 每个凭证中的 `hmac_secret` 部分在服务端使用 AES-256-GCM 加密存储。即使拥有数据库访问权限的管理员也无法以明文读取它。
 - Token 在服务端以 SHA-256 哈希值存储。原始凭证仅在签发时返回一次。
@@ -86,7 +90,7 @@
 
 ---
 
-## 5. 谁可以访问数据 / Who Can Access the Data
+## 5. 谁可以访问数据
 
 | 角色 | 可见数据 | 访问方式 |
 |------|----------|----------|
@@ -99,7 +103,7 @@
 
 ---
 
-## 6. 数据保留 / Data Retention
+## 6. 数据保留
 
 **当前版本没有自动过期机制。** 上传到服务端的记录会一直保留，直到显式删除。
 
@@ -112,11 +116,11 @@
 
 ---
 
-## 7. 自托管用户的权利 / Your Rights as a Self-Hosted User
+## 7. 自托管用户的控制权
 
 由于您自托管 aitrack，您掌控一切：
 
-**查看本地数据 / Inspect your local data：**
+**查看本地数据：**
 ```bash
 aitrack inspect --limit 100      # 查看最近 100 条记录（含 diff 内容）
 aitrack inspect --pending        # 查看尚未上传的记录
@@ -124,7 +128,7 @@ aitrack stats                    # 按工具和仓库分组的聚合统计
 aitrack status                   # 检查已安装的工具钩子
 ```
 
-**随时移除钩子 / Remove hooks at any time：**
+**随时移除钩子：**
 ```bash
 aitrack remove --claude          # 移除 Claude Code 钩子
 aitrack remove --codex           # 移除 Codex CLI 钩子
@@ -133,43 +137,43 @@ aitrack remove --cursor          # 移除 Cursor 钩子
 
 钩子移除后，该工具不再创建新记录。
 
-**删除数据 / Delete your data：** 作为自托管运营方，您对本地 SQLite 文件（`~/.aitrack/records.db`）和服务端数据库均有完全访问权限。您可以直接删除记录，或请管理员执行。没有锁定，也没有数据保留在您的基础设施之外。
+**删除数据：** 作为自托管运营方，您对本地 SQLite 文件（`~/.aitrack/records.db`）和服务端数据库均有完全访问权限。您可以直接删除记录，或请管理员执行。没有锁定，也没有数据保留在您的基础设施之外。
 
-**完全停止采集 / Stop collection entirely：** 卸载已安装钩子（`aitrack remove --claude --codex --cursor`，或对注册工具使用 `aitrack remove --tool <name>`）或删除 aitrack 二进制文件。数据库中已有的记录不受影响，需手动删除。
-
----
-
-## 8. 关于 Prompt 数据的说明 / A Note on Prompt Data
-
-`prompt_summary` 由本地 prompt hook 或 transcript 扫描产生。客户端会保存有界 prompt 内容，并将其作为可选字段附加到编辑记录，用于审计和画像维度。
-
-usage rollup / snapshot 仍是独立标量域，用于 token bucket、message count、source cost、quota 和 subscription 状态。它不替代 `EditRecord`，也不会伪造 diff、行数或 `record_sig` 编辑证据。
+**完全停止采集：** 卸载已安装钩子（`aitrack remove --claude --codex --cursor`，或对已登记工具使用 `aitrack remove --tool <name>`）或删除 aitrack 二进制文件。数据库中已有的记录不受影响，需手动删除。
 
 ---
 
-## 9. 安全机制 / Security Mechanisms
+## 8. 关于提示词与会话数据
 
-**双层 HMAC-SHA256 签名 / Dual HMAC-SHA256 signatures：**
+`prompt_summary` 由本地提示词钩子或会话扫描产生。客户端只保存有界提示词内容，并将其作为可选字段附加到编辑记录，用于审计和画像维度。v1.7.0 中，原生提示词钩子仅支持 Claude Code；其他工具的提示词、工具调用、窗口上下文和可还原编辑事件来自配置允许且本地可读的会话或日志文件。
+
+用量汇总和快照仍是独立标量域，用于 token bucket、message count、source cost、quota 和 subscription 状态。它不替代 `EditRecord`，也不会伪造 diff、行数或 `record_sig` 编辑证据。
+
+---
+
+## 9. 安全机制
+
+**双层 HMAC-SHA256 签名：**
 
 - Per-record 签名（`record_sig`）：记录写入本地数据库时计算。它绑定 device_id、hostname、timestamp、tool、file_path、repo_url、commit SHA、行数以及 diff 的哈希值。服务端拒绝签名无效的记录。
 - Per-request 签名（`X-AiTrack-Signature`）：覆盖整个上传请求体和时间戳。防止重放攻击和传输中的篡改。
 
-**凭证存储 / Credential storage：**
+**凭证存储：**
 
 - `hmac_secret` 在服务端使用 AES-256-GCM 加密存储。
 - Token 以 SHA-256 哈希值存储。明文凭证仅在签发时返回一次，之后无法从服务端恢复。
 
-**路径过滤 / Path filtering：** 捕获流程（10 步中的第 8 步）检查每个文件路径的合理性。匹配敏感文件名模式的文件会被自动跳过——不会写入记录，也不会计算 diff。
+**路径过滤：** 捕获流程检查每个文件路径的合理性。匹配敏感文件名模式的文件会被自动跳过——不会写入记录，也不会计算 diff。
 
-**限流 / Rate limiting：** 服务端对每个（token, file_path）对每小时限制 30 条记录，防止通过编辑次数虚增来刷数据。
+**限流：** 服务端对每个（token, file_path）对每小时限制 30 条记录，防止通过编辑次数虚增来刷数据。
 
-**心跳 / Heartbeat：** 客户端定期向服务端上报 native hook 与注册 agent 状态，让管理员可以检测钩子被移除或本地 agent 状态异常（强化点 H3）。
+**心跳：** 客户端定期向服务端上报原生钩子与已登记工具状态，让管理员可以检测钩子被移除或本地工具状态异常。
 
-**本地数据库权限 / Local database permissions：** `~/.aitrack/records.db` 和 `~/.aitrack/config.toml` 均以 0600 权限创建。在多用户机器上，其他操作系统用户无法读取这些文件。
+**本地数据库权限：** `~/.aitrack/records.db` 和 `~/.aitrack/config.toml` 均以 0600 权限创建。在多用户机器上，其他操作系统用户无法读取这些文件。
 
 ---
 
-## 10. 联系与反馈 / Contact and Feedback
+## 10. 联系与反馈
 
 如果您对数据处理方式有疑问、发现安全问题，或希望对本文档提出改进建议：
 

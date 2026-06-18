@@ -1,9 +1,5 @@
 # 贡献指南
 
-[English](#english)
-
-## 中文
-
 欢迎为 aitrack 提交改进。
 
 ### 基本原则
@@ -49,6 +45,8 @@ mvn test
 ```bash
 cd server-go
 go test ./...
+go test ./... -coverprofile=coverage.out -covermode=atomic
+go tool cover -func coverage.out
 ```
 
 ### 覆盖率门槛
@@ -57,6 +55,7 @@ go test ./...
 |------|------|------|
 | Rust 客户端 | cargo-llvm-cov | 函数覆盖率 ≥ 90% |
 | Java 服务端 | JaCoCo | LINE 覆盖率 ≥ 90%（`mvn verify` 强制） |
+| Go 服务端 | go tool cover | 总覆盖率 ≥ 90% |
 
 提交前必须确保覆盖率门槛通过，不允许带失败或警告的测试合入。
 
@@ -64,20 +63,23 @@ go test ./...
 
 ```
 company-aitrack/
-├── CONTRACT.md          — 协议单一可信来源（客户端与服务端共同遵守）
+├── CONTRACT.md          — 权威协议文档（客户端与服务端共同遵守）
 ├── client/              — Rust CLI 客户端
 │   ├── src/
-│   │   ├── main.rs      — 命令分发
+│   │   ├── main.rs      — CLI 入口
+│   │   ├── lib.rs       — 可复用模块导出
 │   │   ├── cli.rs       — clap 参数定义
 │   │   ├── config.rs    — ~/.aitrack/config.toml 读写
-│   │   ├── db.rs        — SQLite records 表 CRUD
-│   │   ├── crypto.rs    — HMAC-SHA256、record_sig、request_sig
-│   │   ├── diff.rs      — Myers/LCS 差分（similar crate）
+│   │   ├── domain/      — 领域模型、HMAC、diff、关键词分类
+│   │   ├── port/        — StoragePort / UploadPort 端口契约
+│   │   ├── adapter/     — SQLite、HTTP、原生编辑事件适配
+│   │   ├── agent.rs     — 动态工具注册表、默认扫描 key 和别名
+│   │   ├── usage/       — 本地用量扫描、汇总、快照和游标缓存
 │   │   ├── git.rs       — 调用 git 获取仓库元数据
-│   │   ├── init.rs      — hook 安装与卸载
+│   │   ├── init.rs      — 钩子安装与卸载
 │   │   ├── uploader.rs  — 刷新未同步记录到服务端
 │   │   ├── heartbeat.rs — 节流心跳 POST
-│   │   └── adapters/    — Claude / Codex / Cursor payload 解析
+│   │   └── update.rs    — ed25519 自更新
 │   └── src/testkit/
 │       └── factories.rs — 种子确定性测试工厂
 ├── server-java/         — Java 服务端（Spring Boot 3 / JDK 17）
@@ -88,7 +90,7 @@ company-aitrack/
 
 ### 协议契约 CONTRACT.md
 
-`CONTRACT.md` 是客户端与所有服务端实现的**单一可信来源**。
+`CONTRACT.md` 是客户端与所有服务端实现必须共同遵守的权威协议文档。
 
 改动协议字段前必须理解以下规则：
 
@@ -231,29 +233,35 @@ E2E 运行中注意 `X-AiTrack-Timestamp` 的 300 秒时间窗口——测试环
 
 aitrack 客户端通过 GitHub Releases 分发二进制，ed25519 签名保证更新可信性。
 
-**版本策略：v1.0.0 起仅允许 patch 自增（v1.0.x → v1.0.x+1），不允许 minor / major 跳跃。**
+**版本策略：遵循 SemVer。**
+
+| 变更类型 | 版本位 |
+|----------|--------|
+| 向后兼容的新功能或新接口 | minor |
+| 修复、文档、构建或小幅优化 | patch |
+| 破坏性协议或 API 变更 | major |
 
 ### 发布步骤
 
-1. **修改版本号** — 仅修改 patch 位：
+1. **修改版本号**：
    ```bash
-   # 例：1.0.0 → 1.0.1
-   # 编辑 client/Cargo.toml，修改 version = "1.0.1"
+   # 例：1.7.0 → 1.7.1
+   # 编辑 client/Cargo.toml，修改 version = "1.7.1"
    ```
 
-2. **更新 CHANGELOG.md** — 在 `## [Unreleased]` 下添加 `## [v1.0.x] — YYYY-MM-DD` 条目。
+2. **更新 CHANGELOG.md** — 在 `## [Unreleased]` 下添加 `## [vX.Y.Z] — YYYY-MM-DD` 条目。
 
 3. **Commit**：
    ```bash
    git add client/Cargo.toml CHANGELOG.md
-   git commit -m "chore(release): bump version to v1.0.x"
+   git commit -m "chore(release): bump version to vX.Y.Z"
    git push origin main
    ```
 
 4. **Tag（触发 CI 发布）**：
    ```bash
-   git tag -a "v1.0.x" -m "Release v1.0.x"
-   git push origin "v1.0.x"
+   git tag -a "vX.Y.Z" -m "Release vX.Y.Z"
+   git push origin "vX.Y.Z"
    ```
 
 5. **确认 CI**：`release.yml` 自动为 4 个平台构建二进制，ed25519 签名，发布到 GitHub Releases。
@@ -291,251 +299,3 @@ scope 示例：`client` / `server-java` / `server-go` / `contract` / `testkit`
 - PR 描述说明改动范围和测试结论
 - 涉及协议变更时，列出三端同步状态
 - 不得绕过 CI 检查强制合并
-
----
-
-## English
-
-Contributions to aitrack are welcome.
-
-### Principles
-
-- Protocol field changes (`CONTRACT.md`) must be applied to all three components simultaneously: Rust client, Java server, Go server
-- All changes must pass tests and meet coverage thresholds
-- Do not commit secrets, tokens, environment files, or private filesystem paths
-
-### Requirements
-
-| Component | Minimum version |
-|-----------|----------------|
-| Rust | stable (latest stable recommended) |
-| JDK | 17 |
-| Maven | 3.8+ |
-| Go | 1.24+ |
-| Docker | for end-to-end integration verification |
-
-### Build and test
-
-**Rust client**
-
-```bash
-cd client
-cargo build --release
-cargo test
-# Coverage (requires cargo-llvm-cov)
-cargo llvm-cov --summary-only
-```
-
-**Java server**
-
-```bash
-cd server-java
-# Unit tests + coverage check (LINE >= 90% required)
-mvn verify
-# Tests only
-mvn test
-```
-
-**Go server**
-
-```bash
-cd server-go
-go test ./...
-```
-
-### Coverage thresholds
-
-| Component | Tool | Threshold |
-|-----------|------|-----------|
-| Rust client | cargo-llvm-cov | function coverage >= 90% |
-| Java server | JaCoCo | LINE coverage >= 90% (enforced by `mvn verify`) |
-
-Tests must pass with zero failures or warnings before submitting.
-
-### Repository structure
-
-```
-company-aitrack/
-├── CONTRACT.md          — single source of truth for the protocol (shared by client and servers)
-├── client/              — Rust CLI client
-│   ├── src/
-│   │   ├── main.rs      — command dispatch
-│   │   ├── cli.rs       — clap argument definitions
-│   │   ├── config.rs    — ~/.aitrack/config.toml read/write
-│   │   ├── db.rs        — SQLite records table CRUD
-│   │   ├── crypto.rs    — HMAC-SHA256, record_sig, request_sig
-│   │   ├── diff.rs      — Myers/LCS diff (similar crate)
-│   │   ├── git.rs       — git metadata retrieval
-│   │   ├── init.rs      — hook install and uninstall
-│   │   ├── uploader.rs  — flush unsynced records to server
-│   │   ├── heartbeat.rs — throttled heartbeat POST
-│   │   └── adapters/    — Claude / Codex / Cursor payload parsing
-│   └── src/testkit/
-│       └── factories.rs — seed-based deterministic test factories
-├── server-java/         — Java server (Spring Boot 3 / JDK 17)
-│   └── src/test/java/com/aitrack/server/
-│       └── testkit/     — Java test factories (EditDtoFactory, etc.)
-└── server-go/           — Go server (Go 1.24+)
-```
-
-### Protocol contract CONTRACT.md
-
-`CONTRACT.md` is the **single source of truth** for the protocol shared between the client and all server implementations.
-
-Rules to understand before modifying protocol fields:
-
-1. Any addition, removal, or change to reported fields (`edits` array fields, `record_sig` canonical string, `X-AiTrack-*` headers) must be applied to all three components simultaneously.
-2. Field order and `\n` separators in the `record_sig` canonical string are part of the protocol spec and must not be changed arbitrarily — the client and servers must be byte-aligned.
-3. For protocol version changes, add a `vX.X change` summary at the top of `CONTRACT.md` to aid three-way synchronization.
-4. The server test `SignatureServiceCanonicalTest` verifies that the canonical string matches `CONTRACT.md`; after protocol changes, update its expected values accordingly.
-
-### Per-component development and debugging
-
-**Rust client**
-
-```bash
-cd client
-
-# Development build
-cargo build
-
-# Run a single test (fast iteration)
-cargo test crypto::tests
-
-# Full tests + coverage
-cargo llvm-cov --summary-only
-
-# Manual capture test (requires init pointing to a local server)
-./target/debug/aitrack init --claude \
-  --api-url http://localhost:8080 \
-  --credential <credential>
-./target/debug/aitrack status
-./target/debug/aitrack inspect --limit 5
-```
-
-Local SQLite records are stored at `~/.aitrack/records.db` and can be queried directly with `sqlite3`.
-
-**Java server**
-
-```bash
-cd server-java
-
-# Start (H2 file database, works out of the box)
-mvn spring-boot:run
-
-# H2 console: http://localhost:8080/h2-console
-# JDBC URL: jdbc:h2:file:./data/aitrack  (no password)
-
-# Run a specific test
-mvn test -Dtest=ValidationServiceTest
-
-# Coverage report
-mvn verify
-open target/site/jacoco/index.html
-```
-
-To switch to PostgreSQL, modify the `spring.datasource` block in `application.yml` — no business logic changes needed.
-
-**Go server**
-
-```bash
-cd server-go
-
-go test ./...
-go run .
-```
-
-### Test factory pattern
-
-All three components use the factory pattern for test data: **all test data is constructed through factories — no inline literals inside test bodies**.
-
-**Rust client (`src/testkit/factories.rs`)**
-
-```rust
-// Default valid record
-let record = EditRecordFactory::new(42).build();
-
-// Custom field
-let record = EditRecordFactory::new(42).with_tool("codex").build();
-
-// Negative cases
-let bad = tampered_record_sig(42);        // tampered sig
-let bad = tampered_oversized_lines(42);   // line count exceeded
-let bad = malformed_json();               // syntactically invalid JSON
-```
-
-**Java server (`server-java/src/test/java/.../testkit/`)**
-
-```java
-// Default valid instance
-EditDto dto = EditDtoFactory.build();
-
-// Builder-style override (must recompute record_sig after sig-bound field changes)
-EditDto dto = EditDtoFactory.with(e -> e.setToolVersion("claude-code-v2"));
-
-// Negative cases
-EditDto bad = TamperedFactory.badRecordSig();       // sig_mismatch
-EditDto bad = TamperedFactory.oversizedAddedLines(); // oversized flag
-EditDto bad = TamperedFactory.nullTool();            // malformed rejection
-```
-
-### End-to-end testing
-
-Full-stack E2E covers: Rust client → Java or Go server → database storage → query API.
-
-The recommended approach is to bring up the server with Docker Compose, then run the real `aitrack` binary through a `capture` flow and verify the record is persisted:
-
-```bash
-# 1. Build the Rust client
-cd client && cargo build --release
-
-# 2. Start the Java server (Docker example)
-cd server-java
-docker build -t aitrack-server-java .
-docker run -p 8080:8080 aitrack-server-java
-
-# 3. Initialize the client and trigger capture
-./client/target/release/aitrack init \
-  --claude \
-  --api-url http://localhost:8080 \
-  --credential <credential>
-
-# 4. Simulate a Claude hook trigger (send PostToolUse payload via stdin)
-echo '<claude-posttooluse-json>' | \
-  ./client/target/release/aitrack capture --tool claude
-
-# 5. Verify the record was uploaded
-./client/target/release/aitrack inspect --limit 5
-curl -H "Authorization: Bearer <token>" \
-  http://localhost:8080/api/v1/ai-track/edits
-```
-
-Note the 300-second window enforced by `X-AiTrack-Timestamp` — clock skew in test environments will cause `401` responses.
-
-### Security notes
-
-- `config.toml` and `records.db` must have permissions 0600; do not relax this during debugging.
-- Do not use real credentials in test data.
-- Do not paste logs or request bodies containing real credentials in public Issues or PRs.
-- The `hmac_secret` (the second half of the credential) is stored server-side encrypted with AES-256-GCM (`HmacSecretEncryptor`); see the encryption key configuration in `application.yml` for debugging.
-
-### Branch naming
-
-- Main: `main`
-- Feature: `feat/<short-description>`
-- Fix: `fix/<short-description>`
-- Protocol change: `contract/<version>-<description>` (note which components are affected)
-
-### Commit convention
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
-
-Common types: `feat` / `fix` / `refactor` / `test` / `docs` / `chore`
-
-Scope examples: `client` / `server-java` / `server-go` / `contract` / `testkit`
-
-### Pull request requirements
-
-- Describe the change scope and test results in the PR description
-- For protocol changes, list the sync status across all three components
-- Do not force-merge by bypassing CI checks

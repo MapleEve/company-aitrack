@@ -29,19 +29,19 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 | v1.0–v1.2 | Rust CLI 客户端；Claude Code / Codex CLI / Cursor 钩子管理；Myers/LCS 精确 diff；HMAC-SHA256 双层签名；Java + Go 双服务端；10 步服务端校验链；心跳机制；统计查询 API；Docker 一键部署；CI 覆盖率 ≥ 90% | 已交付 |
 | v1.3 | 服务端数据库升级为 ParadeDB（PostgreSQL + pg_search + pgvector）；向量列与全文索引基础设施；全文检索 API（BM25）；向量 ANN 检索 API；客户端 sqlite-vec 本地嵌入存储 | 已交付 |
 | v1.4 | 开发者 AI 工具使用画像（使用频率 / 使用深度 / 语言分布）；每日聚合 Job；Java + Go 等价实现 | 已交付 |
-| v1.5 | prompt 捕获前置：UserPromptSubmit hook + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
+| v1.5 | 提示词捕获前置：UserPromptSubmit 钩子 + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
 | v1.6.0 | 六边形架构重构（domain / port / adapter）；`aitrack update` 子命令（ed25519 签名验证）；关键词完整性指纹（SHA-256）；testapp 端到端真实链路 | 已交付 |
 | v1.6.1 | Go 服务端完全迁移为 PostgreSQL-only（移除 SQLite 回退）；E2E 竞态修复；CI 改用原生工具链（llvm-cov / mvn verify）替代 Docker 构建验证 | 已交付 |
-| v1.7.0 | 动态 agent registry/status/heartbeat；37 个默认 local-source agent；usage rollup / subscription snapshot 数据面；Java + Go usage API；本地 transcript 监控恢复；30 天默认窗口、按需小回填和文件游标缓存；local-source E2E 与架构门禁 | 已交付 |
+| v1.7.0 | 动态工具注册表 / 状态 / 心跳；37 个默认本地扫描工具 key；用量汇总 / 额度快照数据面；Java + Go 用量 API；本地会话记录监控恢复；30 天默认窗口、按需小回填和文件游标缓存；本地来源 E2E 与架构门禁 | 已交付 |
 
-### 当前 agent 支持边界
+### 当前工具支持边界
 
-- Claude Code、Codex CLI、Cursor：已具备 native edit hook adapter，可生成 `EditRecord` 编辑证据。
-- Claude Code：额外支持 native prompt hook；Codex CLI 与 Claude Code 可从本地状态提取 quota / subscription snapshot。
-- 动态 agent registry/status/heartbeat：心跳 `hooks` 已按 agent key 动态表达，支持登记更多 agent 的安装状态。
+- Claude Code、Codex CLI、Cursor：已具备原生编辑钩子适配器，可生成 `EditRecord` 编辑证据。
+- Claude Code：额外支持原生提示词钩子；Codex CLI 与 Claude Code 可从本地状态提取额度 / 订阅快照。
+- 动态工具注册表 / 状态 / 心跳：心跳 `hooks` 已按工具 key 动态表达，支持登记更多工具的本机可见性和安装状态。
 - 默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
-- local usage source：已支持按本机日志、JSONL、NDJSON、SQLite、CSV、缓存和本地客户端状态接入 usage rollup / snapshot，按 token bucket、message count 和 source cost 聚合；同时可将 transcript 中的 prompt、tool、window 和可还原编辑监控事件补入 `EditRecord` 上报链路。
-- 扫描性能边界：默认 30 天近窗口增量扫描；显式 `--since/--until` 做小范围回填；每个 agent 有候选、文件数、目录遍历和行数上限；本地文件游标缓存可跳过未变化来源。
+- 本地用量来源：已支持按本机日志、JSONL、NDJSON、SQLite、CSV、缓存和本地客户端状态接入用量汇总 / 快照，按 token 分桶、消息数和成本估算聚合；同时可将本地会话记录中的提示词、工具调用、窗口和可还原编辑监控事件补入 `EditRecord` 上报链路。
+- 扫描性能边界：默认 30 天近窗口增量扫描；显式 `--since/--until` 做小范围回填；每个工具有候选、文件数、目录遍历和行数上限；本地文件游标缓存可跳过未变化来源。
 
 ### 当前成功指标（v1.7.0 基线）
 
@@ -51,7 +51,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 - 心跳检测延迟 ≤ 1 小时
 - 三组件（client / server-java / server-go）CI 覆盖率均 ≥ 90%
 - Rust 客户端单测 300 通过
-- local-source E2E 矩阵覆盖 37 / 37；PR 门禁要求覆盖率不低于 90%
+- 本地来源 E2E 矩阵覆盖 37 / 37；PR 门禁要求覆盖率不低于 90%
 - 未变化本地来源的第二次 `usage sync` 必须解析 0 条 message 和 0 条 monitoring event
 
 ---
@@ -60,7 +60,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 
 **主题**：可信采集端 + 生产级部署强化
 
-**目标**：在 v1.7.0 local-source 基线之上，让企业管理者对「native hook / 注册 agent 是否在线、二进制是否被替换」拥有主动可观测能力；同时将大型企业（500+ 开发者）的部署与运行门槛降至生产可用水平。
+**目标**：在 v1.7.0 本地来源基线之上，让企业管理者对「原生钩子 / 注册工具是否在线、二进制是否被替换」拥有主动可观测能力；同时将大型企业（500+ 开发者）的部署与运行门槛降至生产可用水平。
 
 | 里程碑 | 功能 | 说明 |
 |--------|------|------|
@@ -68,8 +68,8 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 | M9 | 并发加固（Concurrency Hardening） | 500+ 开发者并发上报场景下的批量入库稳定性；P99 延迟目标 < 500ms；连接池与线程池全面调优 |
 | M10 | DockerHub 官方镜像 + Docker Compose 一键部署 | `docker-compose up` 单命令启动全套服务；java / go 双服务端镜像带版本标签；环境变量文档完整 |
 | M11 | 本地防篡改：二进制完整性验证 | 启动时 ed25519 自检；关键词库由明文指纹升级为加密存储 + 启动时校验；检测到篡改时上报 tamper_alert |
-| M12 | Local source diagnostics | `aitrack usage sources` / dry-run 输出发现到的来源、窗口、缓存命中、跳过原因和预计扫描量，方便管理员评估本机开销 |
-| M13 | 数据治理策略 | prompt / transcript 字段 allowlist、脱敏规则、保留期和 per-agent 采集开关，降低敏感数据落库风险 |
+| M12 | 本地来源诊断 | `aitrack usage sources` / dry-run 输出发现到的来源、窗口、缓存命中、跳过原因和预计扫描量，方便管理员评估本机开销 |
+| M13 | 数据治理策略 | 提示词 / 会话记录字段白名单、脱敏规则、保留期和按工具采集开关，降低敏感数据落库风险 |
 
 预计工期：8 周
 
@@ -84,22 +84,22 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 | 里程碑 | 功能 | 说明 |
 |--------|------|------|
 | M14 | Rust 服务端 | 基于 axum + sqlx + tokio；与 Java / Go 协议完全等价；目标资源占用 ≤ 32MB 空载；适用于边缘部署与资源受限场景 |
-| M15 | Native edit adapter 扩展 | 按 agent 自身本地编辑事件能力逐个落地 native edit adapter，提升文件编辑类 `EditRecord` 的 diff 与行数精度 |
-| M16 | Agent-specific source packs | 在通用 JSON/SQLite/CSV 解析之外，逐个补充 agent 专属字段映射、fixture 和回归测试，提高 prompt、tool、window、edit 和 cost 字段的提取精度 |
+| M15 | 原生编辑适配器扩展 | 按工具自身本地编辑事件能力逐个落地原生编辑适配器，提升文件编辑类 `EditRecord` 的 diff 与行数精度 |
+| M16 | 工具专属本地来源包 | 在通用 JSON/SQLite/CSV 解析之外，逐个补充工具专属字段映射、fixture 和回归测试，提高提示词、工具调用、窗口、编辑和成本字段的提取精度 |
 | M17 | 服务端 Skills + 服务端 CLI（纯 Rust） | Skills：服务端沙箱执行能力（初始内置 summarize_edits / detect_pattern / suggest_refactor）；CLI：管理员命令行工具，无需 JVM / Go 运行时，支持 token 管理、设备查询、统计与画像查询 |
 | M18 | MCP 管理接口 | 将 aitrack 服务端暴露为 MCP Server；管理者可在 Claude Desktop / Claude Code 中直接查询统计、设备、画像、相似代码等数据，无需传统后台 UI |
 
 预计工期：12 周
 
-完成后，agent 覆盖从「动态注册 + 状态心跳 + 通用本地用量来源」扩展为「按能力落地编辑适配 + 专属 source pack」，管理形态从「Web 后台 + REST API」扩展至「CLI + MCP」。
+完成后，工具覆盖从「动态注册 + 状态心跳 + 通用本地用量来源」扩展为「按能力落地编辑适配 + 专属本地来源包」，管理形态从「Web 后台 + REST API」扩展至「CLI + MCP」。
 
 ---
 
-## 规划中：Phase 4 / v2.0（2027 Q1）
+## 规划中：v2.0（2027 Q1）
 
 **主题**：eval 反馈进化闭环
 
-**目标**：在 prompt 捕获基础设施（v1.5 已落地）之上，构建「prompt 捕获 → 自动 eval 评判 → skill 进化」的全自动闭环。
+**目标**：在提示词捕获基础设施（v1.5 已落地）之上，构建「提示词捕获 → 自动 eval 评判 → skill 进化」的全自动闭环。
 
 核心能力（规划）：
 - 自动 eval 评判引擎，识别负面与模糊信号
@@ -113,17 +113,17 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 ```
 2026 Q2（已交付）       2026 Q3（v1.7）        2026 Q4（v1.8）         2027 Q1（v2.0）
 ──────────────────────────────────────────────────────────────────────────────────────
-可信采集基线（v1.2）    动态 agent registry      Rust 服务端（M14）       eval 反馈闭环
-Myers 精确 diff        local usage source       Native adapter 扩展      自动评判引擎
-HMAC 双层签名          逆向心跳（M8）            Agent source packs       规则自适应
+可信采集基线（v1.2）    动态工具注册表           Rust 服务端（M14）       eval 反馈闭环
+Myers 精确 diff        本地用量来源             原生适配器扩展           自动评判引擎
+HMAC 双层签名          逆向心跳（M8）            工具来源包（M16）        规则自适应
 Java / Go 双服务端     并发加固（M9）            服务端 Skills（M17）     闭环仪表板
 10 步校验链            DockerHub + Compose       Rust 服务端 CLI（M17）
 向量化基础（DB-1/2）                            MCP 管理接口（M18）
 语义检索 API（BM25/ANN）
 开发者使用画像（v1.4）
-prompt 捕获（v1.5）
+提示词捕获（v1.5）
 六边形架构（v1.6）
-bounded local scan（v1.7）
+有界本地扫描（v1.7）
 ```
 
 ---
@@ -142,21 +142,21 @@ bounded local scan（v1.7）
 | 全文检索（BM25） | ✓ | ✓ | ✓ | ✓ |
 | 向量 ANN 检索 | ✓ | ✓ | ✓ | ✓ |
 | 开发者使用画像 | ✓ | ✓ | ✓ | ✓ |
-| prompt / transcript 监控 | ✓ | ✓ | ✓ | ✓ |
+| 提示词 / 会话记录监控 | ✓ | ✓ | ✓ | ✓ |
 | 六边形架构 | ✓ | ✓ | ✓ | ✓ |
 | ed25519 自更新验证 | ✓ | ✓ | ✓ | ✓ |
-| 动态 agent registry / status / heartbeat | 部分 | ✓ | ✓ | ✓ |
-| local usage source / usage rollup | — | ✓ | ✓ | ✓ |
-| bounded local scan / 文件游标缓存 | — | ✓ | ✓ | ✓ |
-| 逆向心跳（server → client） | — | 规划中 | ✓ | ✓ |
+| 动态工具注册表 / 状态 / 心跳 | 部分 | ✓ | ✓ | ✓ |
+| 本地用量来源 / 用量汇总 | — | ✓ | ✓ | ✓ |
+| 有界本地扫描 / 文件游标缓存 | — | ✓ | ✓ | ✓ |
+| 逆向心跳（服务端 → 客户端） | — | 规划中 | ✓ | ✓ |
 | 500+ 并发加固 | — | 规划中 | ✓ | ✓ |
 | DockerHub 官方镜像 + Compose | — | 规划中 | ✓ | ✓ |
 | 本地防篡改 / 二进制完整性 | — | 规划中 | ✓ | ✓ |
-| local source diagnostics / dry-run | — | 规划中 | ✓ | ✓ |
-| prompt / transcript 数据治理策略 | — | 规划中 | ✓ | ✓ |
+| 本地来源诊断 / 试运行 | — | 规划中 | ✓ | ✓ |
+| 提示词 / 会话记录数据治理策略 | — | 规划中 | ✓ | ✓ |
 | Rust 服务端（第三实现） | — | — | 规划中 | ✓ |
-| 更多 native edit adapter | — | — | 规划中 | ✓ |
-| agent-specific source packs | — | — | 规划中 | ✓ |
+| 更多原生编辑适配器 | — | — | 规划中 | ✓ |
+| 工具专属本地来源包 | — | — | 规划中 | ✓ |
 | 服务端 Skills | — | — | 规划中 | ✓ |
 | 服务端 CLI（纯 Rust） | — | — | 规划中 | ✓ |
 | MCP 管理接口 | — | — | 规划中 | ✓ |

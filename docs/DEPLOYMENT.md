@@ -1,10 +1,10 @@
 # 部署说明
 
+版本：v1.7.0 · 最后更新：2026-06-18
+
 ## 适用对象
 
-这篇面向准备在私有服务器或容器环境中运行 AiTrack 服务端的系统管理员。当前重点是 Docker 私有部署。
-
-> 分阶段上线策略、里程碑规划、风险应对见 `plans/deployment.md`。
+这篇面向准备在私有服务器或容器环境中运行 aitrack 服务端的系统管理员。当前重点是 Docker 私有部署和公开版本可直接使用的配置项。
 
 ---
 
@@ -12,6 +12,18 @@
 
 - Docker 20+
 - 所有构建命令均从项目根目录 `company-aitrack/` 执行（构建上下文包含三个组件）
+
+---
+
+## 当前版本支持范围
+
+aitrack v1.7.0 支持三层采集模型：
+
+- **原生编辑证据**：`claude`、`codex`、`cursor` 可通过原生编辑适配器生成带签名的编辑记录。
+- **提示词与会话来源**：原生提示词钩子仅 `claude` 支持；其他工具主要通过本地可读的会话、日志、缓存和状态文件提取提示词、工具调用、窗口上下文、可还原编辑事件和用量标量。
+- **动态心跳与本地用量扫描**：心跳可上报已登记工具状态；默认本地扫描覆盖 37 个规范工具 key。
+
+纯 token、额度或订阅快照只进入用量数据域，不会被当作编辑监控事件上传。
 
 ---
 
@@ -166,7 +178,7 @@ docker compose -f docker/docker-compose.yml --profile java up -d
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
-| `DATABASE_URL` | *(必填)* | PostgreSQL / ParadeDB DSN，如 `postgres://user:pass@host:5432/db?sslmode=disable`。**Go 服务端 v1.6.1 起完全移除 SQLite 回退，必须提供 PostgreSQL/ParadeDB DSN。** |
+| `DATABASE_URL` | *(必填)* | PostgreSQL / ParadeDB DSN，如 `postgres://user:pass@host:5432/db?sslmode=disable`。**Go 服务端必须提供 PostgreSQL/ParadeDB DSN。** |
 
 ---
 
@@ -199,6 +211,8 @@ aitrack init --claude \
   --api-url http://localhost:8080 \
   --credential <credential>
 ```
+
+`claude`、`codex`、`cursor` 支持原生编辑适配器，可按实际使用工具选择对应参数，例如 `--claude`、`--codex` 或 `--cursor`。其他已登记工具可通过本地用量扫描和心跳状态纳入可见范围。
 
 ---
 
@@ -254,6 +268,15 @@ aitrack init --claude --api-url https://aitrack.example.com \
              --credential <credential>
 ```
 
+如果团队使用 Codex CLI 或 Cursor，可改用对应参数安装原生编辑钩子：
+
+```bash
+aitrack init --codex --api-url https://aitrack.example.com \
+             --credential <credential>
+aitrack init --cursor --api-url https://aitrack.example.com \
+             --credential <credential>
+```
+
 ---
 
 ## 运维要点
@@ -293,7 +316,7 @@ curl http://localhost:8080/api/v1/ai-track/devices \
   -H 'Authorization: Bearer aitrack_...'
 ```
 
-`hooks` 是动态 agent key map；native hook 或注册 agent 状态异常的设备需人工核查是否绕过了监控。
+`hooks` 是动态工具状态映射；原生钩子或已登记工具状态异常的设备需人工核查是否绕过了监控。
 
 ### 数据备份（H2）
 
@@ -369,7 +392,7 @@ aitrack.example.com {
 
 ### H2 控制台（仅开发环境）
 
-H2 控制台在非 `dev` profile 下默认关闭（加固点 H5），生产部署无需额外配置。本地开发时访问：
+H2 控制台在非 `dev` profile 下默认关闭，生产部署无需额外配置。本地开发时访问：
 
 ```
 http://localhost:8080/h2-console

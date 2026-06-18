@@ -1,70 +1,80 @@
-# AiTrack Protocol Contract v1.2
+# AiTrack 协议合约（协议 v1.2，产品 v1.7.0）
 
-This document is the single source of truth shared by the `aitrack` Rust client and the `aitrack-server` Java and Go services. All implementations MUST follow this contract exactly.
+本文是 `aitrack` Rust 客户端、Java 服务端和 Go 服务端共同遵守的协议合约。三端实现必须保持字段、签名算法、错误语义和数据域边界一致。
 
-**v1.2 change:** the API token and HMAC secret are issued and stored as a single combined **credential** string (`<token>-<hmac_secret>`), so it is not obvious that two separate keys exist. See the *Credential* section below.
+协议版本仍为 v1.2：`POST /admin/tokens` 签发单个 `credential` 字符串（`<token>-<hmac_secret>`），客户端按第一个 `-` 拆分后分别用于 Bearer token 和 HMAC 签名。
 
-**v1.1 change:** added the `hostname` field — the reporting computer's OS hostname. One credential used across multiple developer machines is normal and allowed; `hostname` makes per-machine activity visible so cheating can be reviewed manually. It is NOT an access-control mechanism — no per-token isolation is added.
+产品版本 v1.7.0 在不破坏协议 v1.2 的前提下扩展了三类能力：
+
+- 原生编辑证据：Claude Code、Codex CLI、Cursor 具备原生编辑钩子适配器，可以生成带 diff、行数、仓库元数据和 `record_sig` 的 `EditRecord`。
+- 动态状态心跳：`heartbeat.hooks` 从固定字段扩展为按工具 key 组织的动态状态图。
+- 本地用量扫描：默认扫描 37 个工具 key，从本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态中提取用量、额度快照和可还原监控事件。
+
+---
+
+## 组件
+
+| 组件 | 技术栈 | 协议职责 |
+|------|--------|----------|
+| `aitrack` client | Rust CLI | 安装钩子、捕获编辑事件、扫描本地来源、生成签名、上报数据 |
+| `aitrack-server` | Java 17 + Spring Boot 3 | 管理 token、接收上报、执行校验链、提供查询 API |
+| `aitrack-server-go` | Go + chi | 与 Java 端保持协议等价的服务端实现 |
 
 ---
 
 ## Credential
 
-`POST /admin/tokens` issues a single opaque **credential** instead of two separate values:
+`POST /admin/tokens` 返回单个不透明凭据：
 
-```
+```text
 credential = "<token>" + "-" + "<hmac_secret>"
 ```
 
-- `token` is `aitrack_<hex>` — it contains no `-` character.
-- `hmac_secret` is the HMAC signing key.
-- The credential is split on the **first** `-`: everything before it is the `token`, everything after it is the `hmac_secret`.
-- `POST /admin/tokens` response: `{ "credential": "<token>-<hmac_secret>", "token_key": "<masked>" }` — `token` and `hmac_secret` are NOT returned as separate fields.
-
-The client stores only `credential` (never the two parts separately). Internally it splits the credential on use: `token` goes in the `Authorization: Bearer` header; `hmac_secret` is the HMAC key for `record_sig` and `X-AiTrack-Signature`. `hmac_secret` is never sent over the wire.
-
----
-
-## Components
-
-- **Client** `aitrack`: Rust CLI (this crate)
-- **Server** `aitrack-server`: Java 17 + Spring Boot 3
+- `token` 格式为 `aitrack_<hex>`，不包含 `-`。
+- `hmac_secret` 是 HMAC 签名密钥。
+- 客户端按第一个 `-` 拆分：前半段作为 `Authorization: Bearer`，后半段作为 `record_sig` 和 `X-AiTrack-Signature` 的 HMAC key。
+- 响应体只返回 `{ "credential": "<token>-<hmac_secret>", "token_key": "<masked>" }`，不会分别返回 `token` 和 `hmac_secret`。
+- 客户端配置只存储 `credential`，不会单独落盘两个字段；`hmac_secret` 不通过网络明文发送。
 
 ---
 
-## Agent Registry and Data Domains
+## 工具注册与数据域
 
-aitrack is a general, self-hosted, open-source monitoring and governance tool for employee AI coding activity. The protocol separates agent registration, edit evidence, and scalar usage metrics:
+aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。协议明确分离三类数据，避免把用量统计伪装成编辑证据。
 
-- **Native edit evidence**: Claude Code, Codex CLI, and Cursor currently have native edit hook adapters. These adapters can produce `EditRecord` payloads because they expose enough local file-edit event data to build a signed diff record.
-- **Registered agents**: other agent keys may appear in registry, status, heartbeat, and local usage source flows. Native edit adapters remain the strongest source for signed file diffs, while local transcript scans may still produce prompt, tool, window, and reconstructable edit monitoring events.
-- **EditRecord domain**: `POST /api/v1/ai-track/edits` accepts signed monitoring evidence: file path or synthetic monitoring path, repo metadata when available, Myers/LCS line counts and diff hunk when available, device identity, metadata, bounded prompt content, and `record_sig`.
-- **Usage rollup domain**: usage rollups and snapshots are scalar usage metrics, such as request counts, token counts, cost estimates, or local client activity totals. A token-only or usage-only source MUST NOT be represented as an `EditRecord`.
-- **Local usage source boundary**: local sources are discovered from local logs, JSONL files, SQLite databases, caches, and local client state. The client may discover local credentials or entry points from those local states when the agent exposes them; users are not required to manually paste third-party service tokens into aitrack.
+| 数据域 | 端点 / 载体 | 说明 |
+|--------|-------------|------|
+| `EditRecord` 监控事件 | `POST /api/v1/ai-track/edits` | 签名编辑证据，或本地会话记录中可还原的提示词、工具调用、窗口和编辑监控事件 |
+| 工具状态心跳 | `POST /api/v1/ai-track/heartbeat`、`GET /api/v1/ai-track/devices` | `hooks` 是动态对象，key 为工具 key，value 表示本机可见或对应钩子可用 |
+| 用量汇总与额度快照 | `/api/v1/ai-track/usage/*` | token、消息数、成本估算、本地额度和订阅快照等标量数据 |
 
-The heartbeat `hooks` map is intentionally dynamic and keyed by agent registry key. Dynamic heartbeat support does not imply that every registered agent has a completed native edit adapter.
+纯 token 数、请求数、成本估算或本地额度信息只能进入 `/usage/*` 数据面，不能填充 `EditRecord` 字段后提交到 `/edits`。
 
-### Current Agent Framework Support
+### 当前工具支持范围
 
-| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
-|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | yes | yes | `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | yes | local rate-limit snapshot |
-| `codex` | yes | no | `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | yes | session rate-limit snapshot |
-| `cursor` | yes | no | Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | yes | no |
-| default local-scan agents | no | no | local agent directories, app data, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | no |
+| 工具范围 | 原生编辑钩子 | 原生提示词钩子 | 本地会话 / 缓存扫描 | 用量汇总 | 额度 / 订阅快照 |
+|----------|--------------|----------------|----------------------|----------|-----------------|
+| `claude` | 是 | 是 | `.claude/`、projects / transcripts 目录、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地限额快照 |
+| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | 本地会话限额快照 |
+| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
+| 默认本地扫描工具 | 否 | 否 | 本地工具目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、消息数、成本估算 | 否 |
 
-Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path.
+默认本地扫描覆盖 37 个规范 key：
+
+`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+
+显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用规范 key，避免重复读取同一类本地来源。
 
 ---
 
-## Client Commands
+## 客户端命令
 
-```
+```text
 aitrack init    [--claude] [--codex] [--cursor] [--tool <name> ...] [--api-url URL] [--credential CRED]
 aitrack remove  [--claude] [--codex] [--cursor] [--tool <name> ...]
-aitrack capture --tool <name>   (default: claude)  [--api-url URL] [--credential CRED]
-aitrack prompt-capture --tool <name>   (reads UserPromptSubmit stdin for agents with native prompt hooks, stores bounded prompt content)
-aitrack inspect [--limit N]  (default 20, max 200)  [--pending] [--current-token]
+aitrack capture --tool <name>   (default: claude) [--api-url URL] [--credential CRED]
+aitrack prompt-capture --tool <name>
+aitrack inspect [--limit N] (default 20, max 200) [--pending] [--current-token]
 aitrack stats
 aitrack status
 aitrack clean   [--all] [--force]
@@ -72,24 +82,24 @@ aitrack heartbeat
 aitrack usage scan [--tool <name> ...] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 aitrack usage sync [--tool <name> ...] [--api-url URL] [--credential CRED]
 aitrack usage status
+aitrack update
 ```
 
-`--credential` takes the single combined credential string issued by `POST /admin/tokens`.
+`prompt-capture` 只对具备原生提示词钩子的工具产生有效提示词上下文；v1.7.0 中该能力仅覆盖 `claude`。
 
 ---
 
-## Local Storage
+## 本地存储
 
-- Directory: `~/.aitrack/`
-- `~/.aitrack/config.toml` — permissions **0600**
-  - Keys: `api_url`, `credential`, `device_id`
-  - `credential` is the combined `<token>-<hmac_secret>` string; the two parts are never stored separately.
-- `~/.aitrack/records.db` — SQLite, created with `chmod 0600`
-- `device_id`: UUIDv4 generated on first run, persisted to `config.toml`
+- 目录：`~/.aitrack/`
+- `~/.aitrack/config.toml`：权限 `0600`，字段为 `api_url`、`credential`、`device_id`
+- `~/.aitrack/records.db`：SQLite，权限 `0600`，存放 `EditRecord` 监控事件
+- `~/.aitrack/usage.sqlite`：SQLite，存放本地用量会话、日聚合、额度快照、上传 outbox 和扫描游标缓存
+- `device_id`：首次初始化时生成 UUIDv4，并持久化到 `config.toml`
 
-### records Table Schema
+### `records` 表
 
-The `records` table stores the EditRecord evidence domain. It is not a generic usage rollup table.
+`records` 表只存放监控事件，不作为通用用量汇总表。
 
 ```sql
 CREATE TABLE IF NOT EXISTS records (
@@ -122,23 +132,23 @@ CREATE INDEX IF NOT EXISTS idx_synced ON records(synced);
 
 ---
 
-## Diff Algorithm (Hardening point H4)
+## Diff 算法
 
-Use true Myers/LCS minimum diff via the `similar` crate.
+编辑行数必须使用 `similar` crate 的 Myers/LCS 最小 diff 计算：
 
-- `added_lines` = actual new lines added
-- `removed_lines` = actual lines deleted
-- `diff_hunk` = standard unified diff output from `similar` (multi-hunk supported)
+- `added_lines`：实际新增行数
+- `removed_lines`：实际删除行数
+- `diff_hunk`：标准 unified diff，支持多 hunk
 
-This prevents inflated line counts from naive line-count statistics.
+服务端按同一规则复核 diff 与行数，防止朴素行数统计被放大。
 
 ---
 
-## Record Signature `record_sig` (Hardening points H1/H2)
+## `record_sig` 签名
 
-Computed at insert time to prevent tampering and forgery:
+每条记录写入本地 DB 时计算 `record_sig`，用于检测本地记录篡改与跨设备伪造。
 
-```
+```text
 record_sig = HMAC_SHA256(
   key = hmac_secret,
   msg = token_key + "\n"
@@ -155,15 +165,15 @@ record_sig = HMAC_SHA256(
 )
 ```
 
-Output: lowercase hex string.
-
-**Field order and `\n` separator MUST be identical between client and server.**
+输出必须是小写十六进制字符串。字段顺序和 `\n` 分隔符必须在 Rust、Java、Go 三端字节一致。
 
 ---
 
-## Upload Request
+## `POST /api/v1/ai-track/edits`
 
-```
+批量上报 `EditRecord` 监控事件。
+
+```text
 POST {api_url}/api/v1/ai-track/edits
 Headers:
   Authorization: Bearer {token}
@@ -174,7 +184,7 @@ Headers:
   X-AiTrack-Signature: HMAC_SHA256(hmac_secret, "{X-AiTrack-Timestamp}\n{sha256_hex(body bytes)}")
 ```
 
-### Request Body
+### 请求体
 
 ```json
 {
@@ -186,10 +196,10 @@ Headers:
       "tool_version": "claude-code",
       "provider": "claude",
       "model": null,
-      "session_id": "...",
+      "session_id": "sess-abc123",
       "repo_url": "git@github.com:org/repo.git",
       "branch": "main",
-      "current_sha": "a1b2c3...",
+      "current_sha": "a1b2c3d4e5f6",
       "file_path": "src/main.rs",
       "added_lines": 12,
       "removed_lines": 3,
@@ -205,12 +215,9 @@ Headers:
 }
 ```
 
-**Note:** Edit objects contain 17 required fields + 1 optional field (`prompt_summary`). `token_key` is NOT included (local SQL filter only).
-`hostname` is the OS hostname of the reporting machine, captured client-side at capture time.
+`edit` 对象包含 17 个必填字段和 1 个可选字段（`prompt_summary`）。`token_key` 不在请求体内，由服务端根据 Bearer token 推导。
 
----
-
-## Upload Response
+### 响应体
 
 ```json
 {
@@ -220,41 +227,102 @@ Headers:
 }
 ```
 
-Client behavior:
-- `accepted` + `flagged` rows: `UPDATE synced=1, synced_at=now`
-- `rejected` rows: `retry_count += 1`
-- Upload SQL WHERE includes `retry_count < 5`
+客户端处理约定：
+
+- `accepted` 与 `flagged` 对应的本地行更新为 `synced=1, synced_at=now`
+- `rejected` 对应的本地行执行 `retry_count += 1`
+- 上传 SQL 条件包含 `retry_count < 5`
 
 ---
 
-## Heartbeat (Hardening point H3)
+## `POST /api/v1/ai-track/heartbeat`
 
-Detects silent hook removal:
+设备心跳用于报告客户端活跃状态、原生钩子状态和本机可见工具状态。
 
-```
-POST {api_url}/api/v1/ai-track/heartbeat
-Same X-AiTrack-* signature headers (X-AiTrack-Signature computed over body)
-
-Body:
+```json
 {
   "device_id": "<uuid>",
   "hostname": "MacBook-Pro.local",
   "token_key_masked": "<masked>",
   "client_version": "1.0.0",
-  "ts": <unix seconds>,
-  "hooks": {"claude": true, "codex": false, "cursor": false, "opencode": true},
+  "ts": 1747468800,
+  "hooks": {
+    "claude": true,
+    "codex": false,
+    "cursor": false,
+    "opencode": true
+  },
   "pending_count": 5
 }
 ```
 
-`hooks` is a dynamic object keyed by agent registry key. Claude, Codex, and Cursor are the current native edit hook adapters. Other keys report registration/status/heartbeat state unless and until an agent-specific native edit adapter is implemented.
+`hooks` 是动态对象。`claude`、`codex`、`cursor` 表示当前原生编辑钩子适配器状态；其他工具 key 表示注册、状态或本地用量来源可见性，不代表已经具备原生编辑钩子。
 
-Throttle: sent at end of each `capture`, only if >1h since last heartbeat (tracked in config or DB).
-`aitrack heartbeat` forces immediate send.
+心跳在 `capture` 结束后节流发送（默认距上次超过 1 小时），`aitrack heartbeat` 可强制立即发送。
 
 ---
 
-## Hook Templates
+## `/api/v1/ai-track/usage/*`
+
+用量端点只接收标量用量、消息数、成本估算和额度快照。
+
+### `POST /api/v1/ai-track/usage/rollup`
+
+```json
+{
+  "items": [
+    {
+      "device_id": "550e8400-e29b-41d4-a716-446655440000",
+      "day": "2026-06-16",
+      "agent": "codex",
+      "model": "gpt-5",
+      "account": "local",
+      "tokens_in": 10,
+      "tokens_out": 20,
+      "tokens_cache_read": 3,
+      "tokens_cache_write": 4,
+      "tokens_reasoning": 5,
+      "message_count": 2,
+      "source_cost": 0.25
+    }
+  ]
+}
+```
+
+服务端按 `(token_key, device_id, day, agent, model, account)` 幂等 upsert。
+
+### `POST /api/v1/ai-track/usage/subscription`
+
+```json
+{
+  "device_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent": "codex",
+  "account": "local",
+  "plan": "Pro",
+  "quota_session_remaining": 70,
+  "quota_weekly_remaining": 80,
+  "quota_reset_at": "2026-06-16T10:00:00Z",
+  "reader_status": "ok",
+  "snapshotted_at": "2026-06-16T09:00:00Z"
+}
+```
+
+服务端按 `(token_key, device_id, agent, account)` 幂等 upsert。
+
+### `GET /api/v1/ai-track/usage/summary`
+
+该端点只读，Bearer token 即可。常用查询参数：
+
+| 参数 | 说明 |
+|------|------|
+| `token_key` | 可选；默认当前 token |
+| `from_day` / `to_day` | 可选；`YYYY-MM-DD` |
+| `agent` | 可选；按工具 key 过滤 |
+| `limit` | 可选；默认 20，最大 100 |
+
+---
+
+## 钩子模板
 
 ### Claude Code (`~/.claude/settings.json`)
 
@@ -272,23 +340,20 @@ Throttle: sent at end of each `capture`, only if >1h since last heartbeat (track
           }
         ]
       }
-    ]
-  }
-}
-```
-
-```json
-"UserPromptSubmit": [
-  {
-    "hooks": [
+    ],
+    "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "<abs aitrack path> prompt-capture --tool claude",
-        "timeout": 10
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<abs aitrack path> prompt-capture --tool claude",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
-]
+}
 ```
 
 ### Codex CLI (`~/.codex/config.toml`)
@@ -327,196 +392,81 @@ timeout = 10
 }
 ```
 
-**Note:** Cursor registers both `postToolUse` and `afterFileEdit` to cover all trigger paths. Both entries carry `matcher: "Write"` and `timeout: 10`.
-
-All install/remove operations MUST be idempotent (dedup on install, clean empty containers on remove).
+安装和卸载操作必须幂等：安装时去重，卸载后清理空容器。
 
 ---
 
-## Capture Flow
+## 采集流程
 
-1. Read stdin JSON
-2. Select adapter by `--tool`; native edit adapters currently parse Claude/Codex/Cursor, while registered agents without a native edit adapter do not emit `EditRecord`
-3. Parse payload per adapter struct
-4. Compute diff using `similar` (Myers LCS)
-5. Spawn `git` for repo metadata: `rev-parse --git-dir`, `remote get-url origin`, `branch --show-current`, `rev-parse HEAD`
-6. Resolve `hostname` (OS hostname of the reporting machine)
-7. Compute `record_sig`
-8. Insert with 2-second dedup window
-8b. backfill_repo_info — UPDATE all unsynced records where `repo_url` is empty to the current git context (non-fatal; allows records captured outside a git directory to eventually be uploaded)
-9. Flush unsynced rows to server
-10. Throttled heartbeat
+1. 读取 stdin JSON。
+2. 按 `--tool` 选择适配器；当前原生编辑适配器为 Claude Code、Codex CLI、Cursor，其他工具不会通过原生钩子直接生成文件编辑类 `EditRecord`。
+3. 解析对应工具 payload。
+4. 使用 Myers/LCS 计算 diff。
+5. 通过 `git` 读取仓库元数据：`rev-parse --git-dir`、`remote get-url origin`、`branch --show-current`、`rev-parse HEAD`。
+6. 读取 OS hostname。
+7. 计算 `record_sig`。
+8. 写入本地 DB，并执行 2 秒去重。
+9. 对 `repo_url` 为空的未同步历史记录做非致命 git 元数据回填。
+10. 上传未同步记录。
+11. 发送节流心跳。
 
-On adapter parse failure: write a local log line (hardening point H6, do NOT silently swallow).
-
----
-
-## Hardening Points Summary
-
-| # | Point | What we fix |
-|---|-------|-------------|
-| H1 | record_sig HMAC | Prevents local DB record tampering |
-| H2 | record_sig binding device_id+token | Prevents cross-device record forgery |
-| H3 | Heartbeat with native hook and registered agent status | Detects silent hook uninstall and local agent status drift |
-| H4 | Myers/LCS diff (similar crate) | Prevents inflated line count gaming |
-| H5 | Server rate limit per (token, file_path)/hour | Prevents flooding / edit count inflation |
-| H6 | Parse failure logging | No silent swallowing of adapter errors |
-| H7 | repo_url whitelist (enforce=true) | Prevents repo spoofing |
-| H8 | file_path plausibility check (no `..`) | Prevents path injection |
+适配器解析失败时必须写本地日志，不能静默吞错。
 
 ---
 
-## 4. Semantic Search Endpoints (Phase DB-3)
+## 加固点
 
-These endpoints are active only when the server runs in PostgreSQL/ParadeDB mode (`SPRING_PROFILES_ACTIVE=postgres` for Java; `DATABASE_URL` set for Go). Both return **HTTP 501 Not Implemented** when using embedded H2/SQLite.
-
-Auth: **`X-Admin-Key`** header (same as `/admin/**` endpoints).
-
----
-
-### 4.1 `GET /api/v1/ai-track/edits/search` — BM25 Full-Text Search
-
-Search edit records by relevance using ParadeDB BM25 full-text index on `diff_hunk` and `prompt_summary`.
-
-**Query Parameters**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `q` | string | ✓ | Search query text |
-| `limit` | int | ✗ | Max results (default: 20, max: 100) |
-| `token_key` | string | ✗ | Filter to a specific developer token |
-| `repo` | string | ✗ | Filter to a specific repository |
-
-**Response `200 OK`**
-
-```json
-{
-  "query": "refactor authentication",
-  "total": 3,
-  "results": [
-    {
-      "record_id": "abc123",
-      "token_key": "tk_xxxx",
-      "repo": "my-org/backend",
-      "file_path": "src/auth/handler.go",
-      "diff_hunk": "@@ -10,5 +10,8 @@ ...",
-      "ai_lines_added": 12,
-      "ai_lines_removed": 3,
-      "ts": 1748000000,
-      "score": 0.8734
-    }
-  ]
-}
-```
-
-**Errors**
-
-| Status | Condition |
-|--------|-----------|
-| 400 | `q` is missing or empty |
-| 403 | Missing or invalid `X-Admin-Key` |
-| 501 | Server running in embedded DB mode (H2/SQLite) |
+| 编号 | 加固点 | 作用 |
+|------|--------|------|
+| H1 | `record_sig` HMAC | 防止本地 DB 记录被篡改 |
+| H2 | `record_sig` 绑定 `device_id` 与 token | 防止跨设备伪造 |
+| H3 | 动态心跳 | 发现原生钩子卸载和本机工具状态漂移 |
+| H4 | Myers/LCS diff | 防止行数膨胀 |
+| H5 | `(token, file_path)` 限流 | 防止刷量 |
+| H6 | 解析失败日志 | 避免适配器错误被静默吞掉 |
+| H7 | `repo_url` 白名单 | 防止仓库归属伪造 |
+| H8 | `file_path` 合理性校验 | 防止路径注入 |
 
 ---
 
-### 4.2 `POST /api/v1/ai-track/edits/similar` — Vector ANN Similarity Search
+## 语义检索端点
 
-Find edit records semantically similar to a given embedding vector using pgvector HNSW cosine distance.
+以下端点仅在 PostgreSQL/ParadeDB 模式可用；嵌入式数据库模式返回 `501 Not Implemented`。鉴权方式为 `X-Admin-Key`。
 
-**Request Body**
+### `GET /api/v1/ai-track/edits/search`
 
-```json
-{
-  "embedding": [0.023, -0.147, 0.891, "..."],
-  "limit": 10,
-  "token_key": "tk_xxxx",
-  "repo": "my-org/backend"
-}
-```
+BM25 全文检索 `diff_hunk` 和 `prompt_summary`。
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `embedding` | float[] | ✓ | 384-dimensional query vector (all-MiniLM-L6-v2 space) |
-| `limit` | int | ✗ | Max results (default: 10, max: 50) |
-| `token_key` | string | ✗ | Filter to a specific developer token |
-| `repo` | string | ✗ | Filter to a specific repository |
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `q` | 是 | 检索文本 |
+| `limit` | 否 | 最大结果数，默认 20，最大 100 |
+| `token_key` | 否 | 按开发者过滤 |
+| `repo` | 否 | 按仓库过滤 |
 
-**Response `200 OK`**
+### `POST /api/v1/ai-track/edits/similar`
 
-```json
-{
-  "results": [
-    {
-      "record_id": "def456",
-      "token_key": "tk_xxxx",
-      "repo": "my-org/backend",
-      "file_path": "src/auth/middleware.go",
-      "diff_hunk": "@@ -5,3 +5,9 @@ ...",
-      "ai_lines_added": 8,
-      "ai_lines_removed": 1,
-      "ts": 1748000100,
-      "distance": 0.142
-    }
-  ]
-}
-```
+pgvector HNSW 向量相似搜索。
 
-`distance` is cosine distance in [0, 2] — lower means more similar.
-
-**Errors**
-
-| Status | Condition |
-|--------|-----------|
-| 400 | `embedding` missing, wrong dimension (must be 384), or `limit` > 50 |
-| 403 | Missing or invalid `X-Admin-Key` |
-| 501 | Server running in embedded DB mode, or no embeddings stored yet |
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `embedding` | 是 | 384 维查询向量 |
+| `limit` | 否 | 最大结果数，默认 10，最大 50 |
+| `token_key` | 否 | 按开发者过滤 |
+| `repo` | 否 | 按仓库过滤 |
 
 ---
 
-## 5. Phase 3: Developer Profile API
+## 开发者使用画像
 
-### Endpoint
+`GET /api/v1/ai-track/profiles/{token_key}` 返回指定开发者的 AI 工具使用画像。鉴权方式为 `X-Admin-Key`。
 
-`GET /api/v1/ai-track/profiles/{token_key}`
+响应包含：
 
-**Auth**: `X-Admin-Key` header
+- `frequency`：30 天日均、12 周周均和每日趋势。
+- `depth`：单次编辑规模分布、P50/P90、注释密度。
+- `languages`：按文件扩展名推断的语言分布。
+- `tools`：按工具 key 统计的监控事件分布。
+- `prompt_patterns`：基于有界 `prompt_summary` 的意图分类。
 
-**Path param**: `token_key` (string) — token identifier, format `aitrack_XXXXX`
-
-**Response (200)**:
-
-```json
-{
-  "token_key": "aitrack_abc12…ef90",
-  "owner": "alice",
-  "total_edits": 247,
-  "total_added_lines": 8420,
-  "total_removed_lines": 3190,
-  "first_seen": "2026-03-01T09:15:00Z",
-  "last_seen": "2026-05-19T14:22:00Z",
-  "generated_at": "2026-05-19T14:30:00Z",
-  "frequency": {
-    "daily_avg_30d": 8.3,
-    "weekly_avg_12w": 41.2,
-    "daily_trend": [{"date": "2026-05-19", "count": 12}]
-  },
-  "depth": {
-    "avg_lines": 47.2,
-    "p50_lines": 18,
-    "p90_lines": 142,
-    "small_count": 89,
-    "medium_count": 112,
-    "large_count": 46,
-    "comment_density": 0.12
-  },
-  "languages": {"Go": 148, "TypeScript": 43, "Python": 28, "Java": 20, "Other": 8},
-  "tools": {"claude": 210, "codex": 28, "cursor": 9},
-  "prompt_patterns": {"generate": 148, "fix_debug": 43, "refactor": 12, "explain": 8, "test": 20, "other": 16}
-}
-```
-
-**Errors**: 403 (invalid admin key), 404 (no records for token_key)
-
-**Computation**: Includes ACCEPTED + FLAGGED records, excludes REJECTED. Computed on-demand (Phase 4 will add caching).
-
-**`prompt_patterns`**: Counted by classifying bounded `prompt_summary` content into intent categories. Only counts records that have non-null `prompt_summary`. Categories: `generate`, `fix_debug`, `refactor`, `explain`, `test`, `other`.
+画像只计算 `ACCEPTED` 与 `FLAGGED` 记录，不包含 `REJECTED` 记录。

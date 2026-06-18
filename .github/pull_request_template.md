@@ -1,7 +1,3 @@
-[English](#english)
-
-## 中文
-
 ## 变更说明
 
 <!-- 简要说明这个 PR 为 aitrack 带来的用户侧或维护侧变化 -->
@@ -70,7 +66,7 @@ Relates to #
 - [ ] 如涉及 server-java，`mvn verify` 本地通过
 - [ ] 如涉及 server-go，`go test ./...` 本地通过
 - [ ] 如涉及 e2e，`bash e2e/run.sh both` 本地通过
-- [ ] 日志、截图、fixture 均已脱敏，不包含凭据、token、hmac_secret、admin key、私人 diff 内容或内部路径
+- [ ] 日志、截图、fixture 均已脱敏，不包含凭据、token、hmac_secret、admin key、私人 diff 内容或本机私有路径
 
 ## API / 协议变更
 
@@ -88,27 +84,9 @@ Relates to #
 
 <!-- 任何 reviewer 应知道的额外信息 -->
 
-## 给 Reviewers
+## 给审查者
 
-<!-- 指出最值得 review 的点，例如签名逻辑、anti-cheat 判定、覆盖率门禁 -->
+<!-- 指出最值得审查的点，例如签名逻辑、反作弊判定、覆盖率门禁 -->
 
 -
 -
-
----
-
-## English
-
-Use the same sections above in English when needed for external contributors:
-
-- Description
-- Type of Change
-- Related Issues
-- Changes Made
-- Screenshots
-- Testing
-- Checklist
-- API / Protocol Changes
-- Breaking Changes
-- Additional Notes
-- For Reviewers

@@ -1,55 +1,55 @@
 # Changelog
 
-All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
+所有重要变更按 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 格式记录。
 
 ---
 
 ## [v1.7.0] — 2026-06-18
 
-### Release summary
+### 发布摘要
 
-v1.7.0 expands aitrack from three fixed native hook adapters into a broader local agent telemetry platform. The release keeps `EditRecord` monitoring events separate from scalar usage rollups, adds Java and Go usage APIs, and lets the Rust client collect local agent usage from logs, transcripts, JSON/JSONL/NDJSON, CSV, SQLite databases, caches, and local client state without requiring users to paste third-party service tokens.
+v1.7.0 将 aitrack 从三条固定原生钩子扩展为「原生编辑证据 + 动态状态心跳 + 本地用量扫描」三层采集模型。本版本保持 `EditRecord` 监控事件与标量用量汇总分离，新增 Java 与 Go 两端的用量 API，并让 Rust 客户端从本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态中采集工具用量，无需用户手动粘贴第三方服务 token。
 
-GitHub Release body: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.md).
+GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.md)。
 
-### Added
+### 新增
 
-- **Dynamic agent registry / status / heartbeat**: agent keys are now represented as dynamic registry entries in client status and heartbeat payloads instead of a fixed three-tool map.
-- **Expanded local source matrix**: default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`, with aliases for `roocode`, `kilo-code`, and `gajae-code`.
-- **Usage data plane**: new `usage_sessions`, `usage_daily_model_rollups`, `usage_subscription_snapshots`, and `usage_outbox` client tables; Java and Go services now expose `/api/v1/ai-track/usage/rollup`, `/api/v1/ai-track/usage/subscription`, and `/api/v1/ai-track/usage/summary`.
-- **Transcript monitoring recovery**: local transcripts can recover bounded prompt, tool, window, and reconstructable edit monitoring events for agents without native edit hooks.
-- **Quota / subscription snapshots**: Claude and Codex local state can feed subscription and quota snapshots into the usage data plane.
+- **动态工具注册表 / 状态 / 心跳**：客户端状态和心跳 payload 现在按工具 key 表达动态注册项，不再固定为三工具布尔图。
+- **扩展本地来源矩阵**：默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- **用量数据面**：客户端新增 `usage_sessions`、`usage_daily_model_rollups`、`usage_subscription_snapshots`、`usage_outbox` 表；Java 与 Go 服务端新增 `/api/v1/ai-track/usage/rollup`、`/api/v1/ai-track/usage/subscription`、`/api/v1/ai-track/usage/summary`。
+- **本地会话监控恢复**：本地会话记录可为没有原生编辑钩子的工具恢复有界提示词、工具调用、窗口和可还原编辑监控事件。
+- **额度 / 订阅快照**：Claude Code 与 Codex CLI 的本地状态可写入额度和订阅快照数据面。
 
-### Changed
+### 变更
 
-- **Bounded local scanning**: default local scans use a recent 30-day window, per-agent candidate/file/directory caps, JSONL/CSV row caps, and a persistent file cursor cache keyed by tool, path, size, mtime, and scan window.
-- **Small backfill workflow**: explicit `--since/--until` remains available for targeted historical backfills instead of forcing full recursive local scans.
-- **Canonical agent keys**: default scans use canonical agent keys to avoid double-ingesting the same local source path while still accepting common aliases on explicit `--tool`.
-- **Public documentation**: README, API, privacy, architecture, and roadmap docs now describe the monitoring-event domain, usage-rollup domain, and supported agent framework boundary.
+- **有界本地扫描**：默认本地扫描使用近 30 天窗口，并按工具限制候选数、文件数、目录遍历数、JSONL/CSV 行数；文件游标缓存按工具、路径、大小、修改时间和扫描窗口记录，避免重复解析未变化来源。
+- **小范围回填流程**：`--since/--until` 继续用于定向历史回填，避免默认执行全量递归扫描。
+- **规范工具 key**：默认扫描只使用规范 key，避免同一本地路径被重复读取；显式 `--tool` 仍接受常见别名。
+- **公开文档**：README、API、隐私、架构和路线图文档同步说明监控事件域、用量汇总域和当前工具支持边界。
 
-### Fixed
+### 修复
 
-- Avoided repeated re-reading of unchanged local transcript and usage files on immediate follow-up syncs.
-- Avoided unbounded recursive scanning across large local agent data directories.
-- Added architecture checks to prevent scan bounds, cache schema, local source matrix, and E2E coverage gates from regressing.
+- 避免连续执行 `usage sync` 时重复读取未变化的本地会话记录和用量文件。
+- 避免在大型本地工具数据目录中做无界递归扫描。
+- 增加架构检查，防止扫描上限、缓存 schema、本地来源矩阵和 E2E 覆盖门禁回退。
 
-### Testing / CI
+### 测试 / CI
 
-- Rust client unit suite: **300 tests**.
-- Client E2E matrix gate: **37 / 37** required local source agents covered, with minimum local-source E2E coverage set to **90%**.
-- Client E2E now verifies that an immediate second `usage sync` against unchanged local sources parses **0** messages and **0** monitoring events.
-- PR CI gates include Rust/Java/Go build and coverage gates, architecture gate, Java+Go E2E, Rust client local-source E2E, Codecov, FOSSA, and automated review checks.
+- Rust 客户端单测：**300 tests**。
+- 客户端 E2E 矩阵门禁：必需本地来源工具覆盖 **37 / 37**，本地来源 E2E 覆盖率下限为 **90%**。
+- 客户端 E2E 验证：未变化本地来源立即第二次执行 `usage sync` 时，解析 **0** 条 message 和 **0** 条 monitoring event。
+- PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
 
 ## [v1.6.3] — 2026-05-25
 
-### Fixed
+### 修复
 
 - **Rust 客户端 — `provider` 字段语义修正**：`provider` 字段现在直接记录 agent 框架名（与 `tool` 字段相同，如 `claude` / `codex` / `cursor`）；移除了基于 base URL 推断 LLM 后端的逻辑，provider 与 tool 字段保持一致
 - **Rust 客户端 — Codex 适配器 `file_paths[]` 向后兼容**：`CodexToolInput` 新增 `file_paths: Option<Vec<String>>` 字段，优先取 `file_paths[0]`，无则回退 `file_path` 单数字段
 - **服务端 — dedup 重复检测**：`ValidationService` 新增步骤 2.5，60 秒窗口内 `(token_key, file_path, repo_url)` 相同记录标记为 `flagged("duplicate")`；Java 与 Go 两端同步实现
 - **UTC 日期分桶统一**：客户端（Rust `chrono::Utc`）、Java 服务端（`Instant.now()`）、Go 服务端（`time.Now().UTC()`）三端统一使用 UTC 作为日期分桶基准
 
-### Added
+### 新增
 
 - **Rust 客户端 — `backfill_repo_info`**：每次 `capture` 成功插入后，自动将当前 git 元数据（`repo_url`/`branch`/`current_sha`）回填到所有 `synced=0` 且 `repo_url` 为空的历史记录；使在 git 仓库外捕获的记录在后续有 git 上下文时能进入 flush 队列
 - **Rust 客户端 — `init` 自动检测模式**：`aitrack init` 不传工具 flag 时自动检测 `~/.claude`、`~/.codex`、`~/.cursor` 目录存在性并安装对应钩子
@@ -69,12 +69,12 @@ GitHub Release body: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.
 
 ## [v1.6.1] — 2026-05-21
 
-### Changed
+### 变更
 
 - **Go 服务端迁移为 PostgreSQL-only**：移除 `modernc.org/sqlite` 依赖，生产与 E2E 均需提供 `DATABASE_URL`；`testapp.MemoryConfig` 仅保留用于本地单元测试构造 chi router，不再用于 Docker E2E
 - `docker/docker-compose.yml`：Go 服务容器改为 `DATABASE_URL` 连接 `db`（ParadeDB）服务，移除 `aitrack-go-data` SQLite 卷
 
-### Fixed
+### 修复
 
 - E2E：`e2e/run.sh` Go 路径在 `pg_isready` 通过后新增 `sleep 2`，消除首次镜像拉取场景下 PostgreSQL 内部初始化竞态；新增容器日志抓取，方便排查 Go 服务端启动失败原因
 - Go 服务端：测试占位符统一改为 `$N`（兼容 pgx/PostgreSQL）；覆盖率命令新增 `-coverpkg=./internal/...` 确保跨包覆盖统计准确；`page` 参数加 `clamp ≥ 0` 防止 `OFFSET` 为负
@@ -97,7 +97,7 @@ GitHub Release body: [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.
 
 ### 发布说明
 
-v1.6.0（Sprint 2）完成三端完整六边形架构重构，新增 `aitrack update` ed25519 更新命令，实现真实 HTTP 上报（非 stub），并引入基于 in-memory SQLite 的 E2E 真实链路测试。
+v1.6.0 完成三端完整六边形架构重构，新增 `aitrack update` ed25519 更新命令，实现真实 HTTP 上报（非 stub），并引入基于 in-memory SQLite 的 E2E 真实链路测试。
 
 ### 新增
 
@@ -109,7 +109,7 @@ v1.6.0（Sprint 2）完成三端完整六边形架构重构，新增 `aitrack up
 
 ### 变更
 
-- **六边形架构三端全量落地（Sprint 2）**
+- **六边形架构三端全量落地**
   - Rust 客户端：删除遗留 `db/`、`adapters/`、`crypto.rs`、`diff.rs` shim 层（共 1 927 行）；`lib.rs` 全部通过 `StoragePort`（SqliteStorage）和 `UploadPort`（HttpUploader）路由；`uploader::flush_unsynced` 接收 `&HttpUploader` 并委托 HTTP POST 至 `HttpUploader::post_batch`
   - Go 服务端：`StatsRow` 从 `domain/port` 迁移至 `domain/model`；`IngestUsecase.saveEdit` 现在返回并传播 `error`（原来静默丢弃）；三个适配器均添加编译期接口断言（`var _ port.X = (*Y)(nil)`）
   - Java 服务端：`EditRecordPort` 使用 `PageResult<T>`（无 `org.springframework.data.domain` 导入）；字段 `editRecordRepository` 在 IngestService / StatsService / ValidationService 中统一重命名为 `editRecordPort`
@@ -129,11 +129,11 @@ v1.6.0（Sprint 2）完成三端完整六边形架构重构，新增 `aitrack up
 
 ### 发布说明
 
-v1.5.0 完成 Phase 4 提示词捕获流水线：新增 `UserPromptSubmit` 钩子捕获用户提示词，`prompt_summary` 随编辑记录上报，服务端画像新增 `prompt_patterns` 意图分类维度。
+v1.5.0 完成提示词捕获流水线：新增 `UserPromptSubmit` 钩子捕获用户提示词，`prompt_summary` 随编辑记录上报，服务端画像新增 `prompt_patterns` 意图分类维度。
 
 ### 新增
 
-- **Phase 4：提示词捕获流水线**（Prompt Capture Pipeline）
+- **提示词捕获流水线**
   - 客户端：与 `PostToolUse` 并行安装 `UserPromptSubmit` 钩子（仅限 Claude Code）；新增 `prompt-capture` 子命令，将用户提示词（≤512 字符）存入本地 `prompt_context` SQLite 表
   - 客户端：`capture` 流程将最近一条 session 提示词作为可选 `prompt_summary` 附加到编辑记录
   - 数据库：新增 `prompt_context` 表（session_id, prompt_text, created_at）；`records` 表通过迁移新增 `prompt_summary TEXT` 列
@@ -155,23 +155,23 @@ v1.5.0 完成 Phase 4 提示词捕获流水线：新增 `UserPromptSubmit` 钩�
 
 ### 发布说明
 
-v1.4.0 完成 Phase 3 开发者 AI 工具使用画像：按需三维聚合（频率 / 深度 / 场景）+ 每日定时预热任务，Java 和 Go 双端功能完全对等。
+v1.4.0 完成开发者 AI 工具使用画像：按需三维聚合（频率 / 深度 / 场景）+ 每日定时预热任务，Java 和 Go 双端功能完全对等。
 
 ### 新增
 
-- **Phase 3：开发者 AI 工具使用画像**（Developer AI Usage Profiles）
+- **开发者 AI 工具使用画像**
   - Java `ProfileController`：`GET /api/v1/ai-track/profiles/{token_key}`，X-Admin-Key 鉴权
   - Java `ProfileService`：按需三维画像（使用频率 / 深度 / 场景 / 工具类型），`classifyScenario()` 路径启发式分类
   - Java `ProfileAggregationJob`：`@Scheduled(cron="0 0 2 * * *")` 每日凌晨预热
   - Go `ProfileHandler`：与 Java 功能完全对等，JSON schema 相同
   - 新增 `EditRecordRepository.findByTokenKeyAndStatusNot()` 和 `TokenRepository.findByTokenKeyAndActiveTrue()`
   - `AiTrackServerApplication` 添加 `@EnableScheduling`
-  - `CONTRACT.md` §5 更新：Phase 3 画像端点完整 schema
+  - `CONTRACT.md` §5 更新：画像端点完整 schema
 
 ### 文档
 
 - `docs/PRIVACY.md`（两仓库同步）：数据采集透明度说明
-- `CONTRACT.md` §5：Phase 3 画像端点 schema
+- `CONTRACT.md` §5：画像端点 schema
 
 ### 覆盖率
 

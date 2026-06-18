@@ -1,24 +1,39 @@
-# aitrack 自托管 AI 编码治理
+<sub>🌐 <b>简体中文</b> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></sub>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/MapleEve/company-aitrack/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/MapleEve/company-aitrack/actions)
-[![Codecov](https://img.shields.io/codecov/c/github/MapleEve/company-aitrack?logo=codecov&logoColor=white)](https://codecov.io/gh/MapleEve/company-aitrack)
-[![Release](https://img.shields.io/github/v/release/MapleEve/company-aitrack?logo=github)](https://github.com/MapleEve/company-aitrack/releases)
-[![License](https://img.shields.io/github/license/MapleEve/company-aitrack)](LICENSE)
-[![Self-hosting first](https://img.shields.io/badge/self--hosting-first-blue?logo=docker&logoColor=white)](docs/DEPLOYMENT.md)
+<div align="center">
 
-**简体中文** | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+# aitrack 自托管 AI 编码治理 🛡️
 
----
+> *「把 AI 编码行为纳入可信审计，还给研发效能团队一份真实数据。」*
+
+<a href="https://github.com/MapleEve/company-aitrack/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/MapleEve/company-aitrack/ci.yml?branch=main&style=flat-square&label=CI&logo=githubactions&logoColor=white" alt="CI" /></a>
+<a href="https://codecov.io/gh/MapleEve/company-aitrack"><img src="https://img.shields.io/codecov/c/github/MapleEve/company-aitrack?style=flat-square&logo=codecov&logoColor=white" alt="Codecov" /></a>
+<a href="https://github.com/MapleEve/company-aitrack/releases"><img src="https://img.shields.io/github/v/release/MapleEve/company-aitrack?style=flat-square&logo=github" alt="Release" /></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/MapleEve/company-aitrack?style=flat-square" alt="License" /></a>
+<a href="docs/DEPLOYMENT.md"><img src="https://img.shields.io/badge/self--hosting-first-blue?style=flat-square&logo=docker&logoColor=white" alt="Self-hosting first" /></a>
+
+<br>
+<br>
 
 <img src="./docs/assets/readme/hero.zh-CN.png" alt="aitrack hero" width="100%" />
 
-aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。Claude Code、Codex CLI、Cursor 当前具备 native edit hook adapter，可生成带 HMAC 签名的编辑证据；其他注册 agent 可进入 registry、status、heartbeat 与 local usage source 路线，并通过本地 transcript 扫描补齐 prompt、tool、window 和可还原编辑监控事件。
+<br>
+
+aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具。<br>它为 Claude Code、Codex CLI、Cursor 提供原生编辑钩子适配器，<br>在每次编辑事件发生时生成带 HMAC 签名的编辑证据，<br>并通过动态工具注册表、状态心跳与本地用量扫描覆盖更多 AI 编码工具。
+
+<br>
+
+[快速开始](#快速开始) · [支持范围](docs/AGENT_SUPPORT.md) · [架构](#架构) · [部署](docs/DEPLOYMENT.md) · [API](docs/API.md) · [贡献](CONTRIBUTING.md)
+
+</div>
 
 ---
 
 ## 问题
 
-<img src="./docs/assets/readme/problem.zh-CN.png" alt="问题" width="100%" />
+<p align="center">
+  <img src="./docs/assets/readme/problem.zh-CN.png" alt="问题" width="100%" />
+</p>
 
 AI 编码工具大规模进入研发团队，带来了三个难以回避的治理挑战：
 
@@ -32,13 +47,31 @@ AI 编码工具大规模进入研发团队，带来了三个难以回避的治�
 
 ## 适合谁
 
-<img src="./docs/assets/readme/audience.zh-CN.png" alt="适合谁" width="100%" />
+<p align="center">
+  <img src="./docs/assets/readme/audience.zh-CN.png" alt="适合谁" width="100%" />
+</p>
 
 | 角色 | 核心需求 |
 |------|----------|
 | **研发效能团队** | 客观量化 AI 工具实际产出，识别低效使用模式，支撑效能月报 |
-| **工程效能管理者** | 实时感知 native hook 与注册 agent 状态、可疑数据标记，避免被动依赖开发者自报告 |
+| **工程效能管理者** | 实时感知原生钩子、注册工具状态和可疑数据标记，避免被动依赖开发者自报告 |
 | **数据敏感·自托管团队** | 所有数据留存于自建服务，不经过任何第三方云服务，满足合规要求 |
+
+---
+
+## 当前支持范围
+
+v1.7.0 之后，aitrack 的采集能力分成三层，不再只围绕三条固定钩子：
+
+| 层级 | 已支持能力 | 适用工具 |
+|------|------------|----------|
+| 原生编辑证据 | 生成带 diff、行数、仓库信息和 `record_sig` 的 `EditRecord` | Claude Code、Codex CLI、Cursor |
+| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 37 个默认工具 key 和显式别名 |
+| 本地用量扫描 | 扫描本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态，提取提示词、工具调用、窗口、可还原编辑事件、token、消息数和成本估算 | 默认 37 个工具 key；可用 `--tool` 限定范围 |
+
+默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+
+详细支持矩阵、扫描路径、性能上限和管理员解读方式见 [AI 编码工具支持矩阵](docs/AGENT_SUPPORT.md)。
 
 ---
 
@@ -48,9 +81,9 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 | 组件 | 技术栈 | 职责 |
 |------|--------|------|
-| **Rust 客户端** `aitrack` | Rust · single binary · 无运行时依赖 · 六边形架构（v1.6） | 安装钩子、捕获编辑事件、HMAC 签名、上报数据、自动更新（ed25519） |
+| **Rust 客户端** `aitrack` | Rust · 单一二进制 · 无运行时依赖 · 六边形架构（v1.6） | 安装钩子、捕获编辑事件、扫描本地用量来源、HMAC 签名、上报数据、自动更新（ed25519） |
 | **Java 服务端** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB（v1.3+） | 10 步校验链、可信归因、效能查询、语义检索（主推实现） |
-| **Go 服务端** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB（生产必须） | 与 Java 端功能对等的轻量备选实现，支持语义检索 |
+| **Go 服务端** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB（必须，v1.6.1 起无 SQLite 回退） | 与 Java 端功能对等的轻量备选实现，支持语义检索 |
 
 **协议 v1.2 关键设计：**
 
@@ -59,29 +92,21 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - `hostname` 字段（v1.1 新增）使同一 token 在多台机器上的活动可按设备维度人工审查
 - 客户端本地数据库 `~/.aitrack/records.db` 权限 0600，`hmac_secret` AES-256-GCM 加密存储
 
-**Agent 与数据域边界：**
+**工具与数据域边界：**
 
-- `EditRecord` 是监控事件域，包含 diff、行数、仓库信息、设备信息和 `record_sig`
-- usage rollup / snapshot 是标量用量域，可承载请求数、token 数、成本估算或本地客户端活跃统计
-- token-only 或 usage-only 数据不能伪装成监控事件
-- 本地用量来源包括本机日志、JSONL、SQLite、缓存和本地客户端状态；aitrack 自动发现可用凭证或入口，不要求用户手动粘第三方 token
-
-**当前 agent 框架支持：**
-
-| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
-|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | ✅ | ✅ | ✅ `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | ✅ | ✅ 本地 rate-limit snapshot |
-| `codex` | ✅ | — | ✅ `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | ✅ | ✅ session rate-limit snapshot |
-| `cursor` | ✅ | — | ✅ Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | ✅ | — |
-| default local-scan agents | — | — | ✅ 本地 agent 目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | ✅ token、message count、source cost | — |
-
-默认本地扫描覆盖：`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用 canonical key，避免同一路径重复入库。只要本地 JSON、JSONL、NDJSON、CSV、SQLite 或缓存中包含 prompt、tool、window、edit 或 token 字段，就可以进入对应监控或 usage 数据面。
+- `EditRecord` 是监控事件域，适合存放签名编辑证据和可还原的提示词、工具调用、窗口、编辑监控事件。
+- 用量汇总和额度/订阅快照是标量用量域，适合存放 token、消息数、成本估算和剩余额度。
+- 纯 token 或纯用量数据不能伪装成监控事件。
+- 本地用量扫描只读取本机可见文件和本地状态，不要求用户手动粘贴第三方服务 token。
+- `hooks.<tool> = true` 表示该工具在本机可见或对应钩子可用，不等同于该工具已有原生编辑钩子。
 
 ---
 
 ## 你会得到什么
 
-<img src="./docs/assets/readme/outcomes.zh-CN.png" alt="你会得到什么" width="100%" />
+<p align="center">
+  <img src="./docs/assets/readme/outcomes.zh-CN.png" alt="你会得到什么" width="100%" />
+</p>
 
 ### HMAC 可信归因
 
@@ -106,9 +131,9 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 通过 `GET /api/v1/ai-track/stats?group_by=token|repo|device|hostname|tool` 按开发者、仓库、设备、机器名或 agent/tool 维度聚合统计，支撑效能报告。
 
-### 按 hostname 维度人工排查
+### 按机器名维度人工排查
 
-`GET /api/v1/ai-track/devices` 展示每台设备的心跳状态与动态 agent hooks map。钩子被静默移除时，下次任意命令执行后心跳自动上报异常状态，管理员可主动跟进。
+`GET /api/v1/ai-track/devices` 展示每台设备的心跳状态与动态工具状态图。钩子被静默移除时，下次任意命令执行后心跳自动上报异常状态，管理员可主动跟进。
 
 ### 服务端向量化存储与语义检索（v1.3+）
 
@@ -129,11 +154,11 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 画像数据仅用于了解 AI 工具实际采用效果，不作为个人绩效考核的直接依据。
 
-### Prompt 与本地 transcript 监控（v1.7+）
+### 提示词与本地会话记录监控（v1.7+）
 
-客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按 agent、时间窗口和本地游标缓存扫描本机 agent 日志、JSONL、SQLite 和缓存；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界 prompt 内容；无 native hook 的 agent 也可通过本地 transcript 扫描补齐 prompt、tool、window 和编辑监控事件。
+客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机工具日志、JSONL、SQLite 和缓存；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具也可通过本地会话记录扫描补齐提示词、工具调用、窗口和编辑监控事件。
 
-`usage` 子命令同时维护独立的 usage rollup / subscription snapshot 数据面，按 day、agent、model、account 聚合 token bucket、message count 和 source cost，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
+`usage` 子命令同时维护独立的用量汇总和额度/订阅快照数据面，按日期、工具、模型、账号聚合 token 分桶、消息数和成本估算，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 
 ### 六边形架构与安全自动更新（v1.6+）
 
@@ -153,8 +178,8 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 export AITRACK_SECRET_KEY=$(openssl rand -base64 32)
 export AITRACK_ADMIN_KEY=$(openssl rand -hex 32)
 
-# 构建并启动（H2 嵌入式数据库，适合快速体验）
-docker-compose up -d --build
+# 启动 Java 服务端（H2 嵌入式数据库，适合快速体验）
+docker compose -f docker/docker-compose.yml --profile java up -d
 
 # 验证服务
 curl http://localhost:8080/actuator/health
@@ -177,7 +202,7 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # 或从分发包解压二进制到 /usr/local/bin/
 
-# 安装 native edit hook（Claude Code 示例；其他注册工具可用 --tool <name>）
+# 安装原生编辑钩子（Claude Code 示例；其他注册工具可用 --tool <name>）
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
@@ -187,6 +212,14 @@ aitrack status
 
 # 查看本地记录（最近 20 条）
 aitrack inspect --limit 20
+
+# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 37 个工具 key
+aitrack usage scan
+
+# 扫描、汇总并上传用量，也会上传本地会话记录中可还原的监控事件
+aitrack usage sync \
+  --api-url https://aitrack.example.com \
+  --credential <credential>
 ```
 
 ### 4. 查看团队数据
@@ -200,19 +233,18 @@ TOKEN="aitrack_abcdef1234567890abcdef1234567890"  # 替换为步骤 2 签发的 
 curl -s "http://localhost:8080/api/v1/ai-track/stats?group_by=token" \
   -H "Authorization: Bearer $TOKEN"
 
-# 查看所有设备心跳与 agent 状态 — 排查钩子或注册状态异常
+# 查看所有设备心跳与工具状态 — 排查钩子或注册状态异常
 curl -s "http://localhost:8080/api/v1/ai-track/devices" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-`group_by` 还支持 `repo`（按仓库）、`device`（按设备 UUID）、`hostname`（按机器名）和 `tool`（按 agent/tool key）。详见 [docs/API.md](docs/API.md)。
+`group_by` 还支持 `repo`（按仓库）、`device`（按设备 UUID）、`hostname`（按机器名）和 `tool`（按工具 key）。详见 [docs/API.md](docs/API.md)。
 
-### 5. 覆盖率验证（Docker）
+### 5. 服务端覆盖率验证（Docker）
+
+服务端镜像构建阶段内置覆盖率门槛（≥ 90%），构建失败即阻断发布。
 
 ```bash
-# 客户端（Rust，覆盖率门槛 90%）
-docker build -f docker/Dockerfile.client -t aitrack-client:latest .
-
 # Java 服务端（JaCoCo LINE ≥ 90%）
 docker build -f docker/Dockerfile.server-java -t aitrack-server-java:latest .
 
@@ -223,11 +255,15 @@ docker build -f docker/Dockerfile.server-go -t aitrack-server-go:latest .
 bash e2e/run.sh both
 ```
 
+> **Rust 客户端**通过 GitHub CI 构建，覆盖率在 CI 流水线中验证（非 Docker）。预构建二进制见 [Releases](https://github.com/MapleEve/company-aitrack/releases)，开发者本机安装后可通过 `aitrack update` 自动更新到最新版本。
+
 ---
 
 ## 安全与隐私
 
-<img src="./docs/assets/readme/security.zh-CN.png" alt="安全与隐私" width="100%" />
+<p align="center">
+  <img src="./docs/assets/readme/security.zh-CN.png" alt="安全与隐私" width="100%" />
+</p>
 
 | 机制 | 说明 |
 |------|------|
@@ -237,7 +273,7 @@ bash e2e/run.sh both
 | **token 哈希存储** | 服务端仅存储 `sha256(token)`，明文仅签发时返回一次 |
 | **本地优先** | 所有数据存储于自建服务，不经过任何第三方云服务 |
 | **常量时间比较** | HMAC 验证使用常量时间比较，防止 timing attack |
-| **采集范围透明可控** | 默认采集文件路径、diff、行数、repo 元数据；prompt hook 与本地 transcript 扫描可采集有界 prompt/tool/window 监控事件；usage rollup 只记录用量标量；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
+| **采集范围透明可控** | 默认采集文件路径、diff、行数、仓库元数据；提示词钩子与本地会话记录扫描可采集有界提示词、工具调用、窗口监控事件；用量汇总只记录标量指标；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
 
 ---
 
@@ -246,6 +282,7 @@ bash e2e/run.sh both
 | 文档 | 说明 |
 |------|------|
 | [CONTRACT.md](CONTRACT.md) | 客户端/服务端协议契约（端点、字段定义、签名规范、钩子模板） |
+| [docs/AGENT_SUPPORT.md](docs/AGENT_SUPPORT.md) | AI 编码工具支持矩阵（原生钩子、本地扫描、用量汇总、额度快照、扫描上限） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计（组件图、数据流、部署拓扑） |
 | [docs/API.md](docs/API.md) | API 文档（所有端点、请求/响应结构） |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Docker、PostgreSQL 切换、生产配置） |
@@ -258,8 +295,18 @@ bash e2e/run.sh both
 
 ---
 
-## License
+## Star History
 
-<img src="./docs/assets/readme/license.zh-CN.png" alt="License" width="100%" />
+[![Star History Chart](https://api.star-history.com/svg?repos=MapleEve/company-aitrack&type=date)](https://www.star-history.com/#MapleEve/company-aitrack&type=date)
+
+---
+
+## 致谢
+
+[![LINUXDO](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LINUXDO-0086c9?style=for-the-badge&labelColor=555555)](https://linux.do)
+
+感谢 **`linux.do`** 社区的讨论、分享与支持。这个项目在工程实践、设计思路和持续迭代上，都受益于社区氛围与成员交流。
+
+---
 
 [MIT License](LICENSE) © 2026 MapleEve
