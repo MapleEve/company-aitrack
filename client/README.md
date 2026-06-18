@@ -1,46 +1,57 @@
-# aitrack
+# aitrack 客户端
 
-Hardened AI coding edit telemetry CLI — captures editor hook events, signs them with HMAC, and reports verified attribution to the aitrack server.
+`aitrack` 是用于本机 AI 编码采集的 Rust 单一二进制客户端。它负责安装原生钩子、捕获编辑证据、生成本地签名记录、扫描本机可见用量来源，并把数据同步到 aitrack 服务端。
 
-## Commands
+## 能力范围
 
-```
-aitrack init    [--claude] [--codex] [--cursor] [--api-url URL] [--credential CRED]
-aitrack remove  [--claude] [--codex] [--cursor]
-aitrack capture --tool <claude|codex|cursor>   (default: claude)  [--api-url URL] [--credential CRED]
-aitrack inspect [--limit N]  (default 20, max 200)  [--pending] [--current-token]
-aitrack stats
-aitrack status
-aitrack clean   [--all] [--force]
-aitrack heartbeat
-```
+- 原生编辑证据：`claude`、`codex`、`cursor` 适配器可生成带 `diff_hunk`、行数、仓库信息和 `record_sig` 的 `EditRecord`。
+- 原生提示词钩子：目前仅 `claude` 支持 `UserPromptSubmit`。
+- 动态状态心跳：`aitrack status` 和 `aitrack heartbeat` 会上报本机工具可见性、钩子状态和待同步数量。
+- 本地用量扫描：`aitrack usage scan` / `aitrack usage sync` 默认扫描 37 个工具 key；其它工具主要通过本地状态、会话、日志、缓存、SQLite、CSV、JSON/JSONL/NDJSON 等来源覆盖。
 
-## Installation
+完整工具矩阵、默认 key、别名和扫描边界见 [AI 编码工具支持矩阵](../docs/AGENT_SUPPORT.md)。
+
+## 构建
 
 ```bash
 cargo build --release
-# Binary: target/release/aitrack
-aitrack init --claude --api-url https://your-server --credential YOUR_CREDENTIAL
 ```
 
-## Local Storage
+构建产物：
 
-- `~/.aitrack/config.toml` (0600) — api_url, credential, device_id
-- `~/.aitrack/records.db` (0600) — SQLite, all captured edits
-
-## Hardening Points
-
-| Point | Description |
-|-------|-------------|
-| **H1** | `record_sig`: HMAC-SHA256 over each record prevents local DB tampering |
-| **H2** | Signature binds `device_id` + `token_key` + `repo` — cross-device forgery impossible |
-| **H3** | Heartbeat reports hook install status; throttled to 1/hour; forced with `aitrack heartbeat` |
-| **H4** | Myers/LCS diff via `similar` crate — actual added/removed lines, not naive line counts |
-| **H6** | Adapter parse failures are logged to stderr, not silently swallowed |
-
-## Upload Protocol
-
+```text
+target/release/aitrack
 ```
+
+## 常用命令
+
+```bash
+aitrack init --claude --api-url https://aitrack.example.com --credential <credential>
+aitrack status
+aitrack inspect --limit 20
+aitrack heartbeat
+aitrack usage scan
+aitrack usage sync --api-url https://aitrack.example.com --credential <credential>
+aitrack remove --claude
+```
+
+`usage scan` 只写入本地用量账本，不上传；`usage sync` 会先扫描，再上传用量汇总、额度快照和本地会话中可还原的监控事件。需要限制范围时可重复指定 `--tool`，也可以用 `--since` / `--until` 做小窗口回填。
+
+## 本地数据
+
+| 路径 | 用途 |
+|------|------|
+| `~/.aitrack/config.toml` | 保存 `api_url`、`credential`、`device_id` 等配置，权限应为 `0600` |
+| `~/.aitrack/records.db` | 保存原生钩子和本地扫描生成的监控记录 |
+| `~/.aitrack/usage.sqlite` | 保存本地用量会话、汇总、额度快照和同步队列 |
+
+客户端只读取本机可见文件和本地状态，不要求用户手动粘贴第三方服务 token。
+
+## 上报协议
+
+编辑记录上报到：
+
+```text
 POST {api_url}/api/v1/ai-track/edits
 Authorization: Bearer {token}
 X-AiTrack-Device: {device_id}
@@ -49,80 +60,40 @@ X-AiTrack-Timestamp: {unix_seconds}
 X-AiTrack-Signature: HMAC_SHA256(hmac_secret, "{ts}\n{sha256(body)}")
 ```
 
-See `../CONTRACT.md` for the full shared client-server protocol.
+每条 `EditRecord` 还包含 `record_sig`，覆盖 `token_key`、`device_id`、`hostname`、`timestamp`、`tool`、`file_path`、`repo_url`、`current_sha`、`added_lines`、`removed_lines` 和 `diff_hunk` 摘要。完整协议见 [CONTRACT.md](../CONTRACT.md)。
 
-## Testing
-
-### Run tests
+## 测试
 
 ```bash
 cargo test
-```
-
-### Coverage measurement
-
-```bash
-# Install (one-time)
-cargo install cargo-llvm-cov
-
-# Measure
 cargo llvm-cov --summary-only
 ```
 
-### Test structure
+如果本机未安装覆盖率工具，可先执行：
 
-All tests are `#[cfg(test)]` inline modules within each source file. HTTP mocking uses `wiremock`. Temp files use `tempfile`.
-
-| Module | Tests | Line Coverage |
-|--------|-------|---------------|
-| `adapters/claude.rs` | 9 | 98.6% |
-| `adapters/codex.rs` | 9 | 99.3% |
-| `adapters/cursor.rs` | 8 | 100% |
-| `config.rs` | 17 | 83.9% |
-| `crypto.rs` | 13 | 100% |
-| `db.rs` | 15 | 91.7% |
-| `diff.rs` | 12 | 100% |
-| `git.rs` | 4 | 97.2% |
-| `heartbeat.rs` | 9 | 97.4% |
-| `init.rs` | 23 | 95.1% |
-| `uploader.rs` | 12 | 99.0% |
-| `testkit/factories.rs` | (factory module) | 95.1% |
-| **TOTAL** | **140** | **87.75% lines / 90.24% functions** |
-
-`main.rs` (CLI dispatch) is excluded from the table — it is binary entry-point code not exercised by unit tests.
-
-### Testkit factories
-
-`src/testkit/factories.rs` provides seed-deterministic builders for all domain objects:
-
-- `EditRecordFactory::new(seed).with_*().build()` → `Record`
-- `ApiConfigFactory::new(seed).with_*().build()` → `Config`
-- `ClaudeHookPayloadFactory::new(seed).with_*().build_json()` → JSON string
-- `CodexHookPayloadFactory::new(seed).with_*().build_json()` → JSON string
-- `CursorHookPayloadFactory::new(seed).with_*().build_json()` → JSON string
-- `tampered_record_sig(seed)` → Record with corrupted sig
-- `tampered_expired_timestamp(seed)` → Record with year-2000 timestamp
-- `tampered_oversized_lines(seed)` → Record with 99,999,999 lines
-- `malformed_json()` → Syntactically broken JSON string
-- `codex_wrong_event(seed)` / `codex_non_edit_tool(seed)` → Filter-path JSON
-
-## Module Layout
-
+```bash
+cargo install cargo-llvm-cov
 ```
+
+真实二进制到服务端的端到端验证见 [E2E 测试说明](../e2e/README.md)。
+
+## 代码结构
+
+```text
 src/
-  main.rs         — command dispatch
-  cli.rs          — clap argument definitions
-  config.rs       — ~/.aitrack/config.toml read/write, token masking
-  db.rs           — SQLite records table, CRUD operations
-  crypto.rs       — HMAC-SHA256, record_sig, request_sig
-  diff.rs         — Myers/LCS diff via similar crate
-  git.rs          — spawn git for repo metadata
-  init.rs         — install/remove hooks (Claude/Codex/Cursor)
-  uploader.rs     — flush unsynced records to server
-  heartbeat.rs    — throttled heartbeat POST
-  adapters/
-    mod.rs
-    claude.rs     — parse Claude Code PostToolUse payload
-    codex.rs      — parse Codex CLI postToolUse payload
-    cursor.rs     — parse Cursor afterFileEdit payload
+  main.rs         # CLI 入口
+  lib.rs          # 可复用模块导出
+  cli.rs          # 命令行参数
+  config.rs       # 本地配置读写
+  domain/         # 领域模型、HMAC、diff、关键词分类
+  port/           # StoragePort / UploadPort 端口契约
+  adapter/        # SQLite、HTTP、原生编辑事件适配
+  agent.rs        # 动态工具注册表、默认扫描 key 和别名
+  usage/          # 本地用量扫描、汇总、快照和游标缓存
+  git.rs          # 仓库信息解析
+  heartbeat.rs    # 状态心跳
+  init.rs         # 钩子安装和移除
+  uploader.rs     # 未同步记录上传
+  update.rs       # ed25519 自更新
+  testkit/        # 测试工厂
 ```

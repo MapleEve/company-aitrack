@@ -12,15 +12,15 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  AI 编码工具 / agent frameworks                    │
-│  native edit adapter + registry/status/local usage │
+│  AI 编码工具                                      │
+│  原生编辑钩子 + 工具状态心跳 + 本地用量扫描          │
 └────────────────────┬────────────────────────────┘
                      │ stdin JSON
                      ▼
 ┌─────────────────────────────────────────────────┐
 │  Rust 客户端  aitrack                            │
 │  · 适配器解析  · Myers/LCS diff                  │
-│  · record_sig  · 本地 scanner/outbox              │
+│  · record_sig  · 本地扫描器/出站队列               │
 │  · flush 上传  · 节流心跳                         │
 └────────────────────┬────────────────────────────┘
                      │ POST /api/v1/ai-track/edits
@@ -34,28 +34,21 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 └────────────────────────────┘  └────────────────────────────┘
 ```
 
-### Agent registry 与数据域
+### 工具注册表与数据域
 
-aitrack 的开源边界是通用部署与运行时解耦，不是去掉员工、管理员或治理语义。系统把 agent 支持拆成三层：
+aitrack 的公开版本保持通用、自托管和运行时解耦，同时保留员工监控、管理员治理和审计语义。系统把 AI 编码工具支持拆成三层：
 
 | 层级 | 当前边界 |
 |------|----------|
-| native edit adapter | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成文件编辑类 `EditRecord` |
-| registry/status/heartbeat | 服务端心跳 `hooks` 为动态 map，可接收任意 agent registry key 的安装状态 |
-| local usage source | 本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态可作为用量来源，也可补齐 prompt、tool、window 和可还原编辑监控事件 |
+| 原生编辑钩子适配器 | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成文件编辑类 `EditRecord` |
+| 工具注册、状态与心跳 | 服务端心跳 `hooks` 为动态状态图，可接收任意已登记工具 key 的安装或可见状态 |
+| 本地用量来源 | 本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态可作为用量来源，也可补齐提示词、工具调用、窗口和可还原编辑监控事件 |
 
-`EditRecord` 是监控事件域，必须包含设备信息、时间、agent、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。usage rollup / snapshot 是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。token-only / usage-only 只能进入用量域，不能写成监控事件。
+`EditRecord` 是监控事件域，必须包含设备信息、时间、工具、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。用量汇总和额度/订阅快照是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。纯 token 或纯用量数据只能进入用量域，不能写成监控事件。
 
-### 当前 agent 框架支持矩阵
+完整工具支持矩阵、37 个默认扫描 key、3 个显式别名、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
 
-| agent key | native edit hook | native prompt hook | 本地 transcript / cache 扫描 | usage rollup | quota / subscription snapshot |
-|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | 是 | 是 | `.claude/`、projects、transcripts、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地 rate-limit snapshot |
-| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | session rate-limit snapshot |
-| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
-| default local-scan agents | 否 | 否 | 本地 agent 目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、message count、source cost | 否 |
-
-默认本地扫描覆盖：`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用 canonical key，避免同一路径重复入库。这些 key 的动态心跳可见性不等于 native edit adapter 已完成；它们当前通过本地 source/cache 扫描把可提取字段送入监控事件域或 usage 标量域。
+`hooks.<tool> = true` 只表示该工具在本机可见或对应钩子可用，不代表该工具已经具备原生编辑钩子适配器。
 
 ---
 
@@ -63,15 +56,15 @@ aitrack 的开源边界是通用部署与运行时解耦，不是去掉员工、
 
 **职责**：在 AI 工具的编辑事件触发时，捕获、签名、本地存储并上报一条编辑记录。
 
-### 模块布局（六边形架构，Sprint 2）
+### 模块布局（六边形架构）
 
 ```
 src/
   main.rs / cli.rs / config.rs / lib.rs   — 命令分发、配置、入口
   git.rs / init.rs / uploader.rs / heartbeat.rs / update.rs
   (init.rs 说明：`aitrack init` 不带任何工具标志时进入自动探测模式，
-   遍历动态 agent registry 的本地 marker 路径；native adapter 工具安装
-   真实编辑钩子，其他已登记工具进入 status/heartbeat/local usage 路线；
+   遍历动态工具注册表的本地 marker 路径；原生适配工具安装
+   真实编辑钩子，其他已登记工具进入状态心跳和本地用量扫描路线；
    旧版本不带标志时直接退出并提示"no tools selected"；
    `init --claude` 安装前检测 ~/.claude/settings.json 中是否已存在非 aitrack 的
    PostToolUse 钩子，若存在则向 stderr 输出冲突警告，但安装流程不中止)
@@ -94,11 +87,9 @@ src/
       mod.rs / schema.rs / models.rs / queries.rs / vec.rs / keyword_store.rs
     http/                   — UploadPort 的 HTTP 实现（HttpUploader）
       mod.rs / upload.rs
-    event/                  — 输入适配器（Claude/Codex/Cursor native edit hook 事件解析）
+    event/                  — 输入适配器（Claude/Codex/Cursor 原生编辑钩子事件解析）
       mod.rs / claude.rs / codex.rs / cursor.rs
 
-  db/                       — 旧 db 模块（向后兼容保留）
-  adapters/                 — 旧适配器（向后兼容保留）
   testkit/factories.rs      — 种子确定性测试工厂
 ```
 
@@ -108,7 +99,7 @@ Rust 客户端严格遵循六边形架构三层分离：
 
 - **domain/**（纯领域）：`model.rs`（`EditRecord`、`ApiConfig`）、`crypto.rs`（HMAC 计算）、`diff.rs`（Myers/LCS）、`keywords.rs`（关键词常量），无任何框架依赖
 - **port/**（输出端口抽象）：`StoragePort` trait（本地 SQLite 读写契约）、`UploadPort` trait（HTTP 上报契约），均为纯 Rust trait，不依赖具体实现
-- **adapter/**（适配器实现）：`adapter/sqlite/`（`SqliteStorage` 实现 `StoragePort`）+ `adapter/http/`（`HttpUploader` 实现 `UploadPort`）+ `adapter/event/`（Claude/Codex/Cursor native edit hook 事件解析）
+- **adapter/**（适配器实现）：`adapter/sqlite/`（`SqliteStorage` 实现 `StoragePort`）+ `adapter/http/`（`HttpUploader` 实现 `UploadPort`）+ `adapter/event/`（Claude/Codex/Cursor 原生编辑钩子事件解析）
 
 ### HttpUploader 数据流
 
@@ -125,7 +116,7 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 ### 本地存储
 
 - `~/.aitrack/config.toml`（0600）：api_url、credential、device_id
-- `~/.aitrack/records.db`（0600）：SQLite，存储所有捕获记录（编辑记录 + prompt_context）
+- `~/.aitrack/records.db`（0600）：SQLite，存储所有捕获记录（编辑记录 + `prompt_context`）
 - `~/.aitrack/keywords.db`（0600）：SQLite，存储关键词指纹（`keyword_fingerprint()` SHA256）
 
 `device_id` 在首次运行时生成 UUIDv4 并持久化，后续只读。WCDB 采用多库结构：`records.db` 负责编辑记录，`keywords.db` 独立存储关键词指纹，两库职责分离。
@@ -140,13 +131,13 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 1. AI 工具触发 PostToolUse/afterFileEdit 钩子
 2. aitrack capture 从 stdin 读取 JSON
-3. 按 `--tool` 选择 adapter；Claude/Codex/Cursor 解析 native edit payload，其他 agent 通过本地 usage / transcript 扫描进入监控链路
+3. 按 `--tool` 选择适配器；Claude/Codex/Cursor 解析原生编辑事件，其他工具通过本地用量和会话记录扫描进入监控链路
 4. 调用 similar crate 计算 Myers/LCS diff
    → added_lines, removed_lines, diff_hunk
 5. spawn git 获取 repo 元数据
    → repo_url, branch, current_sha
 6. 获取 OS hostname
-7. 从 prompt_context 表查询最近一次有界 prompt 文本 → prompt_summary（可选）
+7. 从 prompt_context 表查询最近一次有界提示词文本 → prompt_summary（可选）
 8. 计算 record_sig
    → HMAC_SHA256(hmac_secret, canonical_string)（不包含 prompt_summary）
 8b. 执行 backfill_repo_info（queries.rs）
@@ -163,14 +154,14 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 1. Claude Code 触发 UserPromptSubmit 钩子
 2. aitrack prompt-capture 从 stdin 读取 JSON（{"session_id": "...", "prompt": "..."}）
-3. 在本地写入有界 prompt 文本
-4. INSERT INTO prompt_context（session_id, prompt_text）
+3. 在本地写入有界提示词文本
+4. INSERT INTO `prompt_context`（session_id, prompt_text）
 
-### 本地 usage / transcript 扫描流
+### 本地用量与会话记录扫描流
 
-1. `aitrack usage scan|sync` 按 agent、时间窗口和本地游标缓存扫描已登记 agent 的本机日志、JSONL、SQLite、CSV 和缓存；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
-2. 提取 token bucket、message count 和 source cost，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
-3. 提取 prompt、tool、window 和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
+1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机日志、JSONL、SQLite、CSV 和缓存；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
+2. 提取 token 分桶、消息数和成本估算，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
+3. 提取提示词、工具调用、窗口和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
 4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`
 
 ---
@@ -246,25 +237,25 @@ canonical_string 字段顺序严格定义于 `CONTRACT.md`，客户端与服务�
 
 DB-1 / DB-2 / DB-3 已全部交付。
 
-### Phase DB-1 / DB-2 — 向量基础设施（已交付）
+### 向量基础设施（已交付）
 
-**状态**：客户端与两套服务端均已实现。搜索端点（Phase DB-3）同样已交付。
+**状态**：客户端与两套服务端均已实现，搜索端点也已交付。
 
 #### 客户端 — sqlite-vec 本地向量存储（DB-2）
 
-客户端数据库层从单文件 `db.rs` 重构为 `db/` 模块：
+客户端本地数据库实现位于 `client/src/adapter/sqlite/`，通过 `StoragePort` 对外提供读写能力：
 
 | 文件 | 职责 |
 |------|------|
-| `mod.rs` | DB 打开、auto_extension 注册、对外 re-export |
+| `mod.rs` | SQLite 打开、迁移、`StoragePort` 实现和 sqlite-vec 注册 |
 | `schema.rs` | DDL 常量（`records`、`kv`、`vec_records`） |
-| `models.rs` | `Record`、`InspectRow` 结构体 |
 | `queries.rs` | 所有 CRUD 查询函数 |
+| `keyword_store.rs` | 关键词指纹持久化 |
 | `vec.rs` | sqlite-vec 探测、`VEC_DISABLED` AtomicBool、`ensure_vec_table()` |
 
 sqlite-vec 通过 `sqlite3_auto_extension` 在 DB 打开时自动注册。若扩展加载失败，`VEC_DISABLED` 置为 `true`，核心捕获流程不受影响（降级模式）。`vec_records` 虚拟表使用 `vec0(embedding float[384])`（384 维 MiniLM）。
 
-`records` 表新增列：`embedding BLOB`（可空，Phase DB-3 回填）。
+`records` 表新增列：`embedding BLOB`（可空，由语义检索流程回填）。
 
 #### 服务端 — ParadeDB / PostgreSQL 支持（DB-1）
 
@@ -272,14 +263,14 @@ Java 和 Go 服务端在原有嵌入式数据库基础上，新增 PostgreSQL/Pa
 
 **Java（Spring Boot）**：通过 `SPRING_PROFILES_ACTIVE=postgres` 激活。新增五个环境变量：`AITRACK_DB_HOST`（默认 localhost）、`AITRACK_DB_PORT`（5432）、`AITRACK_DB_NAME`（aitrack）、`AITRACK_DB_USER`（aitrack）、`AITRACK_DB_PASSWORD`（aitrack_secret）。
 
-`edit_records` 表新增列：`prompt_summary TEXT` 和 `embedding BYTEA`（均可空，Phase DB-3 回填）。
+`edit_records` 表新增列：`prompt_summary TEXT` 和 `embedding BYTEA`（均可空，由语义检索流程回填）。
 
 **Go（chi）**：通过 `DATABASE_URL=postgres://user:pass@host:5432/dbname` 激活 ParadeDB/PostgreSQL 模式。生产部署必须设置此环境变量；`testapp.MemoryConfig` 供 E2E 测试使用（内存 SQLite，仅测试）。
 
 **ParadeDB 索引 DDL**（首次部署后执行一次）：
 
 ```sql
--- BM25 全文索引（Phase DB-3 搜索端点前置条件）
+-- BM25 全文索引（搜索端点前置条件）
 CREATE INDEX IF NOT EXISTS edits_bm25 ON edit_records
   USING bm25 (id, diff_hunk, prompt_summary) WITH (key_field = 'id');
 
@@ -290,7 +281,7 @@ CREATE INDEX IF NOT EXISTS edits_hnsw ON edit_records
 
 配套脚本：`server-java/src/main/resources/db-postgres-init.sql`。
 
-### Phase DB-3 — 语义检索 API（已交付）
+### 语义检索 API（已交付）
 
 **状态**：Java 和 Go 双端均已实现。Embedding 列在回填前为空，BM25 可立即使用。
 
@@ -333,14 +324,14 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 这两类端点与现有结构化查询端点并列存在，不破坏现有 API 兼容性，并在 `CONTRACT.md` 中增加对应 schema 定义。
 
-### Phase 3 已交付（2026 Q4）
+### 开发者画像 API（已交付）
 
 - **开发者使用画像 API**：`GET /api/v1/ai-track/profiles/{token_key}`，Java + Go 双端实现
-- **多维画像计算**：使用频率（daily/weekly 趋势）、使用深度（行数分布、p50/p90、comment_density）、languages（按 23 种文件扩展名统计编程语言分布）、prompt_patterns（意图分类：generate/fix_debug/refactor/explain/test/other）、工具分布（动态 agent/tool key）
+- **多维画像计算**：使用频率（daily/weekly 趋势）、使用深度（行数分布、p50/p90、comment_density）、languages（按 23 种文件扩展名统计编程语言分布）、prompt_patterns（意图分类：generate/fix_debug/refactor/explain/test/other）、工具分布（动态工具 key）
 - **日常聚合 Job**：Java `ProfileAggregationJob`（@Scheduled 每日 02:00）；Go 同等实现
 - **鉴权**：X-Admin-Key，403/404/200，不依赖 ParadeDB（Java H2 模式亦支持）
 
-### Sprint 2 — 六边形架构重构（2026-05-20，已交付）
+### 六边形架构重构（2026-05-20，已交付）
 
 **状态**：三端全量完成，测试覆盖率继续 ≥ 90%。
 
@@ -381,7 +372,7 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 `e2e/` 目录包含两类测试，职责明确区分：
 
-1. **`mock_chain_test.go`**（HTTP 形状测试）：使用 mock handler 验证请求/响应的 JSON 结构和 HTTP 状态码，无需真实 credential，Phase 4 新增 3 个场景
+1. **`mock_chain_test.go`**（HTTP 形状测试）：使用 mock handler 验证请求/响应的 JSON 结构和 HTTP 状态码，无需真实 credential
 2. **`chain_integration_test.go`**（真实链路测试）：`httptest.NewServer(realChiRouter)` + 内存 SQLite + 真实 HMAC 签名，验证完整 10 步校验链，包含三个场景：
    - 正常上报 → `accepted`
    - `record_sig` 被篡改 → `rejected: sig_mismatch`
@@ -389,14 +380,14 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 ---
 
-### Phase 4 — Prompt Capture (2026-05-19)
+### 提示词捕获能力（2026-05-19，已交付）
 
-**Status**: Implemented in client, Java server, and Go server.
+**状态**：Rust 客户端、Java 服务端和 Go 服务端均已实现。
 
 #### 提示词捕获
 
-- 新增 `UserPromptSubmit` 钩子：用户提交 prompt 时触发，aitrack 将有界 prompt 内容写入本地 `prompt_context` 表
-- `records` 表新增 `prompt_summary TEXT` 列（可空），capture / transcript 扫描流程附加当前 session 的有界 prompt 内容
+- 新增 `UserPromptSubmit` 钩子：用户提交提示词时触发，aitrack 将有界提示词内容写入本地 `prompt_context` 表
+- `records` 表新增 `prompt_summary TEXT` 列（可空），capture / 本地会话记录扫描流程附加当前 session 的有界提示词内容
 - `prompt_summary` 不参与 `record_sig` 计算（用于审计和画像分析，不影响防篡改机制）
 - 上传时 `prompt_summary` 作为可选字段随 edit 记录上报
 

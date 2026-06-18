@@ -8,21 +8,19 @@
 
 | 版本 | 支持状态 |
 |------|---------|
-| `v1.2.x`（当前） | 支持安全修复 |
-| `v1.1.x` | 不承诺安全修复 |
-| `v1.0.x` | 不承诺安全修复 |
-| 早于 v1.0 的 commit | 不支持 |
+| `v1.7.x`（当前） | 支持安全修复 |
+| `v1.6.x` 及更早版本 | 不承诺安全修复 |
 
 ## aitrack 安全模型摘要
 
 ### 客户端侧
 
-- **本地存储权限**：`~/.aitrack/config.toml` 和 `~/.aitrack/records.db` 均以 `chmod 0600` 原子创建，防止同机其他用户读取；写入过程先写临时文件再 rename，避免中断留下权限不当的半成品。
-- **record_sig HMAC**：每条记录在写入本地 SQLite 前计算 HMAC-SHA256 签名，绑定 `token_key + device_id + hostname + timestamp + tool + file_path + repo_url + current_sha + added_lines + removed_lines + sha256(diff_hunk)`，防止本地记录被篡改后重传（hardening point H1/H2）。
+- **本地存储权限**：`~/.aitrack/config.toml`、`~/.aitrack/records.db` 和本地用量账本均应使用仅当前用户可读写的权限，避免同机其他用户读取；写入过程先写临时文件再 rename，避免中断留下权限不当的半成品。
+- **record_sig HMAC**：每条记录在写入本地 SQLite 前计算 HMAC-SHA256 签名，绑定 `token_key + device_id + hostname + timestamp + tool + file_path + repo_url + current_sha + added_lines + removed_lines + sha256(diff_hunk)`，防止本地记录被篡改后重传（加固点 H1/H2）。
 - **请求级签名**：上传请求携带 `X-AiTrack-Signature`（HMAC 覆盖时间戳和请求体哈希），服务端校验 300 秒时间窗口，防止重放攻击。
-- **Myers/LCS 真差分**：使用 `similar` crate 计算最小差分，防止朴素行数统计被刷高（hardening point H4）。
-- **心跳**：定期上报 hook 安装状态，服务端可发现 hook 被静默卸载（hardening point H3）。
-- **解析失败记录日志**：适配器解析失败写 stderr，不静默吞错（hardening point H6）。
+- **Myers/LCS 真差分**：使用 `similar` crate 计算最小差分，防止朴素行数统计被刷高（加固点 H4）。
+- **心跳**：定期上报 hook 安装状态，服务端可发现 hook 被静默卸载（加固点 H3）。
+- **解析失败记录日志**：适配器解析失败写 stderr，不静默吞错（加固点 H6）。
 
 ### 服务端侧
 
@@ -37,6 +35,7 @@ aitrack 的主要风险来自：
 
 - `config.toml` 中的 `credential`（包含 token 和 hmac_secret）泄露。
 - 本地 `records.db` 文件权限过宽被同机其他进程读取。
+- 本地用量账本、会话记录或缓存中包含敏感提示词、路径、窗口标题或代码摘要。
 - 服务端 `/admin/tokens` 接口暴露到不可信网络。
 - 上报数据中包含敏感 `diff_hunk` 内容（代码差分包含机密信息）。
 
@@ -56,6 +55,7 @@ aitrack 的主要风险来自：
 - 完整 `config.toml` 文件内容。
 - 含有真实代码内容的 `diff_hunk`。
 - 本地私有路径或仓库 URL。
+- 未脱敏的本地会话记录、用量扫描文件、窗口标题或提示词正文。
 
 可以提供：
 
@@ -65,7 +65,7 @@ aitrack 的主要风险来自：
 
 ## 漏洞上报
 
-如果发现未修复的安全问题，请使用 **GitHub private security advisory** 或私有渠道联系维护者。不要在公开 Issue 中披露可利用细节。
+如果发现未修复的安全问题，请使用 **GitHub Security Advisory** 或维护者指定的安全联系渠道。不要在公开 Issue 中披露可利用细节。
 
 ## 相关文档
 

@@ -1,133 +1,89 @@
-# aitrack E2E Tests
+# aitrack E2E 测试
 
-End-to-end tests covering the full contract from admin token issuance through edit ingestion, anti-cheat validation, heartbeat, and stats queries. Tests run against both the Java and Go server implementations to prove wire compatibility.
+`e2e/` 覆盖从管理端签发 `credential` 到客户端上报、服务端校验、状态心跳、统计查询和设备查询的完整链路。测试同时跑 Java 服务端和 Go 服务端，用于确认两端协议兼容。
 
-## Structure
+## 目录结构
 
-```
+```text
 e2e/
-  fixtures/prompts/       — code snippets used as test payload content
-  factory/factory.go      — shared deterministic payload builders (seed-based)
-  scenarios/runner.go     — Go program: all test scenarios
-  Dockerfile.e2e          — container image for the runner
-  run.sh                  — local runner script (uses Docker)
+  fixtures/prompts/       # 测试载荷使用的代码片段
+  factory/factory.go      # 可复现的请求构造器
+  scenarios/runner.go     # Go 场景运行器
+  Dockerfile.e2e          # 运行器镜像
+  run.sh                  # 容器化场景测试入口
+  run-client-e2e.sh       # 真实 Rust 客户端链路测试入口
   go.mod
 ```
 
-## Running locally (requires Docker)
+## 容器化场景测试
 
-From `company-aitrack/`:
+在仓库根目录执行：
 
 ```bash
-# Run against both Java and Go (full suite)
 bash e2e/run.sh both
-
-# Java only
 bash e2e/run.sh java
-
-# Go only
 bash e2e/run.sh go
 ```
 
-The script:
-1. Builds all three Docker images (client, server-java, server-go)
-2. Starts each server in a container
-3. Runs the runner against it
-4. Tears down the container
-5. Reports PASS/FAIL per implementation
+脚本会依次构建镜像、启动目标服务端、运行场景、清理容器，并输出每个实现的 `PASS` / `FAIL`。
 
-## Real-binary client E2E (run-client-e2e.sh)
+覆盖场景：
 
-`run.sh` uses a Go runner that **simulates** the client by constructing signed
-requests by hand. The full capture pipeline inside the real `aitrack` Rust binary
-(stdin hook parsing → similar diff → git metadata → record_sig → SQLite insert →
-flush_unsynced) was never exercised end-to-end.
+| 场景 | 覆盖内容 |
+|------|----------|
+| 管理端签发 | 错误管理密钥、缺少 owner、正常签发 |
+| 请求鉴权 | 缺少 Bearer、错误 token、过期时间戳、错误 HMAC |
+| 编辑上报 | `POST /edits`、`GET /edits`、`/stats`、`/devices` |
+| 防篡改 | 错误 `record_sig`、超大编辑、缺少字段 |
+| 状态心跳 | `POST /heartbeat` 后设备状态可查询 |
+| 仓库白名单 | 未开启强制模式时未知仓库被接受或标记 |
 
-`e2e/run-client-e2e.sh` closes that gap.
+## 真实客户端 E2E
 
-### What it tests
-
-For each of the two server implementations (Java, Go) it:
-
-1. Compiles the real `aitrack` binary via `cargo build --release`.
-2. Starts the server in a Docker container.
-3. Issues `POST /admin/tokens` to obtain a fresh `credential` (and `token_key`); the credential is split on the first `-` into the token and HMAC secret.
-4. Creates an isolated `AITRACK_HOME` temp directory with `config.toml` pointing
-   at the test server — the real `~/.aitrack/` is never read or written.
-5. Creates a real git repo (with a commit) so the binary can resolve `repo_url`,
-   `branch`, and `current_sha`.
-6. Pipes real PostToolUse hook JSON into `aitrack capture --tool <tool>` for all
-   three adapters: **claude**, **codex**, **cursor**.
-7. Asserts the full chain for each capture:
-   - Client local `$AITRACK_HOME/records.db` contains the record.
-   - `record_sig` in the DB is a 64-char hex HMAC (not empty).
-   - `synced=1` confirms `flush_unsynced` ran and the server accepted the record.
-   - `GET /api/v1/ai-track/edits` returns the record with correct `file_path`,
-     `added_lines > 0`, `hostname`, and `diff_hunk` containing `@@`.
-8. Asserts `GET /api/v1/ai-track/stats` reflects the edits.
-9. Runs `aitrack heartbeat` and asserts `GET /api/v1/ai-track/devices` shows the device.
-10. Cleans up the container and temp directories.
-
-### Requirements
-
-- `docker` (images built by `e2e/run.sh` or built on first run)
-- `cargo` (Rust toolchain)
-- `sqlite3` CLI
-- `curl`, `git`, `python3`, `uuidgen`
-
-### Running
+`run.sh` 使用 Go 运行器直接构造签名请求；`run-client-e2e.sh` 会编译并执行真实 `aitrack` 二进制，覆盖本地捕获到服务端接收的完整路径。
 
 ```bash
-# From repo root — both implementations
 bash e2e/run-client-e2e.sh both
-
-# One implementation only
 bash e2e/run-client-e2e.sh java
 bash e2e/run-client-e2e.sh go
 ```
 
-### Isolation guarantee
+真实客户端 E2E 会检查：
 
-The script always sets `AITRACK_HOME` to a fresh `mktemp -d` directory.
-The real `~/.aitrack/` directory is never touched.
-A global `trap` and per-run `docker rm -f` ensure containers and temp dirs are
-cleaned up on exit, interrupt, or error.
+1. `cargo build --release` 成功。
+2. 服务端可签发新的 `credential`。
+3. 脚本使用独立 `AITRACK_HOME`，不读写真实 `~/.aitrack/`。
+4. 临时 git 仓库可提供 `repo_url`、`branch` 和 `current_sha`。
+5. `claude`、`codex`、`cursor` 三个原生编辑适配器都能通过 `aitrack capture --tool <tool>` 写入本地记录。
+6. 本地 `records.db` 中的 `record_sig` 为有效 HMAC，且记录已同步。
+7. 服务端 `GET /api/v1/ai-track/edits` 能查询到对应记录。
+8. `GET /api/v1/ai-track/stats` 和 `GET /api/v1/ai-track/devices` 反映上报结果。
 
-## Running with docker-compose.e2e.yml
+v1.7.0 的默认本地用量扫描范围、原生提示词钩子范围和动态心跳语义见 [AI 编码工具支持矩阵](../docs/AGENT_SUPPORT.md)。E2E 重点验证协议链路，不重复完整工具矩阵。
+
+## 本机依赖
+
+- `docker`
+- `cargo`
+- `sqlite3`
+- `curl`
+- `git`
+- `python3`
+- `uuidgen`
+
+## Compose 入口
 
 ```bash
-# Java profile
 docker compose -f docker/docker-compose.e2e.yml --profile java up --abort-on-container-exit
-
-# Go profile
 docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-container-exit
 ```
 
-## Scenarios
+## 测试载荷
 
-| Scenario | Description |
-|---|---|
-| Admin token auth | 403 wrong key, 400 missing owner, 200 valid issuance |
-| Contract validation | 401 no auth / wrong token / expired ts / bad sig; 400 empty edits |
-| Full happy path | issue token → POST /edits → accepted=1 → GET /edits → /stats → /devices |
-| Anti-cheat | tampered record_sig → rejected; oversized → flagged; missing field → rejected |
-| Heartbeat | POST /heartbeat → ok=true; GET /devices reflects device |
-| Repo whitelist | unknown repo with enforce=false → accepted or flagged (not hard-rejected) |
+`fixtures/prompts/` 中的片段用于生成可复现的 diff 和请求内容：
 
-## Fixtures
+- `claude_edit_snippet.txt`
+- `codex_edit_snippet.txt`
+- `cursor_edit_snippet.txt`
 
-`fixtures/prompts/` contains representative code snippets used as test payload content:
-- `claude_edit_snippet.txt` — Rust HMAC signature code sample
-- `codex_edit_snippet.txt` — Go signature implementation sample
-- `cursor_edit_snippet.txt` — Java validation code sample
-
-All e2e payload content (diff hunks, old/new strings) is derived from these fixtures.
-
-## Factory
-
-`factory/factory.go` provides seed-deterministic builders:
-- `DefaultEditParams(seed, tok)` — valid edit params with fixture-derived diff content
-- `BuildBatchRequest(deviceID, edits...)` — full upload request JSON
-- `BuildHeartbeatRequest(...)` — heartbeat body JSON
-- `TamperedRecordSig(p)` / `OversizedEdit(p)` / `MissingFieldEdit(p)` — negative case builders
-- `ComputeRecordSig(...)` / `ComputeRequestSig(...)` — canonical HMAC per CONTRACT.md
+`factory/factory.go` 提供默认编辑、心跳、签名、篡改记录和超大编辑等构造器，保证场景输入稳定可重复。
