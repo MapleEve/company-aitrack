@@ -42,11 +42,11 @@ aitrack 的公开版本保持通用、自托管和运行时解耦，同时保留
 |------|----------|
 | 原生编辑钩子适配器 | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成文件编辑类 `EditRecord` |
 | 工具注册、状态与心跳 | 服务端心跳 `hooks` 为动态状态图，可接收任意已登记工具 key 的安装或可见状态 |
-| 本地用量来源 | 本机日志、JSONL、SQLite、CSV、缓存和本地客户端状态可作为用量来源，也可补齐提示词、工具调用、窗口和可还原编辑监控事件 |
+| 本地用量来源 | 本机会话目录、JSONL、SQLite、CSV 和本地客户端状态可作为用量来源，也可补齐提示词、工具调用、窗口和可还原编辑监控事件 |
 
 `EditRecord` 是监控事件域，必须包含设备信息、时间、工具、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。用量汇总和额度/订阅快照是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。纯 token 或纯用量数据只能进入用量域，不能写成监控事件。
 
-完整工具支持矩阵、37 个默认扫描 key、3 个显式别名、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
+完整工具支持矩阵、35 个默认扫描 key、3 个显式别名、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
 
 `hooks.<tool> = true` 只表示该工具在本机可见或对应钩子可用，不代表该工具已经具备原生编辑钩子适配器。
 
@@ -159,7 +159,7 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 ### 本地用量与会话记录扫描流
 
-1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机日志、JSONL、SQLite、CSV 和缓存；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
+1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机会话目录、JSONL、SQLite 和 CSV；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
 2. 提取 token 分桶、消息数和成本估算，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
 3. 提取提示词、工具调用、窗口和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
 4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`

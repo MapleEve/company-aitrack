@@ -8,14 +8,14 @@
 
 ### 发布摘要
 
-v1.7.0 将 aitrack 从三条固定原生钩子扩展为「原生编辑证据 + 动态状态心跳 + 本地用量扫描」三层采集模型。本版本保持 `EditRecord` 监控事件与标量用量汇总分离，新增 Java 与 Go 两端的用量 API，并让 Rust 客户端从本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态中采集工具用量，无需用户手动粘贴第三方服务 token。
+v1.7.0 将 aitrack 从三条固定原生钩子扩展为「原生编辑证据 + 动态状态心跳 + 本地用量扫描」三层采集模型。本版本保持 `EditRecord` 监控事件与标量用量汇总分离，新增 Java 与 Go 两端的用量 API，并让 Rust 客户端从本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态中采集工具用量，无需用户手动粘贴第三方服务 token。
 
 GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.7.0.md)。
 
 ### 新增
 
 - **动态工具注册表 / 状态 / 心跳**：客户端状态和心跳 payload 现在按工具 key 表达动态注册项，不再固定为三工具布尔图。
-- **扩展本地来源矩阵**：默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- **扩展本地来源矩阵**：默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 - **用量数据面**：客户端新增 `usage_sessions`、`usage_daily_model_rollups`、`usage_subscription_snapshots`、`usage_outbox` 表；Java 与 Go 服务端新增 `/api/v1/ai-track/usage/rollup`、`/api/v1/ai-track/usage/subscription`、`/api/v1/ai-track/usage/summary`。
 - **本地会话监控恢复**：本地会话记录可为没有原生编辑钩子的工具恢复有界提示词、工具调用、窗口和可还原编辑监控事件。
 - **额度 / 订阅快照**：Claude Code 与 Codex CLI 的本地状态可写入额度和订阅快照数据面。
@@ -25,7 +25,7 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 - **有界本地扫描**：默认本地扫描使用近 30 天窗口，并按工具限制候选数、文件数、目录遍历数、JSONL/CSV 行数；文件游标缓存按工具、路径、大小、修改时间和扫描窗口记录，避免重复解析未变化来源。
 - **小范围回填流程**：`--since/--until` 继续用于定向历史回填，避免默认执行全量递归扫描。
 - **规范工具 key**：默认扫描只使用规范 key，避免同一本地路径被重复读取；显式 `--tool` 仍接受常见别名。
-- **公开文档**：README、API、隐私、架构和路线图文档同步说明监控事件域、用量汇总域和当前工具支持边界。
+- **文档**：README、API、隐私、架构和路线图文档同步说明监控事件域、用量汇总域和当前工具支持边界。
 
 ### 修复
 
@@ -35,8 +35,8 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 
 ### 测试 / CI
 
-- Rust 客户端单测：**300 tests**。
-- 客户端 E2E 矩阵门禁：必需本地来源工具覆盖 **37 / 37**，本地来源 E2E 覆盖率下限为 **90%**。
+- Rust 客户端单测：**301 tests**。
+- 客户端 E2E 矩阵门禁：必需本地来源工具覆盖 **35 / 35**，本地来源 E2E 覆盖率下限为 **90%**。
 - 客户端 E2E 验证：未变化本地来源立即第二次执行 `usage sync` 时，解析 **0** 条 message 和 **0** 条 monitoring event。
 - PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
 

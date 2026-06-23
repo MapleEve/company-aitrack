@@ -36,8 +36,6 @@ REQUIRED_LOCAL_SOURCE_AGENTS=(
     cursor
     trae
     qwen
-    baidu-comate
-    wenxin
     antigravity
     opencode
     qoder
@@ -108,6 +106,12 @@ if ! command -v git &>/dev/null; then
     echo "ERROR: git is required"; exit 1
 fi
 
+docker_build() {
+    local dockerfile="$1"
+    local tag="$2"
+    (cd "${REPO_ROOT}" && docker build --progress=plain -f "${dockerfile}" -t "${tag}" .)
+}
+
 # ── Step 1: build the real aitrack binary (once) ──────────────────────────────
 AITRACK_BIN="${CLIENT_DIR}/target/release/aitrack"
 
@@ -121,13 +125,11 @@ log "Binary ready: ${AITRACK_BIN}"
 # ── Step 2: build server images if needed ─────────────────────────────────────
 if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-java:e2e &>/dev/null; then
     log "Building aitrack-server-java:e2e image..."
-    (cd "${REPO_ROOT}" && docker build -f docker/Dockerfile.server-java \
-        -t aitrack-server-java:e2e . 2>&1 | tail -5)
+    docker_build docker/Dockerfile.server-java aitrack-server-java:e2e
 fi
 if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-go:e2e &>/dev/null; then
     log "Building aitrack-server-go:e2e image..."
-    (cd "${REPO_ROOT}" && docker build -f docker/Dockerfile.server-go \
-        -t aitrack-server-go:e2e . 2>&1 | tail -5)
+    docker_build docker/Dockerfile.server-go aitrack-server-go:e2e
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -169,12 +171,11 @@ api_get() {
     curl -s -H "Authorization: Bearer ${token}" "${server_url}${path}"
 }
 
-write_usage_source_fixture() {
-    local root="$1"
+write_usage_jsonl_fixture() {
+    local file="$1"
     local agent="$2"
-    local source_dir="${root}/sources/${agent}"
-    mkdir -p "${source_dir}"
-    cat > "${source_dir}/activity.jsonl" <<JSON
+    mkdir -p "$(dirname "${file}")"
+    cat > "${file}" <<JSON
 {"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1}
 {"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3}
 {"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}}
@@ -183,6 +184,92 @@ write_usage_source_fixture() {
 {"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"}
 {"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}
 JSON
+}
+
+write_usage_json_fixture() {
+    local file="$1"
+    local agent="$2"
+    mkdir -p "$(dirname "${file}")"
+    cat > "${file}" <<JSON
+[
+  {"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1},
+  {"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3},
+  {"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}},
+  {"timestamp":"2026-06-16T14:00:03Z","event.name":"tool.result","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.result":{"content":"${agent} tool result"}},
+  {"timestamp":"2026-06-16T14:00:04Z","event.name":"skill.use","gen_ai.session.id":"matrix-${agent}","gen_ai.skill.name":"review"},
+  {"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"},
+  {"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}
+]
+JSON
+}
+
+write_usage_sqlite_fixture() {
+    local file="$1"
+    local agent="$2"
+    mkdir -p "$(dirname "${file}")"
+    sqlite3 "${file}" <<SQL
+DROP TABLE IF EXISTS messages;
+CREATE TABLE messages (data TEXT);
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1}');
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3}');
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}}');
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:03Z","event.name":"tool.result","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.result":{"content":"${agent} tool result"}}');
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:04Z","event.name":"skill.use","gen_ai.session.id":"matrix-${agent}","gen_ai.skill.name":"review"}');
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"}');
+INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}');
+SQL
+}
+
+write_usage_source_fixture() {
+    local root="$1"
+    local agent="$2"
+    local fixture_path=""
+    local fixture_kind="jsonl"
+
+    case "${agent}" in
+        claude) fixture_path="${root}/.claude/projects/e2e/session-${agent}.jsonl" ;;
+        codex) fixture_path="${root}/.codex/sessions/2026/06/16/rollout-e2e-${agent}.jsonl" ;;
+        cursor) fixture_path="${root}/Library/Application Support/Cursor/User/globalStorage/aitrack/storage.json"; fixture_kind="json" ;;
+        trae) fixture_path="${root}/Library/Application Support/Trae/conversations/session-${agent}.jsonl" ;;
+        qwen) fixture_path="${root}/.qwen/projects/e2e/session-${agent}.jsonl" ;;
+        antigravity) fixture_path="${root}/.gemini/antigravity-ide/sessions/session-${agent}.jsonl" ;;
+        opencode) fixture_path="${root}/.local/share/opencode/opencode.db"; fixture_kind="sqlite" ;;
+        qoder) fixture_path="${root}/Library/Application Support/Qoder/SharedClientCache/cache/db/usage.sqlite"; fixture_kind="sqlite" ;;
+        qoder-cn) fixture_path="${root}/Library/Application Support/QoderCN/SharedClientCache/cache/db/usage.sqlite"; fixture_kind="sqlite" ;;
+        qoder-work) fixture_path="${root}/.qoderwork/data/messages.db"; fixture_kind="sqlite" ;;
+        qoder-work-cn) fixture_path="${root}/.qoderworkcn/data/messages.db"; fixture_kind="sqlite" ;;
+        wukong) fixture_path="${root}/.wukong/sessions/session-${agent}.jsonl" ;;
+        hermes) fixture_path="${root}/.hermes/state.db"; fixture_kind="sqlite" ;;
+        openclaw) fixture_path="${root}/.openclaw/agents/session-${agent}.jsonl" ;;
+        gemini) fixture_path="${root}/.gemini/tmp/session-${agent}.jsonl" ;;
+        copilot) fixture_path="${root}/.copilot/otel/session-${agent}.jsonl" ;;
+        cline) fixture_path="${root}/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/task-${agent}.jsonl" ;;
+        roo-code) fixture_path="${root}/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/task-${agent}.jsonl" ;;
+        kiro) fixture_path="${root}/.kiro/sessions/cli/session-${agent}.jsonl" ;;
+        zed) fixture_path="${root}/.local/share/zed/threads/threads.db"; fixture_kind="sqlite" ;;
+        goose) fixture_path="${root}/.local/share/goose/sessions/sessions.db"; fixture_kind="sqlite" ;;
+        amp) fixture_path="${root}/.local/share/amp/threads/thread-${agent}.jsonl" ;;
+        droid) fixture_path="${root}/.factory/sessions/session-${agent}.jsonl" ;;
+        pi) fixture_path="${root}/.pi/agent/sessions/session-${agent}.jsonl" ;;
+        mux) fixture_path="${root}/.mux/sessions/session-${agent}.jsonl" ;;
+        crush) fixture_path="${root}/.local/share/crush/crush.db"; fixture_kind="sqlite" ;;
+        codebuff) fixture_path="${root}/.config/manicode/projects/e2e/session-${agent}.jsonl" ;;
+        kilo) fixture_path="${root}/.local/share/kilo/kilo.db"; fixture_kind="sqlite" ;;
+        kilocode) fixture_path="${root}/.config/Code/User/globalStorage/kilocode.kilo-code/tasks/task-${agent}.jsonl" ;;
+        kimi) fixture_path="${root}/.kimi/sessions/session-${agent}.jsonl" ;;
+        gjc) fixture_path="${root}/.gjc/agent/sessions/session-${agent}.jsonl" ;;
+        grok) fixture_path="${root}/.grok/sessions/session-${agent}.jsonl" ;;
+        synthetic) fixture_path="${root}/.local/share/octofriend/sqlite.db"; fixture_kind="sqlite" ;;
+        warp) fixture_path="${root}/.config/aitrack/warp-cache/session-${agent}.jsonl" ;;
+        zcode) fixture_path="${root}/.zcode/cli/db/zcode.db"; fixture_kind="sqlite" ;;
+        *) echo "ERROR: no native usage fixture path for ${agent}" >&2; return 1 ;;
+    esac
+
+    case "${fixture_kind}" in
+        json) write_usage_json_fixture "${fixture_path}" "${agent}" ;;
+        sqlite) write_usage_sqlite_fixture "${fixture_path}" "${agent}" ;;
+        *) write_usage_jsonl_fixture "${fixture_path}" "${agent}" ;;
+    esac
 }
 
 # ── Core e2e function run against one server implementation ──────────────────
@@ -243,6 +330,16 @@ TOML
     # Common env for all aitrack invocations
     E2E_ENV=(
         "AITRACK_HOME=${AITRACK_HOME}"
+        "AITRACK_SCAN_HOME=${AITRACK_HOME}"
+        "XDG_DATA_HOME=${AITRACK_HOME}/.local/share"
+        "XDG_CONFIG_HOME=${AITRACK_HOME}/.config"
+        "CODEX_HOME=${AITRACK_HOME}/.codex"
+        "GEMINI_CLI_HOME=${AITRACK_HOME}/.gemini"
+        "CODEBUFF_DATA_DIR=${AITRACK_HOME}/.config/manicode"
+        "GJC_CODING_AGENT_DIR=${AITRACK_HOME}/.gjc/agent/sessions"
+        "GROK_HOME=${AITRACK_HOME}/.grok"
+        "HERMES_HOME=${AITRACK_HOME}/.hermes"
+        "KIMI_CODE_HOME=${AITRACK_HOME}/.kimi-code"
     )
 
     # Wrapper: run aitrack with isolated env from within the git repo

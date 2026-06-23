@@ -12,7 +12,7 @@ aitrack v1.7.0 已从三条固定编辑钩子扩展为「原生编辑证据 + �
 
 - **原生编辑证据**：Claude Code、Codex CLI、Cursor 可以通过原生编辑钩子生成带签名的 `EditRecord`。
 - **动态状态心跳**：所有已登记工具都可以出现在 `hooks` 动态状态图里，用于排查工具是否存在、钩子是否异常。
-- **本地用量扫描**：37 个默认工具 key 可以从本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态中提取用量与可还原监控事件。
+- **本地用量扫描**：35 个默认工具 key 可以从本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态中提取用量与可还原监控事件。
 
 ---
 
@@ -22,7 +22,7 @@ aitrack v1.7.0 已从三条固定编辑钩子扩展为「原生编辑证据 + �
 |--------|------|----------------|----------------|
 | `EditRecord` 监控事件 | 可信编辑证据、提示词/工具/窗口监控事件 | 原生编辑钩子；本地会话记录中可还原的提示词、工具调用、窗口和编辑事件 | 只有 token 数、请求数、成本估算的纯用量数据 |
 | 状态心跳 | 设备状态、工具注册状态、钩子异常排查 | `aitrack status`、`aitrack heartbeat`、每次采集后的节流心跳 | 不能等同于某个工具已经有原生编辑钩子 |
-| 用量汇总 | 按天、工具、模型、账号汇总 token、消息数和成本估算 | 本地日志、会话记录、CSV、SQLite、缓存、本地客户端状态 | 不能伪装成签名编辑记录 |
+| 用量汇总 | 按天、工具、模型、账号汇总 token、消息数和成本估算 | 本机会话目录、CSV、SQLite、本地客户端状态 | 不能伪装成签名编辑记录 |
 | 额度/订阅快照 | 保存本地可读取的剩余额度、套餐和重置时间 | Claude Code、Codex CLI 可读取的本地状态 | 不能要求用户手动粘贴第三方云端 token |
 
 ---
@@ -41,9 +41,9 @@ aitrack v1.7.0 已从三条固定编辑钩子扩展为「原生编辑证据 + �
 
 ## 默认本地扫描范围
 
-默认执行 `aitrack usage scan` 或 `aitrack usage sync` 时，未指定 `--tool` 会扫描以下 37 个规范 key：
+默认执行 `aitrack usage scan` 或 `aitrack usage sync` 时，未指定 `--tool` 会扫描以下 35 个规范 key：
 
-`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+`claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
 
 显式指定 `--tool` 时，还接受以下别名：
 
@@ -62,10 +62,10 @@ aitrack v1.7.0 已从三条固定编辑钩子扩展为「原生编辑证据 + �
 aitrack 只从本机可见的文件和本地状态读取，不要求用户另行登录第三方账号，也不要求手动粘贴第三方服务 token。通用入口包括：
 
 - 工具默认配置目录和会话目录。
-- `~/.aitrack/sources/<tool>`、`~/.aitrack/cache/<tool>`、`~/.aitrack/logs/<tool>`。
 - `~/.aitrack/local-sources/<tool>`。
+- `~/.aitrack/sources/<tool>`。
 - JSON、JSONL、NDJSON、CSV、SQLite 数据库。
-- 工具本地缓存、本地客户端状态、本地导出的会话或日志。
+- 工具本地状态、本地导出的会话文件。
 
 当来源中存在对应字段时，扫描器会尽量提取：
 

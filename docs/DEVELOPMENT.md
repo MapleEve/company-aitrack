@@ -77,8 +77,8 @@ v1.7.0 当前支持边界：
 
 - 原生编辑钩子适配器：`claude`、`codex`、`cursor`。
 - 原生提示词钩子：仅 `claude`。
-- 默认本地扫描：37 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
-- 本地来源类型：本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态。
+- 默认本地扫描：35 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- 本地来源类型：本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态。
 - 默认扫描窗口：近 30 天；显式 `--since/--until` 用于小范围回填；扫描游标缓存会跳过未变化来源。
 
 ### 测试模块覆盖情况
@@ -88,7 +88,7 @@ v1.7.0 当前支持边界：
 | `domain/` | 纯业务逻辑、HMAC、diff、关键词分类 | Rust 覆盖率 LINE ≥ 90% |
 | `port/` | 存储 / 上传端口契约 | Rust 覆盖率 LINE ≥ 90% |
 | `adapter/` | SQLite、HTTP、事件适配、本地用量来源 | Rust 覆盖率 LINE ≥ 90% |
-| **TOTAL** | client 全量单测 + 覆盖率 | **300 tests；LINE ≥ 90%** |
+| **TOTAL** | client 全量单测 + 覆盖率 | **301 tests；LINE ≥ 90%** |
 
 > v1.7 本地来源扩展后，Rust 客户端单测覆盖动态工具注册表、用量汇总、会话记录监控、窗口化扫描和文件游标缓存。
 
@@ -127,7 +127,7 @@ let big = tampered_oversized_lines(1);  // added_lines = 99,999,999
 ### usage 子命令
 
 ```bash
-# 扫描默认 37 个工具 key，只写入本地 usage.sqlite
+# 扫描默认 35 个工具 key，只写入本地 usage.sqlite
 ./target/debug/aitrack usage scan
 
 # 针对单个工具做小范围回填
@@ -324,7 +324,7 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 
 | 组件 | 工具 | 命令 | 门槛 | 当前覆盖率 |
 |------|------|------|------|------------|
-| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **300 tests；LINE ≥ 90%** |
+| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **301 tests；LINE ≥ 90%** |
 | Java 服务端 | JaCoCo | `mvn verify` | LINE ≥ 90% | **LINE ≥ 90%** |
 | Go 服务端 | go cover | `go tool cover -func cover.out` | total ≥ 90% | **95.3%** |
 

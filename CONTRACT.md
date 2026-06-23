@@ -8,7 +8,7 @@
 
 - 原生编辑证据：Claude Code、Codex CLI、Cursor 具备原生编辑钩子适配器，可以生成带 diff、行数、仓库元数据和 `record_sig` 的 `EditRecord`。
 - 动态状态心跳：`heartbeat.hooks` 从固定字段扩展为按工具 key 组织的动态状态图。
-- 本地用量扫描：默认扫描 37 个工具 key，从本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态中提取用量、额度快照和可还原监控事件。
+- 本地用量扫描：默认扫描 35 个工具 key，从本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态中提取用量、额度快照和可还原监控事件。
 
 ---
 
@@ -52,16 +52,16 @@ aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具�
 
 ### 当前工具支持范围
 
-| 工具范围 | 原生编辑钩子 | 原生提示词钩子 | 本地会话 / 缓存扫描 | 用量汇总 | 额度 / 订阅快照 |
+| 工具范围 | 原生编辑钩子 | 原生提示词钩子 | 本地会话扫描 | 用量汇总 | 额度 / 订阅快照 |
 |----------|--------------|----------------|----------------------|----------|-----------------|
-| `claude` | 是 | 是 | `.claude/`、projects / transcripts 目录、`~/.aitrack/sources/claude`、`~/.aitrack/cache/claude` | 是 | 本地限额快照 |
-| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex`、`~/.aitrack/cache/codex` | 是 | 本地会话限额快照 |
-| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor`、`~/.aitrack/cache/cursor` | 是 | 否 |
-| 默认本地扫描工具 | 否 | 否 | 本地工具目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>`、`~/.aitrack/cache/<agent>` | token、消息数、成本估算 | 否 |
+| `claude` | 是 | 是 | `.claude/`、projects / transcripts 目录、`~/.aitrack/sources/claude` | 是 | 本地限额快照 |
+| `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex` | 是 | 本地会话限额快照 |
+| `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor` | 是 | 否 |
+| 默认本地扫描工具 | 否 | 否 | 明确的原生路径、应用状态、JSON/JSONL/NDJSON、CSV、SQLite，以及显式结构化导入根 | token、消息数、成本估算 | 否 |
 
-默认本地扫描覆盖 37 个规范 key：
+默认本地扫描覆盖 35 个规范 key：
 
-`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+`claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
 
 显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；默认扫描使用规范 key，避免重复读取同一类本地来源。
 

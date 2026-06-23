@@ -79,20 +79,20 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 **Agent 및 데이터 도메인 경계:**
 
 - Claude Code, Codex CLI, Cursor는 현재 native edit hook adapter를 갖고 있어 diff, 줄 수, 저장소 메타데이터, `record_sig`를 포함한 `EditRecord`를 생성할 수 있습니다
-- 그 밖의 등록 agent는 registry, status, heartbeat, local usage source 흐름에 참여할 수 있습니다. native hook 이 없어도 로컬 transcript 스캔으로 prompt, tool, window, 복원 가능한 edit 모니터링 이벤트를 보완할 수 있습니다
+- 그 밖의 등록 agent는 registry, status, heartbeat, local usage source 흐름에 참여할 수 있습니다. native hook 이 없어도 typed local 스캔으로 prompt, tool, window, 복원 가능한 edit 모니터링 이벤트를 보완할 수 있습니다
 - `EditRecord`는 편집 증거 도메인입니다. usage rollup / snapshot은 스칼라 사용량 도메인이며, token-only 또는 usage-only 데이터를 편집 레코드로 취급할 수 없습니다
-- 로컬 사용량 소스에는 로컬 로그, JSONL, SQLite, 캐시, 로컬 클라이언트 상태가 포함됩니다. aitrack는 가능한 로컬 자격 증명 또는 진입점을 자동 발견하며, 사용자에게 서드파티 token을 수동으로 붙여 넣도록 요구하지 않습니다
+- 로컬 사용량 소스에는 typed transcript/session 디렉터리, JSONL, SQLite, 로컬 클라이언트 상태가 포함됩니다. 명시적 import 디렉터리는 opt-in 진입점이며, aitrack는 사용자에게 서드파티 token을 수동으로 붙여 넣도록 요구하지 않습니다
 
 **현재 지원되는 agent framework:**
 
-| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+| agent key | native edit hook | native prompt hook | local transcript scan | usage rollup | quota / subscription snapshot |
 |-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | 지원 | 지원 | 지원: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | 지원 | 지원: 로컬 rate-limit snapshot |
-| `codex` | 지원 | 미지원 | 지원: `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | 지원 | 지원: session rate-limit snapshot |
-| `cursor` | 지원 | 미지원 | 지원: Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | 지원 | 미지원 |
-| default local-scan agents | 미지원 | 미지원 | 로컬 agent 디렉터리, 앱 데이터, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | 미지원 |
+| `claude` | 지원 | 지원 | 지원: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude` | 지원 | 지원: 로컬 rate-limit snapshot |
+| `codex` | 지원 | 미지원 | 지원: `.codex/sessions`, `~/.aitrack/sources/codex` | 지원 | 지원: session rate-limit snapshot |
+| `cursor` | 지원 | 미지원 | 지원: Cursor globalStorage, `~/.aitrack/sources/cursor` | 지원 | 미지원 |
+| default local-scan agents | 미지원 | 미지원 | typed native path 및 명시적 structured import root | token, message count, source cost | 미지원 |
 
-기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 기본 스캔은 canonical key 를 사용해 같은 로컬 경로의 중복 수집을 피합니다. 로컬 JSON, JSONL, NDJSON, CSV, SQLite, 캐시에 prompt, tool, window, edit, token 필드가 있으면 aitrack 가 해당 모니터링 또는 usage 데이터면으로 수집합니다.
+기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 기본 스캔은 canonical key 를 사용해 같은 로컬 경로의 중복 수집을 피합니다. 로컬 JSON, JSONL, NDJSON, CSV, SQLite, 로컬 source 파일에 prompt, tool, window, edit, token 필드가 있으면 aitrack 가 해당 모니터링 또는 usage 데이터면으로 수집합니다.
 
 ---
 
@@ -150,7 +150,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 ### 프롬프트 및 로컬 transcript 모니터링(v1.7+)
 
-클라이언트는 선택적으로 `UserPromptSubmit` 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 agent, 시간 창, 로컬 커서 캐시 기준으로 로컬 agent 로그, JSONL, SQLite, 캐시를 스캔할 수 있습니다. 기본 모드는 최근 창의 증분 스캔이며, 명시적인 `--since/--until` 로 작은 범위의 백필을 수행합니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 로컬 transcript 에서 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
+클라이언트는 선택적으로 `UserPromptSubmit` 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 agent, 시간 창, 로컬 커서 캐시 기준으로 typed local session 디렉터리, JSONL, SQLite, 로컬 상태 파일을 스캔할 수 있습니다. 기본 모드는 최근 창의 증분 스캔이며, 명시적인 `--since/--until` 로 작은 범위의 백필을 수행합니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 typed local source 에서 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
 
 `usage` 서브커맨드는 별도의 usage rollup / subscription snapshot 데이터면도 유지합니다. day, agent, model, account 기준으로 token bucket, message count, source cost 를 집계하고 `/api/v1/ai-track/usage/*` API 를 통해 Java 또는 Go 서버로 업로드합니다.
 
@@ -159,7 +159,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 - Rust 클라이언트가 헥사고날 아키텍처(domain / port / adapter 3계층)로 리팩터링 완료. 모든 I/O는 `StoragePort` / `UploadPort` 인터페이스를 통해 라우팅되어 비즈니스 로직과 인프라가 완전히 분리
 - `aitrack update` 서브커맨드: GitHub Releases에서 최신 버전을 가져와 ed25519 서명 검증 후 현재 바이너리를 원자적으로 교체
 - 키워드 라이브러리 변조 방지: 키워드는 컴파일 타임 상수로 하드코딩되어 있으며, `keyword_fingerprint()`가 서버 측 검증을 위한 SHA-256 지문을 계산
-- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 300 tests / Java 및 Go package tests)
+- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 301 tests / Java 및 Go package tests)
 
 ---
 
