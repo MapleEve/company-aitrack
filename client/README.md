@@ -7,7 +7,7 @@
 - 原生编辑证据：`claude`、`codex`、`cursor` 适配器可生成带 `diff_hunk`、行数、仓库信息和 `record_sig` 的 `EditRecord`。
 - 原生提示词钩子：目前仅 `claude` 支持 `UserPromptSubmit`。
 - 动态状态心跳：`aitrack status` 和 `aitrack heartbeat` 会上报本机工具可见性、钩子状态和待同步数量。
-- 本地用量扫描：`aitrack usage scan` / `aitrack usage sync` 默认扫描 37 个工具 key；其它工具主要通过本地状态、会话、日志、缓存、SQLite、CSV、JSON/JSONL/NDJSON 等来源覆盖。
+- 本地用量扫描：`aitrack usage scan` / `aitrack usage sync` 默认扫描 35 个工具 key；其它工具主要通过本地状态、会话目录、SQLite、CSV、JSON/JSONL/NDJSON 等来源覆盖。
 
 完整工具矩阵、默认 key、别名和扫描边界见 [AI 编码工具支持矩阵](../docs/AGENT_SUPPORT.md)。
 

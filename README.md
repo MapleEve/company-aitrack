@@ -66,10 +66,10 @@ v1.7.0 之后，aitrack 的采集能力分成三层，不再只围绕三条固�
 | 层级 | 已支持能力 | 适用工具 |
 |------|------------|----------|
 | 原生编辑证据 | 生成带 diff、行数、仓库信息和 `record_sig` 的 `EditRecord` | Claude Code、Codex CLI、Cursor |
-| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 37 个默认工具 key 和显式别名 |
-| 本地用量扫描 | 扫描本机日志、会话记录、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态，提取提示词、工具调用、窗口、可还原编辑事件、token、消息数和成本估算 | 默认 37 个工具 key；可用 `--tool` 限定范围 |
+| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 35 个默认工具 key 和显式别名 |
+| 本地用量扫描 | 扫描本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态，提取提示词、工具调用、窗口、可还原编辑事件、token、消息数和成本估算 | 默认 35 个工具 key；可用 `--tool` 限定范围 |
 
-默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 
 详细支持矩阵、扫描路径、性能上限和管理员解读方式见 [AI 编码工具支持矩阵](docs/AGENT_SUPPORT.md)。
 
@@ -156,7 +156,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 ### 提示词与本地会话记录监控（v1.7+）
 
-客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机工具日志、JSONL、SQLite 和缓存；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具也可通过本地会话记录扫描补齐提示词、工具调用、窗口和编辑监控事件。
+客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机会话目录、JSONL、SQLite 和本地状态文件；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具也可通过本地会话记录扫描补齐提示词、工具调用、窗口和编辑监控事件。
 
 `usage` 子命令同时维护独立的用量汇总和额度/订阅快照数据面，按日期、工具、模型、账号聚合 token 分桶、消息数和成本估算，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 
@@ -165,7 +165,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - Rust 客户端完成六边形架构重构（domain / port / adapter 三层），所有 I/O 通过 `StoragePort` / `UploadPort` 接口路由，业务逻辑与基础设施彻底解耦
 - `aitrack update` 子命令：从 GitHub Releases 拉取最新版本，ed25519 签名验证通过后原子替换当前二进制
 - 关键词库防篡改：关键词以编译期常量硬编码，`keyword_fingerprint()` 计算 SHA-256 指纹供服务端校验
-- 三端覆盖率均 ≥ 90%（Rust 300 tests / Java 和 Go package tests）
+- 三端覆盖率均 ≥ 90%（Rust 301 tests / Java 和 Go package tests）
 
 ---
 
@@ -213,7 +213,7 @@ aitrack status
 # 查看本地记录（最近 20 条）
 aitrack inspect --limit 20
 
-# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 37 个工具 key
+# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 35 个工具 key
 aitrack usage scan
 
 # 扫描、汇总并上传用量，也会上传本地会话记录中可还原的监控事件

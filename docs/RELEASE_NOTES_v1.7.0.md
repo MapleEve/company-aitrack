@@ -9,7 +9,7 @@ Claude Code、Codex CLI、Cursor 仍是原生编辑钩子的主要证据路径�
 ## 主要变化
 
 - 新增动态工具注册表、状态查询和节流心跳，统一使用规范工具 key 与别名。
-- 新增本地用量扫描，覆盖日志、JSON/JSONL/NDJSON、CSV、SQLite、缓存和本地客户端状态。
+- 新增本地用量扫描，覆盖本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态。
 - 新增 Java 与 Go 用量接口，支持日汇总、额度/订阅快照和摘要查询。
 - 从本地会话记录中恢复受限的提示词、工具调用、窗口上下文和可还原编辑监控事件。
 - 扫描器默认回看 30 天；`--since/--until` 可用于受控回填；每个工具、文件、JSONL/CSV 行数和缓存游标都有上限。
@@ -27,9 +27,9 @@ Claude Code、Codex CLI、Cursor 仍是原生编辑钩子的主要证据路径�
 
 ### 默认本地扫描工具
 
-默认执行 `aitrack usage scan` 或 `aitrack usage sync` 且未指定 `--tool` 时，会扫描以下 37 个规范 key：
+默认执行 `aitrack usage scan` 或 `aitrack usage sync` 且未指定 `--tool` 时，会扫描以下 35 个规范 key：
 
-`claude`、`codex`、`cursor`、`trae`、`qwen`、`baidu-comate`、`wenxin`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+`claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
 
 显式指定 `--tool` 时，也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 
@@ -42,7 +42,7 @@ Claude Code、Codex CLI、Cursor 仍是原生编辑钩子的主要证据路径�
 
 ## 验证记录
 
-- Rust 客户端单元测试：300 个通过。
-- 本地扫描 E2E 矩阵：37 / 37 个默认工具 key 已覆盖。
+- Rust 客户端单元测试：301 个通过。
+- 本地扫描 E2E 矩阵：35 / 35 个默认工具 key 已覆盖。
 - 客户端 E2E 缓存断言：未变化数据源立即二次同步时，解析 0 条用量消息和 0 条监控事件。
 - PR 门禁覆盖 Rust、Java、Go、架构、覆盖率、Java+Go E2E、Rust 本地扫描 E2E、Codecov、FOSSA 和自动化审查。

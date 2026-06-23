@@ -85,14 +85,14 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 **현재 지원되는 agent framework:**
 
-| agent key | native edit hook | native prompt hook | local transcript / cache scan | usage rollup | quota / subscription snapshot |
+| agent key | native edit hook | native prompt hook | local transcript scan | usage rollup | quota / subscription snapshot |
 |-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | 지원 | 지원 | 지원: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude`, `~/.aitrack/cache/claude` | 지원 | 지원: 로컬 rate-limit snapshot |
-| `codex` | 지원 | 미지원 | 지원: `.codex/sessions`, `~/.aitrack/sources/codex`, `~/.aitrack/cache/codex` | 지원 | 지원: session rate-limit snapshot |
-| `cursor` | 지원 | 미지원 | 지원: Cursor globalStorage, `~/.aitrack/sources/cursor`, `~/.aitrack/cache/cursor` | 지원 | 미지원 |
-| default local-scan agents | 미지원 | 미지원 | 로컬 agent 디렉터리, 앱 데이터, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>`, `~/.aitrack/cache/<agent>` | token, message count, source cost | 미지원 |
+| `claude` | 지원 | 지원 | 지원: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude` | 지원 | 지원: 로컬 rate-limit snapshot |
+| `codex` | 지원 | 미지원 | 지원: `.codex/sessions`, `~/.aitrack/sources/codex` | 지원 | 지원: session rate-limit snapshot |
+| `cursor` | 지원 | 미지원 | 지원: Cursor globalStorage, `~/.aitrack/sources/cursor` | 지원 | 미지원 |
+| default local-scan agents | 미지원 | 미지원 | 로컬 agent 디렉터리, 앱 데이터, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>` | token, message count, source cost | 미지원 |
 
-기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `baidu-comate`, `wenxin`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 기본 스캔은 canonical key 를 사용해 같은 로컬 경로의 중복 수집을 피합니다. 로컬 JSON, JSONL, NDJSON, CSV, SQLite, 캐시에 prompt, tool, window, edit, token 필드가 있으면 aitrack 가 해당 모니터링 또는 usage 데이터면으로 수집합니다.
+기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 기본 스캔은 canonical key 를 사용해 같은 로컬 경로의 중복 수집을 피합니다. 로컬 JSON, JSONL, NDJSON, CSV, SQLite, 로컬 source 파일에 prompt, tool, window, edit, token 필드가 있으면 aitrack 가 해당 모니터링 또는 usage 데이터면으로 수집합니다.
 
 ---
 
@@ -159,7 +159,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 - Rust 클라이언트가 헥사고날 아키텍처(domain / port / adapter 3계층)로 리팩터링 완료. 모든 I/O는 `StoragePort` / `UploadPort` 인터페이스를 통해 라우팅되어 비즈니스 로직과 인프라가 완전히 분리
 - `aitrack update` 서브커맨드: GitHub Releases에서 최신 버전을 가져와 ed25519 서명 검증 후 현재 바이너리를 원자적으로 교체
 - 키워드 라이브러리 변조 방지: 키워드는 컴파일 타임 상수로 하드코딩되어 있으며, `keyword_fingerprint()`가 서버 측 검증을 위한 SHA-256 지문을 계산
-- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 300 tests / Java 및 Go package tests)
+- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 301 tests / Java 및 Go package tests)
 
 ---
 

@@ -246,6 +246,18 @@ struct FileScanPlan {
     max_entries: usize,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ScanRootKind {
+    Native,
+    Import,
+}
+
+#[derive(Debug, Clone)]
+struct ScanRoot {
+    path: PathBuf,
+    kind: ScanRootKind,
+}
+
 #[derive(Default)]
 struct FileCollector {
     files: Vec<SourceFile>,
@@ -611,7 +623,7 @@ fn scan_local_sources(conn: &Connection, options: &UsageScanOptions) -> Result<S
         let roots = scan_roots(&home, &tool);
         let mut collector = FileCollector::default();
         for root in roots {
-            collect_supported_files(&root, &plan, &mut collector);
+            collect_supported_files(&tool, &root, &plan, &mut collector);
             if collector.at_limit(&plan) {
                 break;
             }
@@ -663,7 +675,8 @@ fn selected_scan_tools(raw: &[String]) -> Vec<String> {
     }
     let mut out = Vec::new();
     for item in raw {
-        let name = item.trim().to_ascii_lowercase();
+        let lowered = item.trim().to_ascii_lowercase();
+        let name = agent::canonical_agent_name(&lowered).to_string();
         if !name.is_empty() && !out.contains(&name) {
             out.push(name);
         }
@@ -671,35 +684,50 @@ fn selected_scan_tools(raw: &[String]) -> Vec<String> {
     out
 }
 
-fn scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
-    let mut roots = agent::default_scan_roots(home, tool);
-    roots.push(crate::config::config_dir().join("sources").join(tool));
-    roots.push(crate::config::config_dir().join("cache").join(tool));
-    roots.push(crate::config::config_dir().join("logs").join(tool));
-    roots.push(
-        crate::config::config_dir()
-            .join("logs")
-            .join(tool)
-            .join("history"),
-    );
+fn scan_roots(home: &Path, tool: &str) -> Vec<ScanRoot> {
+    let mut roots = agent::default_scan_roots(home, tool)
+        .into_iter()
+        .map(|path| ScanRoot {
+            path,
+            kind: ScanRootKind::Native,
+        })
+        .collect::<Vec<_>>();
+    let config_dir = crate::config::config_dir();
+    for path in [
+        config_dir.join("local-sources").join(tool),
+        config_dir.join("sources").join(tool),
+    ] {
+        roots.push(ScanRoot {
+            path,
+            kind: ScanRootKind::Import,
+        });
+    }
     dedup_paths(roots)
 }
 
-fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+fn dedup_paths(paths: Vec<ScanRoot>) -> Vec<ScanRoot> {
     let mut out = Vec::new();
-    for path in paths {
-        if !out.iter().any(|existing| existing == &path) {
-            out.push(path);
+    for root in paths {
+        if !out
+            .iter()
+            .any(|existing: &ScanRoot| existing.path == root.path)
+        {
+            out.push(root);
         }
     }
     out
 }
 
-fn collect_supported_files(root: &Path, plan: &FileScanPlan, collector: &mut FileCollector) {
-    if collector.at_limit(plan) || !root.exists() {
+fn collect_supported_files(
+    tool: &str,
+    root: &ScanRoot,
+    plan: &FileScanPlan,
+    collector: &mut FileCollector,
+) {
+    if collector.at_limit(plan) || !root.path.exists() {
         return;
     }
-    let Ok(meta) = fs::metadata(root) else {
+    let Ok(meta) = fs::metadata(&root.path) else {
         return;
     };
     if meta.is_file() {
@@ -708,10 +736,10 @@ fn collect_supported_files(root: &Path, plan: &FileScanPlan, collector: &mut Fil
             .ok()
             .and_then(system_time_ms)
             .unwrap_or_else(now_ms);
-        if is_supported_file(root) && mtime_ms >= plan.min_mtime_ms {
+        if is_supported_file(tool, root, &root.path) && mtime_ms >= plan.min_mtime_ms {
             collector.push_file(
                 SourceFile {
-                    path: root.to_path_buf(),
+                    path: root.path.clone(),
                     mtime_ms,
                     size_bytes: meta.len(),
                 },
@@ -720,11 +748,11 @@ fn collect_supported_files(root: &Path, plan: &FileScanPlan, collector: &mut Fil
         }
         return;
     }
-    if skip_dir(root) {
+    if skip_dir(&root.path) {
         return;
     }
 
-    let Ok(entries) = fs::read_dir(root) else {
+    let Ok(entries) = fs::read_dir(&root.path) else {
         return;
     };
     for entry in entries.flatten() {
@@ -732,7 +760,11 @@ fn collect_supported_files(root: &Path, plan: &FileScanPlan, collector: &mut Fil
             break;
         }
         collector.inspected_entries = collector.inspected_entries.saturating_add(1);
-        collect_supported_files(&entry.path(), plan, collector);
+        let child = ScanRoot {
+            path: entry.path(),
+            kind: root.kind,
+        };
+        collect_supported_files(tool, &child, plan, collector);
     }
 }
 
@@ -746,7 +778,14 @@ fn skip_dir(path: &Path) -> bool {
     )
 }
 
-fn is_supported_file(path: &Path) -> bool {
+fn is_supported_file(tool: &str, root: &ScanRoot, path: &Path) -> bool {
+    match root.kind {
+        ScanRootKind::Import => is_import_file(path),
+        ScanRootKind::Native => is_native_file(tool, path),
+    }
+}
+
+fn is_import_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|s| s.to_str()),
         Some("json")
@@ -758,6 +797,106 @@ fn is_supported_file(path: &Path) -> bool {
             | Some("sqlite")
             | Some("sqlite3")
     )
+}
+
+fn is_native_file(tool: &str, path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if !matches!(
+        ext,
+        "json" | "jsonl" | "ndjson" | "db" | "sqlite" | "sqlite3" | "vscdb"
+    ) {
+        return false;
+    }
+
+    let lowered = path.to_string_lossy().to_ascii_lowercase();
+    if is_disallowed_native_file(tool, &lowered) {
+        return false;
+    }
+
+    match tool {
+        "codex" => ext == "jsonl" && lowered.contains("/sessions/"),
+        "claude" => lowered.contains("/projects/") || lowered.contains("/transcripts/"),
+        "cursor" => {
+            lowered.contains("/globalstorage/")
+                && (lowered.ends_with("storage.json")
+                    || lowered.ends_with("state.vscdb")
+                    || lowered.ends_with("state.vscdb.backup")
+                    || lowered.ends_with(".sqlite")
+                    || lowered.ends_with(".sqlite3")
+                    || lowered.ends_with(".db"))
+        }
+        "copilot" => lowered.contains("/otel/") || lowered.contains("/session-state/"),
+        "opencode" => {
+            lowered.ends_with("opencode.db")
+                || (lowered.contains("/opencode/")
+                    && (lowered.contains("session")
+                        || lowered.contains("conversation")
+                        || lowered.contains("usage")
+                        || lowered.contains("message")))
+        }
+        "qoder" | "qoder-cn" => {
+            lowered.contains("/sharedclientcache/cache/db/")
+                || lowered.contains("/history/")
+                || lowered.contains("/ai_tracker/")
+                || native_name_has_known_signal(&lowered)
+        }
+        "qoder-work" | "qoder-work-cn" => {
+            lowered.contains("/data/")
+                && (lowered.ends_with("agents.db")
+                    || lowered.ends_with("messages.db")
+                    || native_name_has_known_signal(&lowered))
+        }
+        "cline" | "roo-code" | "roocode" | "kilocode" | "kilo-code" | "kiro" | "zed" => {
+            native_name_has_known_signal(&lowered)
+        }
+        "goose" => native_name_has_known_signal(&lowered) || lowered.ends_with("sessions.db"),
+        "crush" => native_name_has_known_signal(&lowered) || lowered.ends_with("crush.db"),
+        "kilo" => native_name_has_known_signal(&lowered) || lowered.ends_with("kilo.db"),
+        "hermes" => native_name_has_known_signal(&lowered) || lowered.ends_with("state.db"),
+        "synthetic" => native_name_has_known_signal(&lowered) || lowered.ends_with("sqlite.db"),
+        "zcode" => native_name_has_known_signal(&lowered) || lowered.ends_with("zcode.db"),
+        "trae" | "wukong" | "gemini" | "amp" | "droid" | "pi" | "mux" | "codebuff" | "kimi"
+        | "gjc" | "gajae-code" | "grok" | "openclaw" | "warp" | "antigravity" | "qwen" => {
+            native_name_has_known_signal(&lowered)
+        }
+        _ => false,
+    }
+}
+
+fn is_disallowed_native_file(tool: &str, lowered_path: &str) -> bool {
+    lowered_path.contains("/logs_")
+        || lowered_path.ends_with("/logs.sqlite")
+        || lowered_path.ends_with("/logs.db")
+        || (lowered_path.contains("/cache/")
+            && !matches!(tool, "qoder" | "qoder-cn" | "antigravity" | "warp"))
+        || (lowered_path.contains("/caches/") && !matches!(tool, "antigravity" | "warp"))
+        || (lowered_path.contains("/cacheddata/") && !matches!(tool, "antigravity" | "warp"))
+}
+
+fn native_name_has_known_signal(lowered_path: &str) -> bool {
+    [
+        "activity",
+        "agent",
+        "chat",
+        "conversation",
+        "event",
+        "history",
+        "message",
+        "session",
+        "state",
+        "storage",
+        "task",
+        "telemetry",
+        "thread",
+        "token",
+        "trace",
+        "transcript",
+        "usage",
+    ]
+    .iter()
+    .any(|signal| lowered_path.contains(signal))
 }
 
 fn should_scan_source_file(
@@ -828,7 +967,7 @@ fn scan_source_file(tool: &str, path: &Path) -> Result<ScanResult> {
     };
     match ext {
         "csv" => scan_csv_file(tool, path),
-        "db" | "sqlite" | "sqlite3" => scan_sqlite_file(tool, path),
+        "db" | "sqlite" | "sqlite3" | "vscdb" => scan_sqlite_file(tool, path),
         _ => scan_text_json_file(tool, path),
     }
 }
@@ -1815,20 +1954,53 @@ fn local_subscription_snapshots(device_id: &str) -> Vec<SubscriptionPayload> {
 
 fn read_codex_rate_limit(device_id: &str) -> Option<SubscriptionPayload> {
     let home = scan_home()?;
-    let sessions_dir = home.join(".codex").join("sessions");
-    let mut files = Vec::new();
-    collect_files_with_extension(&sessions_dir, "jsonl", &mut files);
-    files.sort_by(|a, b| b.cmp(a));
+    let plan = FileScanPlan {
+        min_mtime_ms: now_ms()
+            .saturating_sub(DEFAULT_SCAN_LOOKBACK_DAYS.saturating_mul(MS_PER_DAY)),
+        max_candidates: MAX_SCAN_CANDIDATES_PER_AGENT,
+        max_entries: MAX_SCAN_DIR_ENTRIES_PER_AGENT,
+    };
+    let mut collector = FileCollector::default();
+    for path in agent::default_scan_roots(&home, "codex") {
+        let root = ScanRoot {
+            path,
+            kind: ScanRootKind::Native,
+        };
+        collect_supported_files("codex", &root, &plan, &mut collector);
+        if collector.at_limit(&plan) {
+            break;
+        }
+    }
+    let mut files = collector.files;
+    files.sort_by(|a, b| {
+        b.mtime_ms
+            .cmp(&a.mtime_ms)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    files.truncate(50);
 
     for file in files {
-        let text = fs::read_to_string(file).ok()?;
-        for line in text.lines().rev() {
-            let obj: Value = serde_json::from_str(line).ok()?;
-            let payload = obj.get("payload")?;
+        if file.size_bytes > MAX_JSON_BYTES {
+            continue;
+        }
+        let text = match fs::read_to_string(&file.path) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let lines = text.lines().collect::<Vec<_>>();
+        for line in lines.into_iter().rev().take(MAX_JSONL_LINES_PER_FILE) {
+            let Ok(obj) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let Some(payload) = obj.get("payload") else {
+                continue;
+            };
             if payload.get("type").and_then(|v| v.as_str()) != Some("token_count") {
                 continue;
             }
-            let rate_limits = payload.get("rate_limits")?;
+            let Some(rate_limits) = payload.get("rate_limits") else {
+                continue;
+            };
             let plan = rate_limits
                 .get("plan_type")
                 .and_then(|v| v.as_str())
@@ -1950,20 +2122,6 @@ fn reset_is_past(value: &Option<String>) -> bool {
 
 fn remaining_percent(used_percent: f64) -> i64 {
     (100.0 - used_percent).round().clamp(0.0, 100.0) as i64
-}
-
-fn collect_files_with_extension(root: &Path, extension: &str, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files_with_extension(&path, extension, out);
-        } else if path.extension().and_then(|s| s.to_str()) == Some(extension) {
-            out.push(path);
-        }
-    }
 }
 
 fn enqueue_dirty_rollups(conn: &Connection, device_id: &str) -> Result<usize> {
@@ -3066,9 +3224,30 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::env::set_var("AITRACK_HOME", dir.path());
         std::env::set_var("AITRACK_SCAN_HOME", dir.path());
+        std::env::set_var("XDG_DATA_HOME", dir.path().join(".local/share"));
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join(".config"));
+        std::env::set_var("CODEX_HOME", dir.path().join(".codex"));
+        std::env::set_var("GEMINI_CLI_HOME", dir.path().join(".gemini"));
+        std::env::set_var("CODEBUFF_DATA_DIR", dir.path().join(".config/manicode"));
+        std::env::set_var(
+            "GJC_CODING_AGENT_DIR",
+            dir.path().join(".gjc/agent/sessions"),
+        );
+        std::env::set_var("GROK_HOME", dir.path().join(".grok"));
+        std::env::set_var("HERMES_HOME", dir.path().join(".hermes"));
+        std::env::set_var("KIMI_CODE_HOME", dir.path().join(".kimi-code"));
         f(dir.path());
         std::env::remove_var("AITRACK_HOME");
         std::env::remove_var("AITRACK_SCAN_HOME");
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("CODEX_HOME");
+        std::env::remove_var("GEMINI_CLI_HOME");
+        std::env::remove_var("CODEBUFF_DATA_DIR");
+        std::env::remove_var("GJC_CODING_AGENT_DIR");
+        std::env::remove_var("GROK_HOME");
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("KIMI_CODE_HOME");
     }
 
     fn make_message(seed: i64) -> LocalUsageMessage {
@@ -3114,6 +3293,264 @@ mod tests {
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap()
+    }
+
+    #[derive(Clone, Copy)]
+    enum MatrixFixtureKind {
+        Json,
+        Jsonl,
+        Sqlite,
+    }
+
+    fn matrix_fixture_values(agent: &str) -> Vec<Value> {
+        vec![
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:00Z",
+                "session_id": format!("matrix-{agent}"),
+                "model": "gpt-5",
+                "provider": "local",
+                "prompt": format!("{agent} prompt for local collection"),
+                "input_tokens": 10,
+                "output_tokens": 7,
+                "message_count": 1
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:01Z",
+                "event.name": "llm.response",
+                "gen_ai.session.id": format!("matrix-{agent}"),
+                "gen_ai.response.model": "gpt-5",
+                "gen_ai.output.messages": [{"role": "assistant", "content": format!("{agent} assistant output")}],
+                "gen_ai.usage.output_tokens": 3
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:02Z",
+                "event.name": "tool.call",
+                "gen_ai.session.id": format!("matrix-{agent}"),
+                "gen_ai.tool.name": "Read",
+                "gen_ai.tool.call.id": format!("matrix-{agent}-call"),
+                "gen_ai.tool.call.arguments": {"file_path": format!("src/{agent}.rs")}
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:03Z",
+                "event.name": "tool.result",
+                "gen_ai.session.id": format!("matrix-{agent}"),
+                "gen_ai.tool.call.id": format!("matrix-{agent}-call"),
+                "gen_ai.tool.call.result": {"content": format!("{agent} tool result")}
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:04Z",
+                "event.name": "skill.use",
+                "gen_ai.session.id": format!("matrix-{agent}"),
+                "gen_ai.skill.name": "review"
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:05Z",
+                "event.name": "tool.approve",
+                "gen_ai.session.id": format!("matrix-{agent}"),
+                "gen_ai.tool.name": "Edit",
+                "approval.decision": "approved"
+            }),
+            serde_json::json!({
+                "timestamp": "2026-06-16T14:00:06Z",
+                "event.name": "agent.other",
+                "gen_ai.session.id": format!("matrix-{agent}"),
+                "custom.status": "kept"
+            }),
+        ]
+    }
+
+    fn native_matrix_fixture(home: &Path, agent: &str) -> (PathBuf, MatrixFixtureKind) {
+        match agent {
+            "claude" => (
+                home.join(format!(".claude/projects/e2e/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "codex" => (
+                home.join(format!(
+                    ".codex/sessions/2026/06/16/rollout-e2e-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "cursor" => (
+                home.join(
+                    "Library/Application Support/Cursor/User/globalStorage/aitrack/storage.json",
+                ),
+                MatrixFixtureKind::Json,
+            ),
+            "trae" => (
+                home.join(format!(
+                    "Library/Application Support/Trae/conversations/session-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "qwen" => (
+                home.join(format!(".qwen/projects/e2e/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "antigravity" => (
+                home.join(format!(
+                    ".gemini/antigravity-ide/sessions/session-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "opencode" => (
+                home.join(".local/share/opencode/opencode.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "qoder" => (
+                home.join(
+                    "Library/Application Support/Qoder/SharedClientCache/cache/db/usage.sqlite",
+                ),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "qoder-cn" => (
+                home.join(
+                    "Library/Application Support/QoderCN/SharedClientCache/cache/db/usage.sqlite",
+                ),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "qoder-work" => (
+                home.join(".qoderwork/data/messages.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "qoder-work-cn" => (
+                home.join(".qoderworkcn/data/messages.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "wukong" => (
+                home.join(format!(".wukong/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "hermes" => (home.join(".hermes/state.db"), MatrixFixtureKind::Sqlite),
+            "openclaw" => (
+                home.join(format!(".openclaw/agents/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "gemini" => (
+                home.join(format!(".gemini/tmp/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "copilot" => (
+                home.join(format!(".copilot/otel/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "cline" => (
+                home.join(format!(
+                    ".config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/task-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "roo-code" => (
+                home.join(format!(
+                    ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/task-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "kiro" => (
+                home.join(format!(".kiro/sessions/cli/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "zed" => (
+                home.join(".local/share/zed/threads/threads.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "goose" => (
+                home.join(".local/share/goose/sessions/sessions.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "amp" => (
+                home.join(format!(".local/share/amp/threads/thread-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "droid" => (
+                home.join(format!(".factory/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "pi" => (
+                home.join(format!(".pi/agent/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "mux" => (
+                home.join(format!(".mux/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "crush" => (
+                home.join(".local/share/crush/crush.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "codebuff" => (
+                home.join(format!(
+                    ".config/manicode/projects/e2e/session-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "kilo" => (
+                home.join(".local/share/kilo/kilo.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "kilocode" => (
+                home.join(format!(
+                    ".config/Code/User/globalStorage/kilocode.kilo-code/tasks/task-{agent}.jsonl"
+                )),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "kimi" => (
+                home.join(format!(".kimi/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "gjc" => (
+                home.join(format!(".gjc/agent/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "grok" => (
+                home.join(format!(".grok/sessions/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "synthetic" => (
+                home.join(".local/share/octofriend/sqlite.db"),
+                MatrixFixtureKind::Sqlite,
+            ),
+            "warp" => (
+                home.join(format!(".config/aitrack/warp-cache/session-{agent}.jsonl")),
+                MatrixFixtureKind::Jsonl,
+            ),
+            "zcode" => (home.join(".zcode/cli/db/zcode.db"), MatrixFixtureKind::Sqlite),
+            other => panic!("missing native matrix fixture for {other}"),
+        }
+    }
+
+    fn write_matrix_fixture(home: &Path, agent: &str) -> PathBuf {
+        let (path, kind) = native_matrix_fixture(home, agent);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let values = matrix_fixture_values(agent);
+        match kind {
+            MatrixFixtureKind::Json => {
+                fs::write(&path, serde_json::to_string(&values).unwrap()).unwrap();
+            }
+            MatrixFixtureKind::Jsonl => {
+                let body = values
+                    .iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                fs::write(&path, format!("{body}\n")).unwrap();
+            }
+            MatrixFixtureKind::Sqlite => {
+                let conn = Connection::open(&path).unwrap();
+                conn.execute_batch(
+                    "DROP TABLE IF EXISTS messages; CREATE TABLE messages (data TEXT);",
+                )
+                .unwrap();
+                for value in values {
+                    conn.execute(
+                        "INSERT INTO messages(data) VALUES (?1)",
+                        params![value.to_string()],
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        path
     }
 
     fn event_type(metadata: &str) -> String {
@@ -3738,22 +4175,53 @@ mod tests {
                 ]),
                 vec!["cursor".to_string(), "trae".to_string()]
             );
+            assert_eq!(
+                selected_scan_tools(&[
+                    "roocode".to_string(),
+                    "kilo-code".to_string(),
+                    "gajae-code".to_string(),
+                ]),
+                vec![
+                    "roo-code".to_string(),
+                    "kilocode".to_string(),
+                    "gjc".to_string()
+                ]
+            );
 
             assert!(scan_roots(home, "claude")
                 .iter()
-                .any(|p| p.ends_with(".claude/projects")));
-            assert!(scan_roots(home, "cursor")
-                .iter()
-                .any(|p| p.to_string_lossy().contains("Cursor/User/globalStorage")));
-            assert!(scan_roots(home, "trae")
-                .iter()
-                .any(|p| p.to_string_lossy().contains("Trae")));
+                .any(|p| p.path.ends_with(".claude/projects") && p.kind == ScanRootKind::Native));
+            assert!(scan_roots(home, "cursor").iter().any(|p| p
+                .path
+                .to_string_lossy()
+                .contains("Cursor/User/globalStorage")
+                && p.kind == ScanRootKind::Native));
+            assert!(scan_roots(home, "trae").iter().any(|p| p
+                .path
+                .to_string_lossy()
+                .contains("Trae")
+                && p.kind == ScanRootKind::Native));
             assert!(scan_roots(home, "opencode")
                 .iter()
-                .any(|p| p.ends_with(".config/opencode")));
+                .any(|p| p.path.ends_with(".config/opencode") && p.kind == ScanRootKind::Native));
             assert!(scan_roots(home, "custom")
                 .iter()
-                .any(|p| p.ends_with(".custom")));
+                .any(|p| p.path.ends_with(".custom") && p.kind == ScanRootKind::Native));
+            assert!(scan_roots(home, "custom").iter().any(|p| {
+                p.path.to_string_lossy().contains("local-sources/custom")
+                    && p.kind == ScanRootKind::Import
+            }));
+            assert!(!scan_roots(home, "custom").iter().any(|p| {
+                let text = p.path.to_string_lossy();
+                (text.contains("/logs/custom") || text.contains("/cache/custom"))
+                    && p.kind == ScanRootKind::Import
+            }));
+            assert!(!scan_roots(home, "codex")
+                .iter()
+                .any(|p| p.path == home.join(".codex")));
+            assert!(!scan_roots(home, "codex")
+                .iter()
+                .any(|p| p.path.ends_with(".codex/logs_2.sqlite")));
 
             let root = home.join("tree");
             fs::create_dir_all(root.join("node_modules")).unwrap();
@@ -3764,7 +4232,15 @@ mod tests {
             fs::write(root.join("notes.txt"), "{}").unwrap();
 
             let mut collector = FileCollector::default();
-            collect_supported_files(&root, &FileScanPlan::unbounded_for_tests(), &mut collector);
+            collect_supported_files(
+                "custom",
+                &ScanRoot {
+                    path: root.clone(),
+                    kind: ScanRootKind::Import,
+                },
+                &FileScanPlan::unbounded_for_tests(),
+                &mut collector,
+            );
             let mut files = collector
                 .files
                 .into_iter()
@@ -3775,17 +4251,76 @@ mod tests {
             assert!(files.iter().any(|p| p.ends_with("a.jsonl")));
             assert!(files.iter().any(|p| p.ends_with("b.sqlite3")));
             assert!(skip_dir(&root.join("Cache")));
-            assert!(is_supported_file(&root.join("records.db")));
-            assert!(!is_supported_file(&root.join("notes.txt")));
+            assert!(is_supported_file(
+                "custom",
+                &ScanRoot {
+                    path: root.clone(),
+                    kind: ScanRootKind::Import,
+                },
+                &root.join("records.db")
+            ));
+            assert!(!is_supported_file(
+                "custom",
+                &ScanRoot {
+                    path: root.clone(),
+                    kind: ScanRootKind::Import,
+                },
+                &root.join("notes.txt")
+            ));
+            assert!(!is_supported_file(
+                "codex",
+                &ScanRoot {
+                    path: home.join(".codex/logs_2.sqlite"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(".codex/logs_2.sqlite")
+            ));
+            assert!(is_supported_file(
+                "qoder",
+                &ScanRoot {
+                    path: home.join(
+                        "Library/Application Support/Qoder/SharedClientCache/cache/db/usage.sqlite"
+                    ),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(
+                    "Library/Application Support/Qoder/SharedClientCache/cache/db/usage.sqlite"
+                )
+            ));
+            assert!(is_supported_file(
+                "opencode",
+                &ScanRoot {
+                    path: home.join(".local/share/opencode/opencode.db"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(".local/share/opencode/opencode.db")
+            ));
+            assert!(is_supported_file(
+                "cursor",
+                &ScanRoot {
+                    path: home
+                        .join("Library/Application Support/Cursor/User/globalStorage/state.vscdb"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+            ));
 
             let mut single = FileCollector::default();
             collect_supported_files(
-                &root.join("a.jsonl"),
+                "custom",
+                &ScanRoot {
+                    path: root.join("a.jsonl"),
+                    kind: ScanRootKind::Import,
+                },
                 &FileScanPlan::unbounded_for_tests(),
                 &mut single,
             );
             collect_supported_files(
-                &root.join("a.jsonl"),
+                "custom",
+                &ScanRoot {
+                    path: root.join("a.jsonl"),
+                    kind: ScanRootKind::Import,
+                },
                 &FileScanPlan::unbounded_for_tests(),
                 &mut single,
             );
@@ -3794,9 +4329,64 @@ mod tests {
     }
 
     #[test]
+    fn native_default_agent_fixture_matrix_scans_usage_and_monitoring() {
+        with_home(|home| {
+            let agents = agent::default_scan_agent_names();
+            assert_eq!(agents.len(), 35);
+            for agent in &agents {
+                write_matrix_fixture(home, agent);
+            }
+
+            let mut conn = open_usage_db().unwrap();
+            for agent in agents {
+                let report = tokio_test::block_on(scan_into(
+                    &mut conn,
+                    UsageScanOptions {
+                        tools: vec![agent.to_string()],
+                        since: Some("2026-06-16".to_string()),
+                        until: Some("2026-06-16".to_string()),
+                    },
+                    Some("device-native-matrix"),
+                ))
+                .unwrap();
+                assert!(
+                    report.parsed_messages >= 1,
+                    "{agent} native fixture should produce usage"
+                );
+                assert!(
+                    report.monitoring_events_parsed >= 5,
+                    "{agent} native fixture should produce monitoring events"
+                );
+
+                let usage_rows: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM usage_sessions WHERE agent = ?1",
+                        params![agent],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert!(usage_rows >= 1, "{agent} usage row missing");
+
+                let records = open_records_db().unwrap();
+                for event_type in ["output", "tool_result", "skill", "tool_approval", "other"] {
+                    let pattern = format!("%\"event_type\":\"{event_type}\"%");
+                    let count: i64 = records
+                        .query_row(
+                            "SELECT COUNT(*) FROM records WHERE tool = ?1 AND metadata LIKE ?2",
+                            params![agent, pattern],
+                            |row| row.get(0),
+                        )
+                        .unwrap();
+                    assert!(count >= 1, "{agent} monitoring event {event_type} missing");
+                }
+            }
+        });
+    }
+
+    #[test]
     fn json_variants_cover_arrays_nested_usage_and_large_files() {
         with_home(|home| {
-            let dir = home.join("cache").join("trae");
+            let dir = home.join("local-sources").join("trae");
             fs::create_dir_all(&dir).unwrap();
             fs::write(
                 dir.join("nested.ndjson"),

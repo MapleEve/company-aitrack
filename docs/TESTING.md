@@ -29,7 +29,7 @@ E2E 测试
 
 | 组件 | 测量方式 | 当前门禁（2026-06-17） | 失败行为 |
 |---|---|---|---|
-| **Rust 客户端** | `cargo llvm-cov --summary-only` → 解析 `TOTAL` 行 | **300 tests；LINE ≥ 90%** | 低于 90% 构建失败 |
+| **Rust 客户端** | `cargo llvm-cov --summary-only` → 解析 `TOTAL` 行 | **301 tests；LINE ≥ 90%** | 低于 90% 构建失败 |
 | **Java 服务端** | JaCoCo `LINE COVEREDRATIO >= 0.90`（pom.xml `verify` 阶段） | **LINE ≥ 90%**（mvn verify） | 低于 90% 构建失败 |
 | **Go 服务端** | `go tool cover -func cover.out` → 解析 `total` 行 | **95.3% total** | 低于 90% 构建失败 |
 

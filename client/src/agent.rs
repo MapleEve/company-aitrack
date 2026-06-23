@@ -35,7 +35,7 @@ pub struct LocalSourceSpec {
     pub capabilities: LocalSourceCapabilities,
 }
 
-const FULL_LOCAL_SOURCE_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+const LOCAL_MONITORING_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
     prompt_input: true,
     assistant_output: true,
     tool_call: true,
@@ -298,109 +298,277 @@ const LOCAL_SOURCE_SPECS: &[LocalSourceSpec] = &[
         agent: "claude",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "codex",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "cursor",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "trae",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qwen",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "antigravity",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "opencode",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "opencode",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-cn",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-work",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-work-cn",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-cn",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-work",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-work-cn",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder",
         kind: LocalSourceKind::IdeSnapshot,
         label: "ide-snapshot",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-cn",
         kind: LocalSourceKind::IdeSnapshot,
         label: "ide-snapshot",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-work",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-cn",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "qoder-work-cn",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "wukong",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
     LocalSourceSpec {
-        agent: "trae",
-        kind: LocalSourceKind::GenericCache,
-        label: "generic-cache",
-        capabilities: FULL_LOCAL_SOURCE_CAPABILITIES,
+        agent: "hermes",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "openclaw",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "gemini",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "copilot",
+        kind: LocalSourceKind::IdeSnapshot,
+        label: "otel-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "cline",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "vscode-tasks",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "roo-code",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "vscode-tasks",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "kiro",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "zed",
+        kind: LocalSourceKind::Sqlite,
+        label: "threads-db",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "goose",
+        kind: LocalSourceKind::Sqlite,
+        label: "sessions-db",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "amp",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "threads-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "droid",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "pi",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "mux",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "crush",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "codebuff",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "project-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "kilo",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "kilocode",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "vscode-tasks",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "kimi",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "gjc",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "grok",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "synthetic",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "warp",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "session-jsonl",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "zcode",
+        kind: LocalSourceKind::Sqlite,
+        label: "sqlite",
+        capabilities: LOCAL_MONITORING_CAPABILITIES,
     },
 ];
 
@@ -420,7 +588,7 @@ pub fn default_scan_agent_names() -> Vec<&'static str> {
     REGISTERED_AGENTS
         .iter()
         .map(|agent| agent.name)
-        .filter(|name| !is_scan_alias(name))
+        .filter(|name| !is_default_scan_excluded(name))
         .collect()
 }
 
@@ -432,17 +600,24 @@ pub fn is_known_agent(name: &str) -> bool {
     agent_by_name(name).is_some()
 }
 
-fn is_scan_alias(name: &str) -> bool {
-    matches!(name, "roocode" | "kilo-code" | "gajae-code")
+pub fn canonical_agent_name(name: &str) -> &str {
+    match name {
+        "roocode" => "roo-code",
+        "kilo-code" => "kilocode",
+        "gajae-code" => "gjc",
+        other => other,
+    }
+}
+
+fn is_default_scan_excluded(name: &str) -> bool {
+    matches!(
+        name,
+        "roocode" | "kilo-code" | "gajae-code" | "baidu-comate" | "wenxin"
+    )
 }
 
 pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(registered) = agent_by_name(tool) {
-        roots.push(registered.marker_path(home));
-    } else {
-        roots.push(home.join(format!(".{tool}")));
-    }
 
     match tool {
         "claude" => {
@@ -610,7 +785,11 @@ pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
             roots.push(home.join(".zcode/cli/db"));
             roots.push(home.join(".zcode/cli"));
         }
-        _ => {}
+        _ => {
+            if !is_known_agent(tool) {
+                roots.push(home.join(format!(".{tool}")));
+            }
+        }
     }
 
     dedup_paths(roots)
@@ -695,62 +874,62 @@ mod tests {
         assert!(!default_scan_agent_names().contains(&"roocode"));
         assert!(!default_scan_agent_names().contains(&"kilo-code"));
         assert!(!default_scan_agent_names().contains(&"gajae-code"));
+        assert!(!default_scan_agent_names().contains(&"baidu-comate"));
+        assert!(!default_scan_agent_names().contains(&"wenxin"));
+        assert_eq!(default_scan_agent_names().len(), 35);
+        assert_eq!(canonical_agent_name("roocode"), "roo-code");
+        assert_eq!(canonical_agent_name("kilo-code"), "kilocode");
+        assert_eq!(canonical_agent_name("gajae-code"), "gjc");
     }
 
     #[test]
-    fn local_source_specs_cover_full_local_collection_matrix() {
+    fn local_source_specs_cover_default_local_collection_matrix() {
         let specs = local_source_specs();
-        let required = [
-            ("claude", LocalSourceKind::HookJsonl),
-            ("codex", LocalSourceKind::HookJsonl),
-            ("cursor", LocalSourceKind::HookJsonl),
-            ("opencode", LocalSourceKind::HookJsonl),
-            ("qoder", LocalSourceKind::HookJsonl),
-            ("qoder-cn", LocalSourceKind::HookJsonl),
-            ("qoder-work", LocalSourceKind::HookJsonl),
-            ("qoder-work-cn", LocalSourceKind::HookJsonl),
-            ("qoder", LocalSourceKind::Sqlite),
-            ("qoder-cn", LocalSourceKind::Sqlite),
-            ("qoder-work", LocalSourceKind::Sqlite),
-            ("qoder-work-cn", LocalSourceKind::Sqlite),
-            ("qoder", LocalSourceKind::IdeSnapshot),
-            ("qoder-cn", LocalSourceKind::IdeSnapshot),
-            ("qoder", LocalSourceKind::SessionJsonl),
-            ("qoder-work", LocalSourceKind::SessionJsonl),
-            ("wukong", LocalSourceKind::SessionJsonl),
-            ("trae", LocalSourceKind::GenericCache),
-        ];
 
-        for (agent, kind) in required {
+        for agent in default_scan_agent_names() {
             let spec = specs
                 .iter()
-                .find(|spec| spec.agent == agent && spec.kind == kind)
-                .unwrap_or_else(|| panic!("{agent} {kind:?} source spec missing"));
+                .find(|spec| spec.agent == agent)
+                .unwrap_or_else(|| panic!("{agent} source spec missing"));
             assert!(
                 spec.capabilities.prompt_input,
-                "{agent} {kind:?} prompt missing"
+                "{agent} {:?} prompt missing",
+                spec.kind
             );
             assert!(
                 spec.capabilities.assistant_output,
-                "{agent} {kind:?} output missing"
+                "{agent} {:?} output missing",
+                spec.kind
             );
             assert!(
                 spec.capabilities.tool_call,
-                "{agent} {kind:?} tool call missing"
+                "{agent} {:?} tool call missing",
+                spec.kind
             );
             assert!(
                 spec.capabilities.tool_result,
-                "{agent} {kind:?} tool result missing"
+                "{agent} {:?} tool result missing",
+                spec.kind
             );
             assert!(
                 spec.capabilities.token_usage,
-                "{agent} {kind:?} token missing"
+                "{agent} {:?} token missing",
+                spec.kind
             );
             assert!(
                 spec.capabilities.session_context,
-                "{agent} {kind:?} session context missing"
+                "{agent} {:?} session context missing",
+                spec.kind
             );
         }
+        assert!(!specs.iter().any(|spec| spec.agent == "baidu-comate"));
+        assert!(!specs.iter().any(|spec| spec.agent == "wenxin"));
+        assert!(specs
+            .iter()
+            .any(|spec| spec.agent == "qoder" && spec.kind == LocalSourceKind::Sqlite));
+        assert!(specs
+            .iter()
+            .any(|spec| spec.agent == "copilot" && spec.kind == LocalSourceKind::IdeSnapshot));
     }
 
     #[test]
@@ -768,6 +947,9 @@ mod tests {
         assert!(default_scan_roots(home, "codex")
             .iter()
             .any(|p| p.ends_with("custom-codex/sessions")));
+        assert!(!default_scan_roots(home, "codex")
+            .iter()
+            .any(|p| p == &home.join("custom-codex")));
         assert!(default_scan_roots(home, "gemini")
             .iter()
             .any(|p| p.ends_with("custom-gemini/tmp")));
@@ -789,6 +971,7 @@ mod tests {
         assert!(default_scan_roots(home, "zcode")
             .iter()
             .any(|p| p.ends_with(".zcode/cli/db")));
+        assert!(default_scan_roots(home, "baidu-comate").is_empty());
 
         std::env::remove_var("CODEX_HOME");
         std::env::remove_var("GEMINI_CLI_HOME");
