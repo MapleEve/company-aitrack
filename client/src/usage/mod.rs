@@ -24,14 +24,17 @@ use crate::{git, uploader};
 const MAX_UPLOAD_ITEMS: i64 = 500;
 const DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30;
 const MS_PER_DAY: i64 = 24 * 60 * 60 * 1000;
+const MAX_SCAN_FILES_PER_RUN: usize = 5;
 const MAX_SCAN_FILES_PER_AGENT: usize = 200;
 const MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800;
 const MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000;
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_JSONL_LINES_PER_FILE: usize = 2000;
 const MAX_CSV_ROWS_PER_FILE: usize = 2000;
+const MAX_SQLITE_TABLES_PER_FILE: usize = 10;
+const MAX_SQLITE_ROWS_PER_FILE: usize = 5000;
 const MAX_SQLITE_ROWS_PER_TABLE: usize = 2000;
-const MAX_EVENTS_PER_FILE: usize = 1000;
+const MAX_EVENTS_PER_FILE: usize = 200;
 const MAX_CAPTURE_TEXT: usize = 4096;
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -42,6 +45,8 @@ pub struct UsageScanReport {
     pub monitoring_records_inserted: usize,
     pub rollups_upserted: usize,
     pub subscription_snapshots_upserted: usize,
+    pub files_scanned: usize,
+    pub scan_budget_exhausted: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -78,6 +83,7 @@ pub struct UsageSyncOptions {
     pub credential: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct UsageSessionRow {
     source: String,
@@ -98,7 +104,27 @@ struct UsageSessionRow {
     source_cost: f64,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct RollupKey {
+    day: String,
+    agent: String,
+    model: String,
+    account: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RollupDelta {
+    tokens_in: i64,
+    tokens_out: i64,
+    tokens_cache_read: i64,
+    tokens_cache_write: i64,
+    tokens_reasoning: i64,
+    message_count: i64,
+    source_cost: f64,
+}
+
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct LocalUsageMessage {
     agent: String,
     provider: String,
@@ -334,20 +360,11 @@ async fn scan_into(
     options: UsageScanOptions,
     credential_override: Option<&str>,
 ) -> Result<UsageScanReport> {
-    let scan = scan_local_sources(conn, &options)?;
-    let inserted = insert_usage_sessions(conn, &scan.messages)?;
-    let monitoring_inserted = insert_monitoring_events(conn, &scan.events, credential_override)?;
-    let rollups = rebuild_rollups(conn)?;
+    compact_legacy_usage_sessions(conn)?;
+    let mut report = scan_local_sources_into(conn, &options, credential_override)?;
     let subscriptions = upsert_local_subscription_snapshots(conn)?;
-
-    Ok(UsageScanReport {
-        parsed_messages: scan.messages.len(),
-        monitoring_events_parsed: scan.events.len(),
-        sessions_inserted: inserted,
-        monitoring_records_inserted: monitoring_inserted,
-        rollups_upserted: rollups,
-        subscription_snapshots_upserted: subscriptions,
-    })
+    report.subscription_snapshots_upserted = subscriptions;
+    Ok(report)
 }
 
 fn open_usage_db() -> Result<Connection> {
@@ -415,6 +432,31 @@ CREATE TABLE IF NOT EXISTS usage_daily_model_rollups (
   UNIQUE(device_id, day, agent, model, account)
 );
 CREATE INDEX IF NOT EXISTS idx_usage_rollups_dirty ON usage_daily_model_rollups(dirty);
+
+CREATE TABLE IF NOT EXISTS usage_rollup_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool TEXT NOT NULL,
+  path TEXT NOT NULL,
+  day TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  model TEXT NOT NULL,
+  account TEXT NOT NULL DEFAULT '',
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+  tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+  tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  source_cost REAL NOT NULL DEFAULT 0,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  mtime_ms INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(tool, path, day, agent, model, account)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_rollup_sources_file
+  ON usage_rollup_sources(tool, path);
+CREATE INDEX IF NOT EXISTS idx_usage_rollup_sources_day
+  ON usage_rollup_sources(day, agent, model, account);
 
 CREATE TABLE IF NOT EXISTS usage_subscription_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -484,6 +526,39 @@ fn ensure_usage_schema(conn: &Connection) -> Result<()> {
         "REAL NOT NULL DEFAULT 0",
     )?;
     ensure_usage_scan_file_cache_schema(conn)?;
+    ensure_usage_rollup_sources_schema(conn)?;
+    Ok(())
+}
+
+fn ensure_usage_rollup_sources_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS usage_rollup_sources (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tool TEXT NOT NULL,
+          path TEXT NOT NULL,
+          day TEXT NOT NULL,
+          agent TEXT NOT NULL,
+          model TEXT NOT NULL,
+          account TEXT NOT NULL DEFAULT '',
+          tokens_in INTEGER NOT NULL DEFAULT 0,
+          tokens_out INTEGER NOT NULL DEFAULT 0,
+          tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+          tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+          tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+          message_count INTEGER NOT NULL DEFAULT 0,
+          source_cost REAL NOT NULL DEFAULT 0,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          mtime_ms INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(tool, path, day, agent, model, account)
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_rollup_sources_file
+          ON usage_rollup_sources(tool, path);
+        CREATE INDEX IF NOT EXISTS idx_usage_rollup_sources_day
+          ON usage_rollup_sources(day, agent, model, account);
+        "#,
+    )?;
     Ok(())
 }
 
@@ -610,15 +685,21 @@ impl FileCollector {
     }
 }
 
-fn scan_local_sources(conn: &Connection, options: &UsageScanOptions) -> Result<ScanResult> {
+fn scan_local_sources_into(
+    conn: &mut Connection,
+    options: &UsageScanOptions,
+    credential_override: Option<&str>,
+) -> Result<UsageScanReport> {
     let home = scan_home().context("cannot find home directory")?;
     let tools = selected_scan_tools(&options.tools);
     let window = ScanWindow::from_options(options);
     let since = window.since_day.as_deref();
     let until = window.until_day.as_deref();
     let plan = window.plan();
+    let mut report = UsageScanReport::default();
+    let mut records_conn: Option<Connection> = None;
+    let mut files_scanned_this_run = 0usize;
 
-    let mut result = ScanResult::default();
     for tool in tools {
         let roots = scan_roots(&home, &tool);
         let mut collector = FileCollector::default();
@@ -634,12 +715,25 @@ fn scan_local_sources(conn: &Connection, options: &UsageScanOptions) -> Result<S
                 .cmp(&a.mtime_ms)
                 .then_with(|| a.path.cmp(&b.path))
         });
-        files.truncate(MAX_SCAN_FILES_PER_AGENT);
 
+        let mut files_scanned_for_agent = 0usize;
         for file in files {
             if !should_scan_source_file(conn, &tool, &file, &window)? {
                 continue;
             }
+            if files_scanned_this_run >= MAX_SCAN_FILES_PER_RUN {
+                report.scan_budget_exhausted = true;
+                return Ok(report);
+            }
+            if files_scanned_for_agent >= MAX_SCAN_FILES_PER_AGENT {
+                report.scan_budget_exhausted = true;
+                break;
+            }
+            files_scanned_this_run += 1;
+            files_scanned_for_agent += 1;
+            report.files_scanned += 1;
+
+            let can_replace_rollup = can_replace_rollup_source(&file.path, file.size_bytes);
             let mut chunk = scan_source_file(&tool, &file.path)?;
             chunk
                 .messages
@@ -648,15 +742,34 @@ fn scan_local_sources(conn: &Connection, options: &UsageScanOptions) -> Result<S
                 let day = day_from_timestamp_ms(e.timestamp_ms);
                 day_in_range(&day, since, until)
             });
-            result.messages.extend(chunk.messages);
-            result.events.extend(chunk.events);
+            dedup_messages(&mut chunk.messages);
+            dedup_events(&mut chunk.events);
+
+            report.parsed_messages += chunk.messages.len();
+            report.monitoring_events_parsed += chunk.events.len();
+            if can_replace_rollup {
+                report.rollups_upserted +=
+                    replace_rollup_source(conn, &tool, &file, &chunk.messages)?;
+            }
+            if !chunk.events.is_empty() {
+                if records_conn.is_none() {
+                    records_conn = Some(open_records_db()?);
+                }
+                let records = records_conn
+                    .as_ref()
+                    .expect("records connection initialized");
+                report.monitoring_records_inserted += insert_monitoring_events_into(
+                    conn,
+                    records,
+                    &chunk.events,
+                    credential_override,
+                )?;
+            }
             mark_source_file_scanned(conn, &tool, &file, &window)?;
         }
     }
 
-    dedup_messages(&mut result.messages);
-    dedup_events(&mut result.events);
-    Ok(result)
+    Ok(report)
 }
 
 fn scan_home() -> Option<PathBuf> {
@@ -1042,6 +1155,9 @@ fn scan_csv_file(tool: &str, path: &Path) -> Result<ScanResult> {
         }
         if let Some(event) = event_from_csv(tool, path, idx, &row) {
             result.events.push(event);
+            if result.events.len() >= MAX_EVENTS_PER_FILE {
+                break;
+            }
         }
     }
     Ok(result)
@@ -1058,8 +1174,12 @@ fn scan_sqlite_file(tool: &str, path: &Path) -> Result<ScanResult> {
     };
     let mut result = ScanResult::default();
     let tables = sqlite_tables(&conn)?;
-    for table in tables.into_iter().take(50) {
-        scan_sqlite_table(tool, path, &conn, &table, &mut result)?;
+    let mut rows_remaining = MAX_SQLITE_ROWS_PER_FILE;
+    for table in tables.into_iter().take(MAX_SQLITE_TABLES_PER_FILE) {
+        if rows_remaining == 0 {
+            break;
+        }
+        scan_sqlite_table(tool, path, &conn, &table, &mut rows_remaining, &mut result)?;
     }
     Ok(result)
 }
@@ -1079,8 +1199,12 @@ fn scan_sqlite_table(
     path: &Path,
     conn: &Connection,
     table: &str,
+    rows_remaining: &mut usize,
     result: &mut ScanResult,
 ) -> Result<()> {
+    if *rows_remaining == 0 {
+        return Ok(());
+    }
     let columns = sqlite_columns(conn, table)?;
     let interesting: Vec<String> = columns
         .into_iter()
@@ -1094,10 +1218,11 @@ fn scan_sqlite_table(
         .map(|c| quote_identifier(c))
         .collect::<Vec<_>>()
         .join(", ");
+    let limit = (*rows_remaining).min(MAX_SQLITE_ROWS_PER_TABLE);
     let sql = format!(
         "SELECT rowid, {select_cols} FROM {} ORDER BY rowid DESC LIMIT {}",
         quote_identifier(table),
-        MAX_SQLITE_ROWS_PER_TABLE
+        limit
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
@@ -1112,13 +1237,16 @@ fn scan_sqlite_table(
         Ok((rowid, Value::Object(object)))
     })?;
 
+    let mut scanned = 0usize;
     for row in rows.flatten() {
+        scanned = scanned.saturating_add(1);
         let row_key = format!("sqlite:{table}:{}", row.0);
         collect_from_json_value(tool, path, &row_key, &row.1, now_ms(), result);
         if result.events.len() >= MAX_EVENTS_PER_FILE {
             break;
         }
     }
+    *rows_remaining = (*rows_remaining).saturating_sub(scanned);
     Ok(())
 }
 
@@ -1648,6 +1776,7 @@ fn event_from_csv(
     })
 }
 
+#[cfg(test)]
 fn insert_usage_sessions(conn: &mut Connection, messages: &[LocalUsageMessage]) -> Result<usize> {
     let tx = conn.transaction()?;
     let mut inserted = 0usize;
@@ -1685,6 +1814,7 @@ fn insert_usage_sessions(conn: &mut Connection, messages: &[LocalUsageMessage]) 
     Ok(inserted)
 }
 
+#[cfg(test)]
 impl UsageSessionRow {
     fn from_message(msg: &LocalUsageMessage) -> Self {
         Self {
@@ -1708,8 +1838,185 @@ impl UsageSessionRow {
     }
 }
 
-fn insert_monitoring_events(
+fn can_replace_rollup_source(path: &Path, size_bytes: u64) -> bool {
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    matches!(ext, "db" | "sqlite" | "sqlite3" | "vscdb") || size_bytes <= MAX_JSON_BYTES
+}
+
+fn aggregate_rollup_messages(messages: &[LocalUsageMessage]) -> HashMap<RollupKey, RollupDelta> {
+    let mut buckets = HashMap::new();
+    for msg in messages {
+        let key = RollupKey {
+            day: msg.day.clone(),
+            agent: msg.agent.clone(),
+            model: normalize_model(&msg.model),
+            account: msg.account.clone(),
+        };
+        let bucket: &mut RollupDelta = buckets.entry(key).or_default();
+        bucket.tokens_in += msg.tokens.input.max(0);
+        bucket.tokens_out += msg.tokens.output.max(0);
+        bucket.tokens_cache_read += msg.tokens.cache_read.max(0);
+        bucket.tokens_cache_write += msg.tokens.cache_write.max(0);
+        bucket.tokens_reasoning += msg.tokens.reasoning.max(0);
+        bucket.message_count += msg.message_count.max(1);
+        bucket.source_cost += msg.source_cost.max(0.0);
+    }
+    buckets
+}
+
+fn replace_rollup_source(
+    conn: &mut Connection,
+    tool: &str,
+    file: &SourceFile,
+    messages: &[LocalUsageMessage],
+) -> Result<usize> {
+    let cfg = load_config();
+    let device_id = cfg.device_id;
+    let path = file.path.to_string_lossy();
+    let size_bytes = i64::try_from(file.size_bytes).unwrap_or(i64::MAX);
+    let buckets = aggregate_rollup_messages(messages);
+    let tx = conn.transaction()?;
+
+    let old_rows = {
+        let mut stmt = tx.prepare(
+            "SELECT day, agent, model, account, tokens_in, tokens_out, tokens_cache_read,
+                    tokens_cache_write, tokens_reasoning, message_count, source_cost
+             FROM usage_rollup_sources
+             WHERE tool = ?1 AND path = ?2",
+        )?;
+        let rows = stmt.query_map(params![tool, path.as_ref()], |row| {
+            Ok((
+                RollupKey {
+                    day: row.get(0)?,
+                    agent: row.get(1)?,
+                    model: row.get(2)?,
+                    account: row.get(3)?,
+                },
+                RollupDelta {
+                    tokens_in: row.get(4)?,
+                    tokens_out: row.get(5)?,
+                    tokens_cache_read: row.get(6)?,
+                    tokens_cache_write: row.get(7)?,
+                    tokens_reasoning: row.get(8)?,
+                    message_count: row.get(9)?,
+                    source_cost: row.get(10)?,
+                },
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    for (key, delta) in old_rows {
+        add_rollup_delta(&tx, &device_id, &key, &delta.negated())?;
+    }
+    tx.execute(
+        "DELETE FROM usage_rollup_sources WHERE tool = ?1 AND path = ?2",
+        params![tool, path.as_ref()],
+    )?;
+
+    for (key, delta) in &buckets {
+        tx.execute(
+            "INSERT INTO usage_rollup_sources
+             (tool, path, day, agent, model, account, tokens_in, tokens_out, tokens_cache_read,
+              tokens_cache_write, tokens_reasoning, message_count, source_cost, size_bytes, mtime_ms, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, datetime('now'))",
+            params![
+                tool,
+                path.as_ref(),
+                key.day,
+                key.agent,
+                key.model,
+                key.account,
+                delta.tokens_in,
+                delta.tokens_out,
+                delta.tokens_cache_read,
+                delta.tokens_cache_write,
+                delta.tokens_reasoning,
+                delta.message_count,
+                delta.source_cost,
+                size_bytes,
+                file.mtime_ms,
+            ],
+        )?;
+        add_rollup_delta(&tx, &device_id, key, delta)?;
+    }
+    delete_empty_rollups(&tx, &device_id)?;
+    tx.commit()?;
+    Ok(buckets.len())
+}
+
+impl RollupDelta {
+    fn negated(&self) -> Self {
+        Self {
+            tokens_in: -self.tokens_in,
+            tokens_out: -self.tokens_out,
+            tokens_cache_read: -self.tokens_cache_read,
+            tokens_cache_write: -self.tokens_cache_write,
+            tokens_reasoning: -self.tokens_reasoning,
+            message_count: -self.message_count,
+            source_cost: -self.source_cost,
+        }
+    }
+}
+
+fn add_rollup_delta(
+    conn: &Connection,
+    device_id: &str,
+    key: &RollupKey,
+    delta: &RollupDelta,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO usage_daily_model_rollups
+         (device_id, day, agent, model, account, tokens_in, tokens_out, tokens_cache_read,
+          tokens_cache_write, tokens_reasoning, message_count, source_cost, dirty, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, datetime('now'))
+         ON CONFLICT(device_id, day, agent, model, account) DO UPDATE SET
+           tokens_in = usage_daily_model_rollups.tokens_in + excluded.tokens_in,
+           tokens_out = usage_daily_model_rollups.tokens_out + excluded.tokens_out,
+           tokens_cache_read = usage_daily_model_rollups.tokens_cache_read + excluded.tokens_cache_read,
+           tokens_cache_write = usage_daily_model_rollups.tokens_cache_write + excluded.tokens_cache_write,
+           tokens_reasoning = usage_daily_model_rollups.tokens_reasoning + excluded.tokens_reasoning,
+           message_count = usage_daily_model_rollups.message_count + excluded.message_count,
+           source_cost = usage_daily_model_rollups.source_cost + excluded.source_cost,
+           dirty = 1,
+           updated_at = datetime('now')",
+        params![
+            device_id,
+            key.day,
+            key.agent,
+            key.model,
+            key.account,
+            delta.tokens_in,
+            delta.tokens_out,
+            delta.tokens_cache_read,
+            delta.tokens_cache_write,
+            delta.tokens_reasoning,
+            delta.message_count,
+            delta.source_cost,
+        ],
+    )?;
+    Ok(())
+}
+
+fn delete_empty_rollups(conn: &Connection, device_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM usage_daily_model_rollups
+         WHERE device_id = ?1
+           AND tokens_in = 0
+           AND tokens_out = 0
+           AND tokens_cache_read = 0
+           AND tokens_cache_write = 0
+           AND tokens_reasoning = 0
+           AND message_count = 0
+           AND abs(source_cost) < 0.0000001",
+        params![device_id],
+    )?;
+    Ok(())
+}
+
+fn insert_monitoring_events_into(
     usage_conn: &Connection,
+    records: &Connection,
     events: &[MonitoringEvent],
     credential_override: Option<&str>,
 ) -> Result<usize> {
@@ -1734,7 +2041,6 @@ fn insert_monitoring_events(
     let hostname = gethostname::gethostname()
         .into_string()
         .unwrap_or_else(|_| "unknown".to_string());
-    let records = open_records_db()?;
     let mut inserted = 0usize;
 
     for event in events {
@@ -1746,7 +2052,7 @@ fn insert_monitoring_events(
             continue;
         }
         let record = event.to_record(&token_key, &hmac_secret, &device_id, &hostname);
-        if insert_record_by_signature(&records, &record)? {
+        if insert_record_by_signature(records, &record)? {
             inserted += 1;
         }
     }
@@ -1823,6 +2129,15 @@ fn insert_record_by_signature(conn: &Connection, record: &Record) -> Result<bool
         }
     }
     crate::adapter::sqlite::insert_record(conn, record)
+}
+
+fn compact_legacy_usage_sessions(conn: &mut Connection) -> Result<()> {
+    if count_table(conn, "usage_sessions")? == 0 {
+        return Ok(());
+    }
+    rebuild_rollups(conn)?;
+    conn.execute("DELETE FROM usage_sessions", [])?;
+    Ok(())
 }
 
 fn rebuild_rollups(conn: &mut Connection) -> Result<usize> {
@@ -3295,6 +3610,54 @@ mod tests {
         .unwrap()
     }
 
+    fn usage_session_count(conn: &Connection, agent: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM usage_sessions WHERE agent = ?1",
+            params![agent],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn source_rollup_count(conn: &Connection, agent: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM usage_rollup_sources WHERE agent = ?1",
+            params![agent],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn agent_rollup_totals(conn: &Connection, agent: &str) -> (i64, i64, i64) {
+        conn.query_row(
+            "SELECT COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_out), 0),
+                    COALESCE(SUM(message_count), 0)
+             FROM usage_daily_model_rollups
+             WHERE agent = ?1",
+            params![agent],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    fn test_source_file(home: &Path, name: &str) -> SourceFile {
+        SourceFile {
+            path: home.join(name),
+            mtime_ms: 1_789_000_000_000,
+            size_bytes: 1024,
+        }
+    }
+
+    fn sqlite_db_size_bytes(conn: &Connection) -> i64 {
+        let page_count: i64 = conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))
+            .unwrap();
+        let page_size: i64 = conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        page_count * page_size
+    }
+
     #[derive(Clone, Copy)]
     enum MatrixFixtureKind {
         Json,
@@ -3614,6 +3977,74 @@ mod tests {
     }
 
     #[test]
+    fn changed_source_replaces_previous_rollup_contribution() {
+        with_home(|home| {
+            let mut conn = open_usage_db().unwrap();
+            let file = test_source_file(home, "sources/codex/active.jsonl");
+            let first = make_message(1);
+            assert_eq!(
+                replace_rollup_source(&mut conn, "codex", &file, &[first.clone()]).unwrap(),
+                1
+            );
+
+            let mut second = make_message(2);
+            second.tokens.input = 7;
+            second.tokens.output = 9;
+            second.tokens.cache_read = 1;
+            second.tokens.cache_write = 2;
+            second.tokens.reasoning = 3;
+            second.source_cost = 0.02;
+            assert_eq!(
+                replace_rollup_source(&mut conn, "codex", &file, &[first, second]).unwrap(),
+                1
+            );
+
+            assert_eq!(usage_session_count(&conn, "codex"), 0);
+            assert_eq!(source_rollup_count(&conn, "codex"), 1);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (17, 29, 2));
+        });
+    }
+
+    #[test]
+    fn source_rollup_keeps_database_bounded_for_many_messages() {
+        with_home(|home| {
+            let mut conn = open_usage_db().unwrap();
+            let file = test_source_file(home, "sources/codex/bulk.jsonl");
+            let messages = (0..10_000)
+                .map(|seed| {
+                    let mut msg = make_message(seed);
+                    msg.session_id = format!("bulk-session-{seed}");
+                    msg.dedup_key = format!("bulk-dedup-{seed}");
+                    msg.tokens.input = 1;
+                    msg.tokens.output = 2;
+                    msg.tokens.cache_read = 0;
+                    msg.tokens.cache_write = 0;
+                    msg.tokens.reasoning = 0;
+                    msg.source_cost = 0.0;
+                    msg
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                replace_rollup_source(&mut conn, "codex", &file, &messages).unwrap(),
+                1
+            );
+
+            assert_eq!(usage_session_count(&conn, "codex"), 0);
+            assert_eq!(source_rollup_count(&conn, "codex"), 1);
+            assert_eq!(
+                agent_rollup_totals(&conn, "codex"),
+                (10_000, 20_000, 10_000)
+            );
+            let db_size = sqlite_db_size_bytes(&conn);
+            assert!(
+                db_size < 1_000_000,
+                "usage.sqlite should stay bounded for aggregated sources, got {db_size} bytes"
+            );
+        });
+    }
+
+    #[test]
     fn json_scan_extracts_usage_and_prompt_monitoring_event() {
         with_home(|home| {
             let dir = home.join(".codex").join("sessions");
@@ -3649,8 +4080,12 @@ mod tests {
             .unwrap();
             assert_eq!(report.parsed_messages, 1);
             assert_eq!(report.monitoring_events_parsed, 1);
-            assert_eq!(report.sessions_inserted, 1);
+            assert_eq!(report.sessions_inserted, 0);
+            assert_eq!(report.rollups_upserted, 1);
             assert_eq!(report.monitoring_records_inserted, 1);
+            assert_eq!(usage_session_count(&conn, "codex"), 0);
+            assert_eq!(source_rollup_count(&conn, "codex"), 1);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (12, 8, 1));
         });
     }
 
@@ -3699,10 +4134,11 @@ mod tests {
 
             assert_eq!(report.parsed_messages, 1);
             assert_eq!(report.monitoring_events_parsed, 2);
-            let row: (String, String, String, String, i64, i64, i64) = conn
+            assert_eq!(usage_session_count(&conn, "copilot"), 0);
+            let row: (String, String, String, i64, i64, i64) = conn
                 .query_row(
-                    "SELECT day, agent, provider, model, tokens_in, tokens_out, tokens_cache_read
-                     FROM usage_sessions",
+                    "SELECT day, agent, model, tokens_in, tokens_out, tokens_cache_read
+                     FROM usage_daily_model_rollups",
                     [],
                     |r| {
                         Ok((
@@ -3712,7 +4148,6 @@ mod tests {
                             r.get(3)?,
                             r.get(4)?,
                             r.get(5)?,
-                            r.get(6)?,
                         ))
                     },
                 )
@@ -3722,7 +4157,6 @@ mod tests {
                 (
                     "2026-06-16".to_string(),
                     "copilot".to_string(),
-                    "github".to_string(),
                     "gpt-5".to_string(),
                     11,
                     13,
@@ -4012,7 +4446,7 @@ mod tests {
             assert_eq!(report.monitoring_events_parsed, 1);
 
             let current = status().unwrap();
-            assert_eq!(current.sessions, 1);
+            assert_eq!(current.sessions, 0);
             assert_eq!(current.rollups, 1);
             assert_eq!(current.pending_monitoring_events, 1);
 
@@ -4071,8 +4505,12 @@ mod tests {
             ))
             .unwrap();
             assert_eq!(backfill_report.parsed_messages, 1);
-            assert_eq!(backfill_report.sessions_inserted, 1);
+            assert_eq!(backfill_report.sessions_inserted, 0);
+            assert_eq!(backfill_report.rollups_upserted, 1);
             assert_eq!(backfill_report.monitoring_events_parsed, 1);
+            assert_eq!(usage_session_count(&conn, "codex"), 0);
+            assert_eq!(source_rollup_count(&conn, "codex"), 1);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (10, 20, 1));
         });
     }
 
@@ -4108,7 +4546,9 @@ mod tests {
             ))
             .unwrap();
             assert_eq!(first.parsed_messages, 1);
-            assert_eq!(first.sessions_inserted, 1);
+            assert_eq!(first.sessions_inserted, 0);
+            assert_eq!(first.rollups_upserted, 1);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (10, 20, 1));
 
             let second = tokio_test::block_on(scan_into(
                 &mut conn,
@@ -4158,7 +4598,77 @@ mod tests {
             ))
             .unwrap();
             assert_eq!(third.parsed_messages, 2);
-            assert_eq!(third.sessions_inserted, 1);
+            assert_eq!(third.sessions_inserted, 0);
+            assert_eq!(third.rollups_upserted, 1);
+            assert_eq!(usage_session_count(&conn, "codex"), 0);
+            assert_eq!(source_rollup_count(&conn, "codex"), 1);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (17, 29, 2));
+        });
+    }
+
+    #[test]
+    fn scan_budget_resumes_after_cached_frontier() {
+        with_home(|home| {
+            let dir = home.join(".codex").join("sessions").join("2026").join("06");
+            fs::create_dir_all(&dir).unwrap();
+            for idx in 0..(MAX_SCAN_FILES_PER_RUN + 10) {
+                fs::write(
+                    dir.join(format!("session-{idx:03}.jsonl")),
+                    serde_json::json!({
+                        "session_id": format!("budget-{idx}"),
+                        "timestamp": "2026-06-16T10:00:00Z",
+                        "model": "gpt-5",
+                        "input_tokens": 1,
+                        "output_tokens": 2
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+            }
+
+            let mut conn = open_usage_db().unwrap();
+            let first = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["codex".to_string()],
+                    since: Some("2026-06-16".to_string()),
+                    until: Some("2026-06-16".to_string()),
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(first.files_scanned, MAX_SCAN_FILES_PER_RUN);
+            assert_eq!(first.parsed_messages, MAX_SCAN_FILES_PER_RUN);
+            assert!(first.scan_budget_exhausted);
+
+            let mut remaining_files = 10usize;
+            while remaining_files > 0 {
+                let next = tokio_test::block_on(scan_into(
+                    &mut conn,
+                    UsageScanOptions {
+                        tools: vec!["codex".to_string()],
+                        since: Some("2026-06-16".to_string()),
+                        until: Some("2026-06-16".to_string()),
+                    },
+                    None,
+                ))
+                .unwrap();
+                let expected = remaining_files.min(MAX_SCAN_FILES_PER_RUN);
+                assert_eq!(next.files_scanned, expected);
+                assert_eq!(next.parsed_messages, expected);
+                remaining_files -= expected;
+                assert_eq!(next.scan_budget_exhausted, remaining_files > 0);
+            }
+            assert_eq!(usage_session_count(&conn, "codex"), 0);
+            assert_eq!(
+                source_rollup_count(&conn, "codex"),
+                (MAX_SCAN_FILES_PER_RUN + 10) as i64
+            );
+            let expected = (MAX_SCAN_FILES_PER_RUN + 10) as i64;
+            assert_eq!(
+                agent_rollup_totals(&conn, "codex"),
+                (expected, expected * 2, expected)
+            );
         });
     }
 
@@ -4358,14 +4868,20 @@ mod tests {
                     "{agent} native fixture should produce monitoring events"
                 );
 
-                let usage_rows: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM usage_sessions WHERE agent = ?1",
-                        params![agent],
-                        |row| row.get(0),
-                    )
-                    .unwrap();
-                assert!(usage_rows >= 1, "{agent} usage row missing");
+                assert_eq!(
+                    usage_session_count(&conn, &agent),
+                    0,
+                    "{agent} usage detail rows should not be persisted"
+                );
+                assert!(
+                    source_rollup_count(&conn, &agent) >= 1,
+                    "{agent} source rollup missing"
+                );
+                let (tokens_in, tokens_out, message_count) = agent_rollup_totals(&conn, &agent);
+                assert!(
+                    tokens_in > 0 && tokens_out > 0 && message_count > 0,
+                    "{agent} daily rollup missing tokens/messages"
+                );
 
                 let records = open_records_db().unwrap();
                 for event_type in ["output", "tool_result", "skill", "tool_approval", "other"] {
@@ -4728,8 +5244,8 @@ mod tests {
         })
         .unwrap();
         let mut conn = open_usage_db().unwrap();
-        insert_usage_sessions(&mut conn, &[make_message(9)]).unwrap();
-        rebuild_rollups(&mut conn).unwrap();
+        let file = test_source_file(dir.path(), "sources/codex/outbox-failure.jsonl");
+        replace_rollup_source(&mut conn, "codex", &file, &[make_message(9)]).unwrap();
         assert_eq!(enqueue_dirty_rollups(&conn, "device-failure").unwrap(), 1);
 
         let report = drain_outbox(
@@ -4877,8 +5393,8 @@ mod tests {
         })
         .unwrap();
         let mut conn = open_usage_db().unwrap();
-        insert_usage_sessions(&mut conn, &[make_message(3)]).unwrap();
-        rebuild_rollups(&mut conn).unwrap();
+        let file = test_source_file(dir.path(), "sources/codex/sync-rollup.jsonl");
+        replace_rollup_source(&mut conn, "codex", &file, &[make_message(3)]).unwrap();
         assert_eq!(enqueue_dirty_rollups(&conn, "device-test").unwrap(), 1);
         let report = drain_outbox(
             &conn,

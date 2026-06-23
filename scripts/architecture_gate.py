@@ -150,14 +150,22 @@ def assert_usage_parser_surface() -> None:
     text = read("client/src/usage/mod.rs")
     for symbol in [
         "DEFAULT_SCAN_LOOKBACK_DAYS",
+        "MAX_SCAN_FILES_PER_RUN",
         "MAX_SCAN_CANDIDATES_PER_AGENT",
         "MAX_SCAN_DIR_ENTRIES_PER_AGENT",
         "MAX_JSONL_LINES_PER_FILE",
         "MAX_CSV_ROWS_PER_FILE",
+        "MAX_SQLITE_TABLES_PER_FILE",
+        "MAX_SQLITE_ROWS_PER_FILE",
+        "MAX_EVENTS_PER_FILE",
         "ScanWindow",
         "FileScanPlan",
         "usage_scan_file_cache",
         "ensure_usage_scan_file_cache_schema",
+        "usage_rollup_sources",
+        "ensure_usage_rollup_sources_schema",
+        "replace_rollup_source",
+        "compact_legacy_usage_sessions",
         "should_scan_source_file",
         "mark_source_file_scanned",
         "output_text_from_object",
@@ -192,17 +200,31 @@ def assert_usage_parser_surface() -> None:
         "json_scan_extracts_output_tool_call_and_tool_result_monitoring_records",
         "json_scan_extracts_skill_approval_and_explicit_other_agent_events",
         "discovery_helpers_cover_roots_supported_files_and_skipped_dirs",
+        "changed_source_replaces_previous_rollup_contribution",
+        "source_rollup_keeps_database_bounded_for_many_messages",
+        "scan_budget_resumes_after_cached_frontier",
     ]:
         if test_name not in text:
             fail(f"missing usage parser regression test {test_name}")
 
+    scan_into_match = re.search(r"async fn scan_into[\s\S]*?\n}\n\nfn open_usage_db", text)
+    if not scan_into_match:
+        fail("usage scan_into function not found")
+    scan_into_body = scan_into_match.group(0)
+    if "insert_usage_sessions" in scan_into_body or "rebuild_rollups" in scan_into_body:
+        fail("normal usage scan path must not persist or rebuild from usage_sessions detail rows")
+
     expected_limits = {
         "DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30": "default usage scan window must stay bounded",
+        "MAX_SCAN_FILES_PER_RUN: usize = 5": "per-run scan file budget must stay bounded",
         "MAX_SCAN_FILES_PER_AGENT: usize = 200": "per-agent scan file cap must stay bounded",
         "MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800": "per-agent candidate cap must stay bounded",
         "MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000": "directory traversal cap must stay bounded",
         "MAX_JSONL_LINES_PER_FILE: usize = 2000": "jsonl line cap must stay bounded",
         "MAX_CSV_ROWS_PER_FILE: usize = 2000": "csv row cap must stay bounded",
+        "MAX_SQLITE_TABLES_PER_FILE: usize = 10": "sqlite table cap must stay bounded",
+        "MAX_SQLITE_ROWS_PER_FILE: usize = 5000": "sqlite row cap per file must stay bounded",
+        "MAX_EVENTS_PER_FILE: usize = 200": "monitoring events per file must stay bounded",
     }
     for needle, message in expected_limits.items():
         if needle not in text:
@@ -218,6 +240,9 @@ def assert_e2e_matrix_gate() -> None:
         fail("client e2e matrix coverage calculation missing")
     if "Local scan cache skips unchanged" not in text:
         fail("client e2e does not verify unchanged local scan cache behavior")
+    for needle in ["DETAIL_ROWS", "SOURCE_ROWS", "ROLLUP_ROWS", "usage_rollup_sources", "usage_daily_model_rollups"]:
+        if needle not in text:
+            fail(f"client e2e matrix must verify bounded local rollup storage: missing {needle}")
 
     registered = [
         name

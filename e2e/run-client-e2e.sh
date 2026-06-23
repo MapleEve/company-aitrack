@@ -715,12 +715,16 @@ print('yes' if found else 'no')
             continue
         fi
 
-        USAGE_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+        DETAIL_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
             "SELECT COUNT(*) FROM usage_sessions WHERE agent='${agent}';" 2>/dev/null || echo "0")
-        if [ "${USAGE_ROWS}" -ge 1 ]; then
-            ok "Local usage.sqlite: ${agent} usage rows inserted (${USAGE_ROWS})"
+        SOURCE_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_rollup_sources WHERE agent='${agent}';" 2>/dev/null || echo "0")
+        ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND tokens_in > 0 AND tokens_out > 0 AND message_count > 0;" 2>/dev/null || echo "0")
+        if [ "${DETAIL_ROWS}" -eq 0 ] && [ "${SOURCE_ROWS}" -ge 1 ] && [ "${ROLLUP_ROWS}" -ge 1 ]; then
+            ok "Local usage.sqlite: ${agent} aggregated without persisted detail rows (sources=${SOURCE_ROWS}, rollups=${ROLLUP_ROWS})"
         else
-            fail "Local usage.sqlite: ${agent} has no usage rows"
+            fail "Local usage.sqlite: ${agent} detail=${DETAIL_ROWS} sources=${SOURCE_ROWS} rollups=${ROLLUP_ROWS}"
             agent_fail=1
         fi
 

@@ -94,7 +94,7 @@ aitrack update
 - 目录：`~/.aitrack/`
 - `~/.aitrack/config.toml`：权限 `0600`，字段为 `api_url`、`credential`、`device_id`
 - `~/.aitrack/records.db`：SQLite，权限 `0600`，存放 `EditRecord` 监控事件
-- `~/.aitrack/usage.sqlite`：SQLite，存放本地用量会话、日聚合、额度快照、上传 outbox 和扫描游标缓存
+- `~/.aitrack/usage.sqlite`：SQLite，存放本地来源级用量贡献、日聚合、额度快照、上传 outbox 和扫描游标缓存；正常扫描不长期保存逐条会话明细
 - `device_id`：首次初始化时生成 UUIDv4，并持久化到 `config.toml`
 
 ### `records` 表

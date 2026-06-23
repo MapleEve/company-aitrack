@@ -35,7 +35,7 @@ aitrack usage sync --api-url https://aitrack.example.com --credential <credentia
 aitrack remove --claude
 ```
 
-`usage scan` 只写入本地用量账本，不上传；`usage sync` 会先扫描，再上传用量汇总、额度快照和本地会话中可还原的监控事件。需要限制范围时可重复指定 `--tool`，也可以用 `--since` / `--until` 做小窗口回填。
+`usage scan` 只写入本地用量账本，不上传；`usage sync` 会先扫描，再上传用量汇总、额度快照和本地会话中可还原的监控事件。默认扫描按单轮预算分批推进，返回 `scan_budget_exhausted=true` 时重复运行会继续处理未缓存来源；需要限制范围时可重复指定 `--tool`，也可以用 `--since` / `--until` 做小窗口回填。
 
 ## 本地数据
 
@@ -43,7 +43,7 @@ aitrack remove --claude
 |------|------|
 | `~/.aitrack/config.toml` | 保存 `api_url`、`credential`、`device_id` 等配置，权限应为 `0600` |
 | `~/.aitrack/records.db` | 保存原生钩子和本地扫描生成的监控记录 |
-| `~/.aitrack/usage.sqlite` | 保存本地用量会话、汇总、额度快照和同步队列 |
+| `~/.aitrack/usage.sqlite` | 保存本地来源级用量贡献、汇总、额度快照、同步队列和扫描游标；正常扫描不长期保存逐条会话明细 |
 
 客户端只读取本机可见文件和本地状态，不要求用户手动粘贴第三方服务 token。
 
