@@ -178,7 +178,12 @@ def assert_usage_parser_surface() -> None:
             fail(f"usage parser missing {symbol}")
     if "collect_files_with_extension" in text:
         fail("codex quota reader must not use unbounded extension recursion")
-    if 'join("logs").join(tool)' in text or 'join("cache").join(tool)' in text:
+    if (
+        re.search(r'join\(\s*"logs"\s*\)[\s\S]{0,120}join\(\s*tool\s*\)', text)
+        or re.search(r'join\(\s*"cache"\s*\)[\s\S]{0,120}join\(\s*tool\s*\)', text)
+        or re.search(r'join\(\s*tool\s*\)[\s\S]{0,120}join\(\s*"logs"\s*\)', text)
+        or re.search(r'join\(\s*tool\s*\)[\s\S]{0,120}join\(\s*"cache"\s*\)', text)
+    ):
         fail("default import roots must not include generic logs/cache directories")
 
     for test_name in [
@@ -245,6 +250,23 @@ def assert_e2e_matrix_gate() -> None:
             fail(f"client e2e does not assert {event_type}")
 
 
+def assert_e2e_diagnostics_gate() -> None:
+    for path in ["e2e/run.sh", "e2e/run-client-e2e.sh"]:
+        text = read(path)
+        if "tail " + "-5" in text or re.search(r"docker build[\s\S]{0,160}\|\s*tail", text):
+            fail(f"{path} must not truncate docker build logs")
+        if "--progress=plain" not in text:
+            fail(f"{path} must use plain docker progress for CI diagnostics")
+
+    dockerfile = read("docker/Dockerfile.server-java")
+    if (ROOT / ("docker/" + "maven-" + "settings.xml")).exists():
+        fail("Java Docker build must not carry a custom Maven mirror settings file")
+    if "COPY docker/" + "maven-" + "settings.xml" in dockerfile or "/root/.m2/" + "settings.xml" in dockerfile:
+        fail("Java Docker build must use the same default Maven repository path as Java CI")
+    if re.search(r"\bmvn\s+-q\b", dockerfile):
+        fail("Java Docker build must not hide Maven verify errors with -q")
+
+
 def assert_public_docs_support_counts() -> None:
     docs = "\n".join(
         read(path)
@@ -280,6 +302,11 @@ def assert_public_docs_support_counts() -> None:
         "local transcript / " + "cache scan",
         "agent " + "logs",
         "cache " + "files " + "expose",
+        "~/.aitrack/" + "sources/<agent>",
+        "本地" + "工具目录",
+        "ローカル" + "ログ",
+        "로컬 " + "로그",
+        "로컬 agent " + "로그",
         "baidu-comate",
         "wenxin",
     ]:
@@ -317,14 +344,26 @@ def assert_client_dependency_freeze() -> None:
         fail(f"client dependency list changed without gate update: {', '.join(extra)}")
 
 
+def assert_generated_coverage_hygiene() -> None:
+    gitignore = read(".gitignore")
+    for pattern in ["*.profraw", "*.profdata"]:
+        if pattern not in gitignore:
+            fail(f".gitignore must ignore generated coverage artifact {pattern}")
+    tracked = [path for path in git_ls_files() if path.endswith((".profraw", ".profdata"))]
+    if tracked:
+        fail(f"generated coverage artifacts are tracked: {', '.join(tracked)}")
+
+
 def main() -> None:
     assert_private_paths_are_untracked()
     assert_agent_source_specs()
     assert_usage_parser_surface()
     assert_e2e_matrix_gate()
+    assert_e2e_diagnostics_gate()
     assert_public_docs_support_counts()
     assert_ci_gate()
     assert_client_dependency_freeze()
+    assert_generated_coverage_hygiene()
     print("Architecture gate passed")
 
 

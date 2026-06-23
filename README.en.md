@@ -79,9 +79,9 @@ aitrack consists of three independent components communicating via Protocol v1.2
 **Agent and data-domain boundaries:**
 
 - Claude Code, Codex CLI, and Cursor currently have native edit hook adapters that can produce `EditRecord` payloads with diff, line counts, repository metadata, and `record_sig`
-- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; local transcript scans can recover prompt, tool, window, and reconstructable edit monitoring events even when no native hook is available
+- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; typed local scans can recover prompt, tool, window, and reconstructable edit monitoring events even when no native hook is available
 - `EditRecord` is the edit evidence domain; usage rollups and snapshots are scalar usage domains, so token-only or usage-only data cannot be represented as edit records
-- Local usage sources include local transcript directories, JSONL files, SQLite databases, and local client state; aitrack discovers available local credentials or entry points where possible and does not require users to paste third-party service tokens
+- Local usage sources include typed transcript/session directories, JSONL files, SQLite databases, and local client state; explicit import directories are opt-in roots, and aitrack does not require users to paste third-party service tokens
 
 **Current agent framework support:**
 
@@ -90,7 +90,7 @@ aitrack consists of three independent components communicating via Protocol v1.2
 | `claude` | yes | yes | yes: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude` | yes | yes: local rate-limit snapshot |
 | `codex` | yes | no | yes: `.codex/sessions`, `~/.aitrack/sources/codex` | yes | yes: session rate-limit snapshot |
 | `cursor` | yes | no | yes: Cursor globalStorage, `~/.aitrack/sources/cursor` | yes | no |
-| default local-scan agents | no | no | local agent directories, app data, JSON/JSONL/NDJSON, CSV, SQLite, `~/.aitrack/sources/<agent>` | token, message count, source cost | no |
+| default local-scan agents | no | no | typed native paths plus explicit structured import roots | token, message count, source cost | no |
 
 Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path. When local JSON, JSONL, NDJSON, CSV, SQLite, or local source files expose prompt, tool, window, edit, or token fields, aitrack routes them into the matching monitoring or usage data plane.
 
@@ -150,7 +150,7 @@ Profile data is used solely to understand actual AI tool adoption — it is not 
 
 ### Prompt and Local Transcript Monitoring (v1.7+)
 
-The client can optionally install a `UserPromptSubmit` hook and can also scan local transcript directories, JSONL files, SQLite databases, and local state files with `aitrack usage scan|sync` by agent, time window, and local cursor cache. The default mode is a recent-window incremental scan; explicit `--since/--until` flags provide small, targeted backfills. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from local transcripts.
+The client can optionally install a `UserPromptSubmit` hook and can also scan typed local session directories, JSONL files, SQLite databases, and local state files with `aitrack usage scan|sync` by agent, time window, and local cursor cache. The default mode is a recent-window incremental scan; explicit `--since/--until` flags provide small, targeted backfills. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from typed local sources.
 
 The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets, message count, and source cost by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
 

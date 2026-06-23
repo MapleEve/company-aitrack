@@ -57,7 +57,7 @@ aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具�
 | `claude` | 是 | 是 | `.claude/`、projects / transcripts 目录、`~/.aitrack/sources/claude` | 是 | 本地限额快照 |
 | `codex` | 是 | 否 | `.codex/sessions`、`~/.aitrack/sources/codex` | 是 | 本地会话限额快照 |
 | `cursor` | 是 | 否 | Cursor globalStorage、`~/.aitrack/sources/cursor` | 是 | 否 |
-| 默认本地扫描工具 | 否 | 否 | 本地工具目录、应用数据、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>` | token、消息数、成本估算 | 否 |
+| 默认本地扫描工具 | 否 | 否 | 明确的原生路径、应用状态、JSON/JSONL/NDJSON、CSV、SQLite，以及显式结构化导入根 | token、消息数、成本估算 | 否 |
 
 默认本地扫描覆盖 35 个规范 key：
 

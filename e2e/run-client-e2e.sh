@@ -106,6 +106,12 @@ if ! command -v git &>/dev/null; then
     echo "ERROR: git is required"; exit 1
 fi
 
+docker_build() {
+    local dockerfile="$1"
+    local tag="$2"
+    (cd "${REPO_ROOT}" && docker build --progress=plain -f "${dockerfile}" -t "${tag}" .)
+}
+
 # ── Step 1: build the real aitrack binary (once) ──────────────────────────────
 AITRACK_BIN="${CLIENT_DIR}/target/release/aitrack"
 
@@ -119,13 +125,11 @@ log "Binary ready: ${AITRACK_BIN}"
 # ── Step 2: build server images if needed ─────────────────────────────────────
 if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-java:e2e &>/dev/null; then
     log "Building aitrack-server-java:e2e image..."
-    (cd "${REPO_ROOT}" && docker build -f docker/Dockerfile.server-java \
-        -t aitrack-server-java:e2e . 2>&1 | tail -5)
+    docker_build docker/Dockerfile.server-java aitrack-server-java:e2e
 fi
 if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-go:e2e &>/dev/null; then
     log "Building aitrack-server-go:e2e image..."
-    (cd "${REPO_ROOT}" && docker build -f docker/Dockerfile.server-go \
-        -t aitrack-server-go:e2e . 2>&1 | tail -5)
+    docker_build docker/Dockerfile.server-go aitrack-server-go:e2e
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

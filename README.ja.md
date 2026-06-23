@@ -79,9 +79,9 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 **Agent とデータドメインの境界：**
 
 - Claude Code、Codex CLI、Cursor は現在 native edit hook adapter を持ち、diff、行数、リポジトリメタデータ、`record_sig` を含む `EditRecord` を生成できます
-- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できます。native hook がない場合でも、ローカル transcript スキャンから prompt、tool、window、復元可能な編集監視イベントを補完できます
+- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できます。native hook がない場合でも、型付きローカルスキャンから prompt、tool、window、復元可能な編集監視イベントを補完できます
 - `EditRecord` は編集証拠ドメインです。usage rollup / snapshot はスカラー使用量ドメインであり、token-only または usage-only データを編集レコードとして扱うことはできません
-- ローカル使用量ソースには、ローカルログ、JSONL、SQLite、キャッシュ、ローカルクライアント状態が含まれます。aitrack は利用可能なローカル認証情報または入口を自動検出し、ユーザーにサードパーティの token 貼り付けを求めません
+- ローカル使用量ソースには、型付き transcript / session ディレクトリ、JSONL、SQLite、ローカルクライアント状態が含まれます。明示的な import ディレクトリは opt-in の入口であり、aitrack はユーザーにサードパーティの token 貼り付けを求めません
 
 **現在対応している agent framework：**
 
@@ -90,7 +90,7 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 | `claude` | あり | あり | あり: `.claude/`、projects、transcripts、`~/.aitrack/sources/claude` | あり | あり: ローカル rate-limit snapshot |
 | `codex` | あり | なし | あり: `.codex/sessions`、`~/.aitrack/sources/codex` | あり | あり: session rate-limit snapshot |
 | `cursor` | あり | なし | あり: Cursor globalStorage、`~/.aitrack/sources/cursor` | あり | なし |
-| default local-scan agents | なし | なし | ローカル agent ディレクトリ、アプリデータ、JSON/JSONL/NDJSON、CSV、SQLite、`~/.aitrack/sources/<agent>` | token、message count、source cost | なし |
+| default local-scan agents | なし | なし | 型付き native path と明示的な構造化 import root | token、message count、source cost | なし |
 
 デフォルトのローカルスキャンは `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode` を対象にします。明示的な `--tool` では `roocode`、`kilo-code`、`gajae-code` も alias として受け付けます。デフォルトスキャンは canonical key を使い、同じローカルパスの二重取り込みを避けます。ローカル JSON、JSONL、NDJSON、CSV、SQLite、ローカルソースファイルに prompt、tool、window、edit、token フィールドが含まれていれば、aitrack は対応する監視または usage データ面へ取り込みます。
 
@@ -150,7 +150,7 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 
 ### プロンプトとローカル transcript 監視（v1.7+）
 
-クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` で agent、時間ウィンドウ、ローカルカーソルキャッシュ単位にローカル agent のログ、JSONL、SQLite、キャッシュをスキャンできます。デフォルトは直近ウィンドウの増分スキャンで、明示的な `--since/--until` により小規模なバックフィルを行えます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、ローカル transcript から prompt、tool、window、編集監視イベントを復元できます。
+クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` で agent、時間ウィンドウ、ローカルカーソルキャッシュ単位に型付きローカル session ディレクトリ、JSONL、SQLite、ローカル状態ファイルをスキャンできます。デフォルトは直近ウィンドウの増分スキャンで、明示的な `--since/--until` により小規模なバックフィルを行えます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、型付きローカルソースから prompt、tool、window、編集監視イベントを復元できます。
 
 `usage` サブコマンドは独立した usage rollup / subscription snapshot データ面も維持します。day、agent、model、account ごとに token bucket、message count、source cost を集計し、`/api/v1/ai-track/usage/*` API 経由で Java または Go サーバーへアップロードします。
 

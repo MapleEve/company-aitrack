@@ -19,6 +19,12 @@ TARGET="${1:-both}"
 
 log() { echo "[e2e] $*"; }
 
+docker_build() {
+    local dockerfile="$1"
+    local tag="$2"
+    (cd "$REPO_ROOT" && docker build --progress=plain -f "$dockerfile" -t "$tag" .)
+}
+
 # ── Docker-internal path (when run inside e2e container) ─────────────────────
 if [ -n "$SERVER_URL" ] && [ -n "$SERVER_IMPL" ]; then
     log "Running e2e runner against $SERVER_URL (impl=$SERVER_IMPL)"
@@ -33,10 +39,10 @@ if ! command -v docker &>/dev/null; then
 fi
 
 log "Building server images..."
-(cd "$REPO_ROOT" && docker build -f docker/Dockerfile.server-java -t aitrack-server-java:e2e . 2>&1 | tail -5)
-(cd "$REPO_ROOT" && docker build -f docker/Dockerfile.server-go   -t aitrack-server-go:e2e   . 2>&1 | tail -5)
+docker_build docker/Dockerfile.server-java aitrack-server-java:e2e
+docker_build docker/Dockerfile.server-go aitrack-server-go:e2e
 log "Building e2e runner image..."
-(cd "$REPO_ROOT" && docker build -f e2e/Dockerfile.e2e -t aitrack-e2e:latest . 2>&1 | tail -5)
+docker_build e2e/Dockerfile.e2e aitrack-e2e:latest
 
 E2E_NET="aitrack-e2e-net"
 PG_CONTAINER="aitrack-e2e-postgres"
