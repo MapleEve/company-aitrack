@@ -32,15 +32,15 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 | v1.5 | 提示词捕获前置：UserPromptSubmit 钩子 + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
 | v1.6.0 | 六边形架构重构（domain / port / adapter）；`aitrack update` 子命令（ed25519 签名验证）；关键词完整性指纹（SHA-256）；testapp 端到端真实链路 | 已交付 |
 | v1.6.1 | Go 服务端完全迁移为 PostgreSQL-only（移除 SQLite 回退）；E2E 竞态修复；CI 改用原生工具链（llvm-cov / mvn verify）替代 Docker 构建验证 | 已交付 |
-| v1.7.0 | 动态工具注册表 / 状态 / 心跳；35 个默认本地扫描工具 key；用量汇总 / 额度快照数据面；Java + Go 用量 API；本地会话记录监控恢复；30 天默认窗口、按需小回填和文件游标缓存；本地来源 E2E 与架构门禁 | 已交付 |
+| v1.7.0 | 动态工具注册表 / 状态 / 心跳；30 个默认本地扫描工具 key；用量汇总 / 额度快照数据面；Java + Go 用量 API；本地会话记录监控恢复；30 天默认窗口、按需小回填和文件游标缓存；本地来源 E2E 与架构门禁 | 已交付 |
 
 ### 当前工具支持边界
 
 - Claude Code、Codex CLI、Cursor：已具备原生编辑钩子适配器，可生成 `EditRecord` 编辑证据。
-- Claude Code：额外支持原生提示词钩子；Codex CLI 与 Claude Code 可从本地状态提取额度 / 订阅快照。
+- Claude Code、Codex CLI、Cursor：额外支持原生提示词钩子；Codex CLI 与 Claude Code 可从本地状态提取额度 / 订阅快照。
 - 动态工具注册表 / 状态 / 心跳：心跳 `hooks` 已按工具 key 动态表达，支持登记更多工具的本机可见性和安装状态。
-- 默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
-- 本地用量来源：已支持按本机会话目录、JSONL、NDJSON、SQLite、CSV 和本地客户端状态接入用量汇总 / 快照，按 token 分桶、消息数和成本估算聚合；同时可将本地会话记录中的提示词、工具调用、窗口和可还原编辑监控事件补入 `EditRecord` 上报链路。
+- 默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode`；显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- 本地用量来源：已支持按本机会话目录、导出文件、遥测日志、JSONL、NDJSON、SQLite、CSV 和本地客户端状态接入用量汇总 / 快照，按 token 分桶、消息数和成本估算聚合；只有来源自身提供稳定字段时，才将提示词、工具调用、窗口和可还原编辑监控事件补入 `EditRecord` 上报链路。
 - 扫描性能边界：默认 30 天近窗口增量扫描；显式 `--since/--until` 做小范围回填；每个工具有候选、文件数、目录遍历和行数上限；本地文件游标缓存可跳过未变化来源。
 
 ### 当前成功指标（v1.7.0 基线）
@@ -51,7 +51,7 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 - 心跳检测延迟 ≤ 1 小时
 - 三组件（client / server-java / server-go）CI 覆盖率均 ≥ 90%
 - Rust 客户端单测 300 通过
-- 本地来源 E2E 矩阵覆盖 35 / 35；PR 门禁要求覆盖率不低于 90%
+- 本地来源 E2E 矩阵覆盖 30 / 30；PR 门禁要求默认矩阵覆盖率 100%
 - 未变化本地来源的第二次 `usage sync` 必须解析 0 条 message 和 0 条 monitoring event
 
 ---

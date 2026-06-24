@@ -36,17 +36,17 @@ AiTrack 由三个独立组件构成，通过 HTTP/JSON 协议通信，所有行�
 
 ### 工具注册表与数据域
 
-aitrack 的公开版本保持通用、自托管和运行时解耦，同时保留员工监控、管理员治理和审计语义。系统把 AI 编码工具支持拆成三层：
+aitrack 保持通用、自托管和运行时解耦，同时保留员工监控、管理员治理和审计语义。系统把 AI 编码工具支持拆成三层：
 
 | 层级 | 当前边界 |
 |------|----------|
 | 原生编辑钩子适配器 | Claude Code、Codex CLI、Cursor 已有本地编辑事件适配，可生成文件编辑类 `EditRecord` |
 | 工具注册、状态与心跳 | 服务端心跳 `hooks` 为动态状态图，可接收任意已登记工具 key 的安装或可见状态 |
-| 本地用量来源 | 本机会话目录、JSONL、SQLite、CSV 和本地客户端状态可作为用量来源，也可补齐提示词、工具调用、窗口和可还原编辑监控事件 |
+| 本地用量来源 | 本机会话目录、导出文件、遥测日志、JSONL、SQLite、CSV 和本地客户端状态可作为用量来源；只有来源自身提供稳定字段时，才补齐提示词、工具调用、窗口和可还原编辑监控事件 |
 
 `EditRecord` 是监控事件域，必须包含设备信息、时间、工具、仓库上下文和 `record_sig`；文件编辑类记录还包含 diff 与行数。用量汇总和额度/订阅快照是标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计。纯 token 或纯用量数据只能进入用量域，不能写成监控事件。
 
-完整工具支持矩阵、35 个默认扫描 key、3 个显式别名、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
+完整工具支持矩阵、30 个默认扫描 key、3 个显式别名、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
 
 `hooks.<tool> = true` 只表示该工具在本机可见或对应钩子可用，不代表该工具已经具备原生编辑钩子适配器。
 
@@ -127,7 +127,7 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 ### 编辑事件流（PostToolUse / afterFileEdit）
 
-> **Cursor 双注册**：Cursor 钩子同时注册到 `postToolUse` 和 `afterFileEdit` 两个数组，每项携带 `matcher: "Write"` 和 `timeout: 10`。`remove_cursor_hook` 同样清理两个数组。
+> **Cursor 三注册**：Cursor 钩子注册到 `postToolUse`、`afterFileEdit` 和 `beforeSubmitPrompt`；编辑 entry 携带 `matcher: "Write"` 和 `timeout: 10`，提示词 entry 进入同一套本地提示词捕获流程。`remove_cursor_hook` 同样清理这三个数组。
 
 1. AI 工具触发 PostToolUse/afterFileEdit 钩子
 2. aitrack capture 从 stdin 读取 JSON
@@ -150,18 +150,18 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
     → 服务端 10 步校验链
     → 更新 synced/retry_count
 
-### 提示词捕获流（UserPromptSubmit）
+### 提示词捕获流（UserPromptSubmit / beforeSubmitPrompt）
 
-1. Claude Code 触发 UserPromptSubmit 钩子
-2. aitrack prompt-capture 从 stdin 读取 JSON（{"session_id": "...", "prompt": "..."}）
+1. Claude Code、Codex CLI 或 Cursor 触发本地提示词钩子
+2. aitrack prompt-capture 从 stdin 读取 JSON，并从 `session_id`、`conversation_id` 或 `transcript_path` 取上下文键，从 `prompt` 取提示词正文
 3. 在本地写入有界提示词文本
 4. INSERT INTO `prompt_context`（session_id, prompt_text）
 
 ### 本地用量与会话记录扫描流
 
-1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机会话目录、JSONL、SQLite 和 CSV；默认只处理近窗口内的有界候选文件，并按单轮预算分批推进；显式 `--since/--until` 用于小范围回填
+1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机会话目录、导出文件、遥测日志、JSONL、SQLite 和 CSV；默认只处理近窗口内的有界候选文件，并按单轮预算分批推进；显式 `--since/--until` 用于小范围回填
 2. 提取 token 分桶、消息数和成本估算，在内存中按来源替换聚合，写入 `usage_rollup_sources` 与 `usage_daily_model_rollups`；旧明细表只用于升级迁移后清空
-3. 提取提示词、工具调用、窗口和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
+3. 从稳定来源提取提示词、工具调用、窗口和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
 4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`
 
 ---
@@ -386,7 +386,7 @@ Embedding 列不自动填充。如需启用 ANN 检索，运行回填脚本（`s
 
 #### 提示词捕获
 
-- 新增 `UserPromptSubmit` 钩子：用户提交提示词时触发，aitrack 将有界提示词内容写入本地 `prompt_context` 表
+- 新增本地提示词钩子：用户提交提示词时触发，aitrack 将有界提示词内容写入本地 `prompt_context` 表
 - `records` 表新增 `prompt_summary TEXT` 列（可空），capture / 本地会话记录扫描流程附加当前 session 的有界提示词内容
 - `prompt_summary` 不参与 `record_sig` 计算（用于审计和画像分析，不影响防篡改机制）
 - 上传时 `prompt_summary` 作为可选字段随 edit 记录上报

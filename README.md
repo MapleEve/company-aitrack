@@ -66,10 +66,12 @@ v1.7.0 之后，aitrack 的采集能力分成三层，不再只围绕三条固�
 | 层级 | 已支持能力 | 适用工具 |
 |------|------------|----------|
 | 原生编辑证据 | 生成带 diff、行数、仓库信息和 `record_sig` 的 `EditRecord` | Claude Code、Codex CLI、Cursor |
-| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 35 个默认工具 key 和显式别名 |
-| 本地用量扫描 | 扫描本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态，提取提示词、工具调用、窗口、可还原编辑事件、token、消息数和成本估算 | 默认 35 个工具 key；可用 `--tool` 限定范围 |
+| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 已登记工具 key 和显式别名 |
+| 本地用量扫描 | 按各工具文档和本地数据结构读取本机会话、导出、遥测或本地数据库；只在来源本身提供字段时提取提示词、输出、工具调用、token、消息数和成本估算 | 默认 30 个工具 key；可用 `--tool` 限定范围 |
 
-默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；`antigravity`、`qoder-work`、`qoder-work-cn`、`roo-code`、`synthetic` 只保留登记或显式入口，不计入默认本地扫描矩阵。
+
+其中 `claude`、`codex`、`cursor` 使用原生 hook 捕获编辑和提示词上下文；`gemini`、`qwen`、`copilot`、`droid` 读取本地遥测；其他默认扫描工具按各自稳定来源读取导出、统计、会话文本、wire 记录、轨迹或本地数据库。任何来源缺失的字段都不会被补成假数据。
 
 详细支持矩阵、扫描路径、性能上限和管理员解读方式见 [AI 编码工具支持矩阵](docs/AGENT_SUPPORT.md)。
 
@@ -94,10 +96,10 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 **工具与数据域边界：**
 
-- `EditRecord` 是监控事件域，适合存放签名编辑证据和可还原的提示词、工具调用、窗口、编辑监控事件。
+- `EditRecord` 是监控事件域，适合存放签名编辑证据和来源中可还原的提示词、工具调用、窗口、编辑监控事件。
 - 用量汇总和额度/订阅快照是标量用量域，适合存放 token、消息数、成本估算和剩余额度。
 - 纯 token 或纯用量数据不能伪装成监控事件。
-- 本地用量扫描只读取本机可见文件和本地状态，不要求用户手动粘贴第三方服务 token。
+- 本地用量扫描只读取本机可见文件、本地导出和本地状态，不要求用户手动粘贴第三方服务 token。
 - `hooks.<tool> = true` 表示该工具在本机可见或对应钩子可用，不等同于该工具已有原生编辑钩子。
 
 ---
@@ -156,7 +158,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 ### 提示词与本地会话记录监控（v1.7+）
 
-客户端可选安装 `UserPromptSubmit` 钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机会话目录、JSONL、SQLite 和本地状态文件；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具也可通过本地会话记录扫描补齐提示词、工具调用、窗口和编辑监控事件。
+客户端可选安装本地提示词钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机会话目录、导出文件、遥测日志、JSONL、SQLite 和本地状态文件；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填，单次扫描窗口最多 30 天。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具只在稳定本地来源提供对应字段时补齐提示词、工具调用、窗口和编辑监控事件。
 
 `usage` 子命令同时维护独立的用量汇总和额度/订阅快照数据面，按日期、工具、模型、账号聚合 token 分桶、消息数和成本估算，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 
@@ -165,7 +167,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 - Rust 客户端完成六边形架构重构（domain / port / adapter 三层），所有 I/O 通过 `StoragePort` / `UploadPort` 接口路由，业务逻辑与基础设施彻底解耦
 - `aitrack update` 子命令：从 GitHub Releases 拉取最新版本，ed25519 签名验证通过后原子替换当前二进制
 - 关键词库防篡改：关键词以编译期常量硬编码，`keyword_fingerprint()` 计算 SHA-256 指纹供服务端校验
-- 三端覆盖率均 ≥ 90%（Rust 301 tests / Java 和 Go package tests）
+- 三端覆盖率均 ≥ 90%（Rust 单测、Java 和 Go package tests）
 
 ---
 
@@ -213,7 +215,7 @@ aitrack status
 # 查看本地记录（最近 20 条）
 aitrack inspect --limit 20
 
-# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 35 个工具 key
+# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 30 个工具 key
 aitrack usage scan
 
 # 扫描、汇总并上传用量，也会上传本地会话记录中可还原的监控事件
@@ -273,7 +275,7 @@ bash e2e/run.sh both
 | **token 哈希存储** | 服务端仅存储 `sha256(token)`，明文仅签发时返回一次 |
 | **本地优先** | 所有数据存储于自建服务，不经过任何第三方云服务 |
 | **常量时间比较** | HMAC 验证使用常量时间比较，防止 timing attack |
-| **采集范围透明可控** | 默认采集文件路径、diff、行数、仓库元数据；提示词钩子与本地会话记录扫描可采集有界提示词、工具调用、窗口监控事件；用量汇总只记录标量指标；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
+| **采集范围透明可控** | 默认采集文件路径、diff、行数、仓库元数据；提示词钩子与稳定本地来源可采集有界提示词、工具调用、窗口监控事件；用量汇总只记录标量指标；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
 
 ---
 

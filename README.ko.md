@@ -92,7 +92,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 | `cursor` | 지원 | 미지원 | 지원: Cursor globalStorage, `~/.aitrack/sources/cursor` | 지원 | 미지원 |
 | default local-scan agents | 미지원 | 미지원 | typed native path 및 명시적 structured import root | token, message count, source cost | 미지원 |
 
-기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 기본 스캔은 canonical key 를 사용해 같은 로컬 경로의 중복 수집을 피합니다. 로컬 JSON, JSONL, NDJSON, CSV, SQLite, 로컬 source 파일에 prompt, tool, window, edit, token 필드가 있으면 aitrack 가 해당 모니터링 또는 usage 데이터면으로 수집합니다.
+기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `opencode`, `qoder`, `qoder-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 검증된 로컬 source 증거가 없는 등록 key 는 기본 로컬 스캔 지원에 포함하지 않습니다.
 
 ---
 

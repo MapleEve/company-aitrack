@@ -23,11 +23,15 @@ use crate::{git, uploader};
 
 const MAX_UPLOAD_ITEMS: i64 = 500;
 const DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30;
+const MAX_SCAN_WINDOW_DAYS: i64 = 30;
 const MS_PER_DAY: i64 = 24 * 60 * 60 * 1000;
 const MAX_SCAN_FILES_PER_RUN: usize = 5;
 const MAX_SCAN_FILES_PER_AGENT: usize = 200;
 const MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800;
 const MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000;
+const MAX_USAGE_SCAN_FILE_CACHE_ROWS: usize = 20_000;
+const MAX_USAGE_MONITORING_SEEN_ROWS: usize = 50_000;
+const MAX_USAGE_ROLLUP_SOURCE_ROWS: usize = 20_000;
 const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_JSONL_LINES_PER_FILE: usize = 2000;
 const MAX_CSV_ROWS_PER_FILE: usize = 2000;
@@ -258,6 +262,12 @@ struct SourceFile {
 }
 
 #[derive(Debug, Clone)]
+struct ScanCandidate {
+    tool: String,
+    file: SourceFile,
+}
+
+#[derive(Debug, Clone)]
 struct ScanWindow {
     since_day: Option<String>,
     until_day: Option<String>,
@@ -364,6 +374,7 @@ async fn scan_into(
     let mut report = scan_local_sources_into(conn, &options, credential_override)?;
     let subscriptions = upsert_local_subscription_snapshots(conn)?;
     report.subscription_snapshots_upserted = subscriptions;
+    prune_usage_auxiliary_tables(conn)?;
     Ok(report)
 }
 
@@ -624,27 +635,28 @@ impl ScanWindow {
     fn from_options(options: &UsageScanOptions) -> Self {
         let now = now_ms();
         let until_start_ms = options.until.as_deref().and_then(parse_timestamp_ms_str);
+        let default_until_start_ms =
+            parse_timestamp_ms_str(&day_from_timestamp_ms(now)).unwrap_or(now);
+        let requested_end_ms = until_start_ms
+            .unwrap_or(default_until_start_ms)
+            .saturating_add(MS_PER_DAY - 1);
         let raw_start_ms = options
             .since
             .as_deref()
             .and_then(parse_timestamp_ms_str)
             .unwrap_or_else(|| {
-                until_start_ms
-                    .unwrap_or(now)
-                    .saturating_sub(DEFAULT_SCAN_LOOKBACK_DAYS.saturating_mul(MS_PER_DAY))
+                requested_end_ms
+                    .saturating_sub((DEFAULT_SCAN_LOOKBACK_DAYS - 1).saturating_mul(MS_PER_DAY))
             });
-        let since_day = options
-            .since
-            .clone()
-            .unwrap_or_else(|| day_from_timestamp_ms(raw_start_ms));
-        let start_ms = parse_timestamp_ms_str(&since_day).unwrap_or(raw_start_ms);
-        let end_ms = until_start_ms
-            .map(|ms| ms.saturating_add(MS_PER_DAY - 1))
-            .unwrap_or(i64::MAX);
+        let start_ms = raw_start_ms;
+        let max_end_ms = start_ms
+            .saturating_add(MAX_SCAN_WINDOW_DAYS.saturating_mul(MS_PER_DAY))
+            .saturating_sub(1);
+        let end_ms = requested_end_ms.min(max_end_ms).max(start_ms);
 
         Self {
-            since_day: Some(since_day),
-            until_day: options.until.clone(),
+            since_day: Some(day_from_timestamp_ms(start_ms)),
+            until_day: Some(day_from_timestamp_ms(end_ms)),
             start_ms,
             end_ms,
         }
@@ -698,75 +710,87 @@ fn scan_local_sources_into(
     let plan = window.plan();
     let mut report = UsageScanReport::default();
     let mut records_conn: Option<Connection> = None;
-    let mut files_scanned_this_run = 0usize;
-
-    for tool in tools {
-        let roots = scan_roots(&home, &tool);
+    let mut candidates = Vec::new();
+    for tool in &tools {
+        let roots = scan_roots(&home, tool);
         let mut collector = FileCollector::default();
         for root in roots {
-            collect_supported_files(&tool, &root, &plan, &mut collector);
+            collect_supported_files(tool, &root, &plan, &mut collector);
             if collector.at_limit(&plan) {
                 break;
             }
         }
-        let mut files = collector.files;
-        files.sort_by(|a, b| {
-            b.mtime_ms
-                .cmp(&a.mtime_ms)
-                .then_with(|| a.path.cmp(&b.path))
-        });
+        candidates.extend(
+            collector
+                .files
+                .into_iter()
+                .take(MAX_SCAN_FILES_PER_AGENT)
+                .map(|file| ScanCandidate {
+                    tool: tool.clone(),
+                    file,
+                }),
+        );
+    }
+    candidates.sort_by(|a, b| {
+        b.file
+            .mtime_ms
+            .cmp(&a.file.mtime_ms)
+            .then_with(|| a.tool.cmp(&b.tool))
+            .then_with(|| a.file.path.cmp(&b.file.path))
+    });
 
-        let mut files_scanned_for_agent = 0usize;
-        for file in files {
-            if !should_scan_source_file(conn, &tool, &file, &window)? {
-                continue;
-            }
-            if files_scanned_this_run >= MAX_SCAN_FILES_PER_RUN {
-                report.scan_budget_exhausted = true;
-                return Ok(report);
-            }
-            if files_scanned_for_agent >= MAX_SCAN_FILES_PER_AGENT {
-                report.scan_budget_exhausted = true;
-                break;
-            }
-            files_scanned_this_run += 1;
-            files_scanned_for_agent += 1;
-            report.files_scanned += 1;
-
-            let can_replace_rollup = can_replace_rollup_source(&file.path, file.size_bytes);
-            let mut chunk = scan_source_file(&tool, &file.path)?;
-            chunk
-                .messages
-                .retain(|m| day_in_range(&m.day, since, until));
-            chunk.events.retain(|e| {
-                let day = day_from_timestamp_ms(e.timestamp_ms);
-                day_in_range(&day, since, until)
-            });
-            dedup_messages(&mut chunk.messages);
-            dedup_events(&mut chunk.events);
-
-            report.parsed_messages += chunk.messages.len();
-            report.monitoring_events_parsed += chunk.events.len();
-            if can_replace_rollup {
-                report.rollups_upserted +=
-                    replace_rollup_source(conn, &tool, &file, &chunk.messages)?;
-            }
-            if !chunk.events.is_empty() {
-                if records_conn.is_none() {
-                    records_conn = Some(open_records_db()?);
-                }
-                let records = records_conn
-                    .as_ref()
-                    .expect("records connection initialized");
-                report.monitoring_records_inserted += insert_monitoring_events_into(
-                    conn,
-                    records,
-                    &chunk.events,
-                    credential_override,
-                )?;
-            }
-            mark_source_file_scanned(conn, &tool, &file, &window)?;
+    let mut files_scanned_this_run = 0usize;
+    let mut files_scanned_by_agent: HashMap<String, usize> = HashMap::new();
+    for candidate in candidates {
+        let scanned_for_agent = files_scanned_by_agent
+            .get(candidate.tool.as_str())
+            .copied()
+            .unwrap_or(0);
+        if scanned_for_agent >= MAX_SCAN_FILES_PER_AGENT {
+            report.scan_budget_exhausted = true;
+            continue;
         }
+        if !should_scan_source_file(conn, &candidate.tool, &candidate.file, &window)? {
+            continue;
+        }
+        if files_scanned_this_run >= MAX_SCAN_FILES_PER_RUN {
+            report.scan_budget_exhausted = true;
+            return Ok(report);
+        }
+        files_scanned_this_run += 1;
+        files_scanned_by_agent.insert(candidate.tool.clone(), scanned_for_agent + 1);
+        report.files_scanned += 1;
+
+        let can_replace_rollup =
+            can_replace_rollup_source(&candidate.file.path, candidate.file.size_bytes);
+        let mut chunk = scan_source_file(&candidate.tool, &candidate.file.path)?;
+        chunk
+            .messages
+            .retain(|m| day_in_range(&m.day, since, until));
+        chunk.events.retain(|e| {
+            let day = day_from_timestamp_ms(e.timestamp_ms);
+            day_in_range(&day, since, until)
+        });
+        dedup_messages(&mut chunk.messages);
+        dedup_events(&mut chunk.events);
+
+        report.parsed_messages += chunk.messages.len();
+        report.monitoring_events_parsed += chunk.events.len();
+        if can_replace_rollup {
+            report.rollups_upserted +=
+                replace_rollup_source(conn, &candidate.tool, &candidate.file, &chunk.messages)?;
+        }
+        if !chunk.events.is_empty() {
+            if records_conn.is_none() {
+                records_conn = Some(open_records_db()?);
+            }
+            let records = records_conn
+                .as_mut()
+                .expect("records connection initialized");
+            report.monitoring_records_inserted +=
+                insert_monitoring_events_into(conn, records, &chunk.events, credential_override)?;
+        }
+        mark_source_file_scanned(conn, &candidate.tool, &candidate.file, &window)?;
     }
 
     Ok(report)
@@ -918,7 +942,7 @@ fn is_native_file(tool: &str, path: &Path) -> bool {
     };
     if !matches!(
         ext,
-        "json" | "jsonl" | "ndjson" | "db" | "sqlite" | "sqlite3" | "vscdb"
+        "json" | "jsonl" | "ndjson" | "log" | "db" | "sqlite" | "sqlite3" | "vscdb"
     ) {
         return false;
     }
@@ -929,7 +953,10 @@ fn is_native_file(tool: &str, path: &Path) -> bool {
     }
 
     match tool {
-        "codex" => ext == "jsonl" && lowered.contains("/sessions/"),
+        "codex" => {
+            ext == "jsonl"
+                && (lowered.contains("/sessions/") || lowered.ends_with("/history.jsonl"))
+        }
         "claude" => lowered.contains("/projects/") || lowered.contains("/transcripts/"),
         "cursor" => {
             lowered.contains("/globalstorage/")
@@ -974,8 +1001,10 @@ fn is_native_file(tool: &str, path: &Path) -> bool {
                 || lowered.ends_with("zcode.db")
                 || lowered.ends_with("db.sqlite")
         }
-        "trae" | "wukong" | "gemini" | "amp" | "droid" | "pi" | "mux" | "codebuff" | "kimi"
-        | "gjc" | "gajae-code" | "grok" | "openclaw" | "warp" | "antigravity" | "qwen" => {
+        "qwen" => lowered.ends_with("/telemetry.log") || native_name_has_known_signal(&lowered),
+        "gemini" => lowered.ends_with("/telemetry.log") || native_name_has_known_signal(&lowered),
+        "trae" | "wukong" | "amp" | "droid" | "pi" | "mux" | "codebuff" | "kimi" | "gjc"
+        | "gajae-code" | "grok" | "openclaw" | "warp" | "antigravity" => {
             native_name_has_known_signal(&lowered)
         }
         _ => false,
@@ -1009,6 +1038,7 @@ fn native_name_has_known_signal(lowered_path: &str) -> bool {
         "thread",
         "token",
         "trace",
+        "trajectory",
         "transcript",
         "usage",
     ]
@@ -1076,6 +1106,103 @@ fn mark_source_file_scanned(
         ],
     )?;
     Ok(())
+}
+
+fn prune_usage_auxiliary_tables(conn: &mut Connection) -> Result<usize> {
+    let mut pruned = 0usize;
+    pruned += prune_table_by_rowid(
+        conn,
+        "usage_scan_file_cache",
+        MAX_USAGE_SCAN_FILE_CACHE_ROWS,
+    )?;
+    pruned += prune_table_by_rowid(
+        conn,
+        "usage_monitoring_seen",
+        MAX_USAGE_MONITORING_SEEN_ROWS,
+    )?;
+    pruned += prune_rollup_source_rows(conn, MAX_USAGE_ROLLUP_SOURCE_ROWS)?;
+    Ok(pruned)
+}
+
+fn prune_table_by_rowid(conn: &Connection, table: &str, max_rows: usize) -> Result<usize> {
+    let table = quote_identifier(table);
+    let current: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })?;
+    let max_rows = i64::try_from(max_rows).unwrap_or(i64::MAX);
+    let overage = current.saturating_sub(max_rows);
+    if overage <= 0 {
+        return Ok(0);
+    }
+    let deleted = conn.execute(
+        &format!(
+            "DELETE FROM {table}
+             WHERE rowid IN (
+               SELECT rowid FROM {table}
+               ORDER BY rowid ASC
+               LIMIT ?1
+             )"
+        ),
+        params![overage],
+    )?;
+    Ok(deleted)
+}
+
+fn prune_rollup_source_rows(conn: &mut Connection, max_rows: usize) -> Result<usize> {
+    let current: i64 = conn.query_row("SELECT COUNT(*) FROM usage_rollup_sources", [], |row| {
+        row.get(0)
+    })?;
+    let max_rows = i64::try_from(max_rows).unwrap_or(i64::MAX);
+    let overage = current.saturating_sub(max_rows);
+    if overage <= 0 {
+        return Ok(0);
+    }
+
+    let cfg = load_config();
+    let device_id = cfg.device_id;
+    let tx = conn.transaction()?;
+    let old_rows = {
+        let mut stmt = tx.prepare(
+            "SELECT id, day, agent, model, account, tokens_in, tokens_out, tokens_cache_read,
+                    tokens_cache_write, tokens_reasoning, message_count, source_cost
+             FROM usage_rollup_sources
+             ORDER BY rowid ASC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![overage], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                RollupKey {
+                    day: row.get(1)?,
+                    agent: row.get(2)?,
+                    model: row.get(3)?,
+                    account: row.get(4)?,
+                },
+                RollupDelta {
+                    tokens_in: row.get(5)?,
+                    tokens_out: row.get(6)?,
+                    tokens_cache_read: row.get(7)?,
+                    tokens_cache_write: row.get(8)?,
+                    tokens_reasoning: row.get(9)?,
+                    message_count: row.get(10)?,
+                    source_cost: row.get(11)?,
+                },
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let mut deleted = 0usize;
+    for (id, key, delta) in old_rows {
+        add_rollup_delta(&tx, &device_id, &key, &delta.negated())?;
+        deleted += tx.execute(
+            "DELETE FROM usage_rollup_sources WHERE id = ?1",
+            params![id],
+        )?;
+    }
+    delete_empty_rollups(&tx, &device_id)?;
+    tx.commit()?;
+    Ok(deleted)
 }
 
 fn scan_source_file(tool: &str, path: &Path) -> Result<ScanResult> {
@@ -1798,6 +1925,37 @@ fn collect_events_recursive(
     }
     match value {
         Value::Object(map) => {
+            if let Some(normalized) = normalized_otel_event_value(map) {
+                collect_events_recursive(
+                    tool,
+                    path,
+                    row_key,
+                    root,
+                    &normalized,
+                    fallback_timestamp_ms,
+                    index,
+                    out,
+                );
+                return;
+            }
+            if is_trae_trajectory_root(tool, map) {
+                for key in ["input_messages", "response", "agent_steps"] {
+                    if let Some(child) = get_case_insensitive(map, key) {
+                        collect_events_recursive(
+                            tool,
+                            path,
+                            row_key,
+                            root,
+                            child,
+                            fallback_timestamp_ms,
+                            index,
+                            out,
+                        );
+                    }
+                }
+                return;
+            }
+
             let event_name = string_from_object(map, EVENT_NAME_KEYS);
             let prompt = prompt_text_from_object(map);
             let output = output_text_from_object(map);
@@ -1819,19 +1977,21 @@ fn collect_events_recursive(
             {
                 Some("tool_result")
             } else if event_name.as_deref().is_some_and(is_tool_approval_event)
-                || approval_decision.is_some()
+                || (approval_decision.is_some() && tool_name.is_none())
             {
                 Some("tool_approval")
             } else if event_name.as_deref().is_some_and(is_skill_event) || skill_name.is_some() {
                 Some("skill")
-            } else if old_text.is_some() || new_text.is_some() || path_value.is_some() {
-                Some("edit")
             } else if output.is_some() {
                 Some("output")
+            } else if old_text.is_some() || new_text.is_some() || path_value.is_some() {
+                Some("edit")
             } else if tool_name.is_some() {
                 Some("tool")
             } else if window_title.is_some() {
                 Some("window")
+            } else if event_name.as_deref().is_some_and(is_usage_only_event) {
+                None
             } else if event_name.is_some() {
                 Some("other")
             } else {
@@ -1958,6 +2118,13 @@ fn collect_events_recursive(
         }
         _ => {}
     }
+}
+
+fn is_trae_trajectory_root(tool: &str, map: &Map<String, Value>) -> bool {
+    tool == "trae"
+        && get_case_insensitive(map, "input_messages").is_some()
+        && (get_case_insensitive(map, "response").is_some()
+            || get_case_insensitive(map, "agent_steps").is_some())
 }
 
 fn usage_from_csv(
@@ -2364,7 +2531,7 @@ fn delete_empty_rollups(conn: &Connection, device_id: &str) -> Result<()> {
 
 fn insert_monitoring_events_into(
     usage_conn: &Connection,
-    records: &Connection,
+    records: &mut Connection,
     events: &[MonitoringEvent],
     credential_override: Option<&str>,
 ) -> Result<usize> {
@@ -2389,6 +2556,7 @@ fn insert_monitoring_events_into(
     let hostname = gethostname::gethostname()
         .into_string()
         .unwrap_or_else(|_| "unknown".to_string());
+    let records_tx = records.transaction()?;
     let mut inserted = 0usize;
 
     for event in events {
@@ -2400,11 +2568,12 @@ fn insert_monitoring_events_into(
             continue;
         }
         let record = event.to_record(&token_key, &hmac_secret, &device_id, &hostname);
-        if insert_record_by_signature(records, &record)? {
+        if insert_record_by_signature(&records_tx, &record)? {
             inserted += 1;
         }
     }
 
+    records_tx.commit()?;
     Ok(inserted)
 }
 
@@ -3069,6 +3238,51 @@ fn token_buckets_from_object(map: &Map<String, Value>) -> Option<TokenBuckets> {
     (tokens.total() > 0).then_some(tokens)
 }
 
+fn normalized_otel_event_value(map: &Map<String, Value>) -> Option<Value> {
+    let event_name = string_from_object(map, &["name"])?;
+    if !is_local_telemetry_event_name(&event_name) {
+        return None;
+    }
+    let mut normalized = Map::new();
+    normalized.insert("event.name".to_string(), Value::String(event_name));
+
+    for key in TIMESTAMP_KEYS {
+        if let Some(value) = get_case_insensitive(map, key) {
+            normalized.insert((*key).to_string(), value.clone());
+            break;
+        }
+    }
+
+    if let Some(Value::Object(attributes)) = get_case_insensitive(map, "attributes") {
+        for (key, value) in attributes {
+            normalized.insert(key.clone(), value.clone());
+        }
+    }
+
+    if normalized.len() > 1 {
+        Some(Value::Object(normalized))
+    } else {
+        None
+    }
+}
+
+fn is_local_telemetry_event_name(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.starts_with("gemini_cli.")
+        || lower.starts_with("qwen_code.")
+        || lower.starts_with("qwen-code.")
+        || lower.starts_with("cline.")
+        || lower.starts_with("roo.")
+}
+
+fn is_usage_only_event(raw: &str) -> bool {
+    let lower = raw.to_ascii_lowercase();
+    lower.contains("api_response")
+        || lower.contains("token.usage")
+        || lower.contains("model_selection")
+        || lower.contains("session.count")
+}
+
 fn prompt_text_from_object(map: &Map<String, Value>) -> Option<String> {
     if matches!(
         string_from_object(map, &["role", "author_role"]).as_deref(),
@@ -3681,6 +3895,7 @@ const CACHE_READ_TOKEN_KEYS: &[&str] = &[
     "cacheReadInputTokens",
     "inputCacheRead",
     "input_cache_read",
+    "cached_content_token_count",
     "cachedContentTokenCount",
     "usage.cache_read_tokens",
     "gen_ai.usage.cache_read.input_tokens",
@@ -3710,6 +3925,7 @@ const REASONING_TOKEN_KEYS: &[&str] = &[
     "tokens_reasoning",
     "reasoningTokens",
     "thinkingTokens",
+    "thoughts_token_count",
     "thoughtsTokenCount",
     "usage.reasoning_tokens",
     "gen_ai.usage.reasoning_tokens",
@@ -3762,6 +3978,7 @@ const SESSION_KEYS: &[&str] = &[
     "conversation_id",
     "conversationId",
     "chat_id",
+    "task_id",
     "thread_id",
     "threadId",
     "gen_ai.session.id",
@@ -3819,6 +4036,7 @@ const PROMPT_KEYS: &[&str] = &[
 const OUTPUT_MESSAGE_KEYS: &[&str] = &[
     "output",
     "response",
+    "response_text",
     "assistant_output",
     "assistantOutput",
     "output_text",
@@ -3835,6 +4053,7 @@ const TOOL_NAME_KEYS: &[&str] = &[
     "toolName",
     "tool",
     "name",
+    "function_name",
     "tool.name",
     "gen_ai.tool.name",
 ];
@@ -3850,6 +4069,7 @@ const TOOL_ARGUMENT_KEYS: &[&str] = &[
     "toolArguments",
     "tool_input",
     "toolInput",
+    "function_args",
     "arguments",
     "args",
     "input",
@@ -3978,6 +4198,123 @@ mod tests {
         }
     }
 
+    #[test]
+    fn explicit_scan_window_is_clamped_to_thirty_days() {
+        let open_ended = ScanWindow::from_options(&UsageScanOptions {
+            tools: vec!["codex".to_string()],
+            since: Some("2000-01-01".to_string()),
+            until: None,
+        });
+        assert_eq!(open_ended.since_day.as_deref(), Some("2000-01-01"));
+        assert_eq!(open_ended.until_day.as_deref(), Some("2000-01-30"));
+
+        let long_backfill = ScanWindow::from_options(&UsageScanOptions {
+            tools: vec!["codex".to_string()],
+            since: Some("2000-01-01".to_string()),
+            until: Some("2000-03-15".to_string()),
+        });
+        assert_eq!(long_backfill.since_day.as_deref(), Some("2000-01-01"));
+        assert_eq!(long_backfill.until_day.as_deref(), Some("2000-01-30"));
+
+        let small_backfill = ScanWindow::from_options(&UsageScanOptions {
+            tools: vec!["codex".to_string()],
+            since: Some("2000-01-01".to_string()),
+            until: Some("2000-01-10".to_string()),
+        });
+        assert_eq!(small_backfill.since_day.as_deref(), Some("2000-01-01"));
+        assert_eq!(small_backfill.until_day.as_deref(), Some("2000-01-10"));
+    }
+
+    #[test]
+    fn usage_auxiliary_pruning_keeps_newest_rows() {
+        with_home(|_| {
+            let conn = open_usage_db().unwrap();
+            for idx in 0..5 {
+                conn.execute(
+                    "INSERT INTO usage_scan_file_cache
+                     (tool, path, size_bytes, mtime_ms, window_start_ms, window_end_ms, scanned_at_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        "codex",
+                        format!("/tmp/source-{idx}.jsonl"),
+                        idx,
+                        idx,
+                        0,
+                        100,
+                        idx
+                    ],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO usage_monitoring_seen (source_key, event_type) VALUES (?1, ?2)",
+                    params![format!("source-key-{idx}"), "prompt"],
+                )
+                .unwrap();
+            }
+
+            assert_eq!(
+                prune_table_by_rowid(&conn, "usage_scan_file_cache", 3).unwrap(),
+                2
+            );
+            assert_eq!(
+                prune_table_by_rowid(&conn, "usage_monitoring_seen", 3).unwrap(),
+                2
+            );
+
+            for table in ["usage_scan_file_cache", "usage_monitoring_seen"] {
+                let (min_rowid, count): (i64, i64) = conn
+                    .query_row(
+                        &format!(
+                            "SELECT MIN(rowid), COUNT(*) FROM {}",
+                            quote_identifier(table)
+                        ),
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap();
+                assert_eq!(count, 3, "{table} should be capped");
+                assert_eq!(min_rowid, 3, "{table} should prune oldest rows first");
+            }
+        });
+    }
+
+    #[test]
+    fn rollup_source_pruning_subtracts_old_contributions_before_rescan() {
+        with_home(|home| {
+            let mut conn = open_usage_db().unwrap();
+            for idx in 0..5 {
+                let file = test_source_file(home, &format!("sources/codex/source-{idx}.jsonl"));
+                let mut msg = make_message(idx);
+                msg.tokens.input = idx + 1;
+                msg.tokens.output = 0;
+                msg.tokens.cache_read = 0;
+                msg.tokens.cache_write = 0;
+                msg.tokens.reasoning = 0;
+                msg.source_cost = 0.0;
+                replace_rollup_source(&mut conn, "codex", &file, &[msg]).unwrap();
+            }
+
+            assert_eq!(source_rollup_count(&conn, "codex"), 5);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (15, 0, 5));
+            assert_eq!(prune_rollup_source_rows(&mut conn, 3).unwrap(), 2);
+            assert_eq!(source_rollup_count(&conn, "codex"), 3);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (12, 0, 3));
+
+            let file = test_source_file(home, "sources/codex/source-0.jsonl");
+            let mut changed = make_message(100);
+            changed.tokens.input = 100;
+            changed.tokens.output = 0;
+            changed.tokens.cache_read = 0;
+            changed.tokens.cache_write = 0;
+            changed.tokens.reasoning = 0;
+            changed.source_cost = 0.0;
+            replace_rollup_source(&mut conn, "codex", &file, &[changed]).unwrap();
+
+            assert_eq!(source_rollup_count(&conn, "codex"), 4);
+            assert_eq!(agent_rollup_totals(&conn, "codex"), (112, 0, 4));
+        });
+    }
+
     fn monitoring_rows() -> Vec<(String, Option<String>, String, i64, i64, Option<String>)> {
         let records = open_records_db().unwrap();
         let mut stmt = records
@@ -4049,7 +4386,9 @@ mod tests {
 
     fn realistic_fixture_min_monitoring_events(agent: &str) -> usize {
         match agent {
-            "qoder-work" | "qoder-work-cn" | "wukong" => 1,
+            "gemini" | "qwen" => 3,
+            "trae" => 3,
+            "wukong" => 1,
             _ => 0,
         }
     }
@@ -4089,6 +4428,106 @@ mod tests {
     fn write_json_value(path: &Path, value: Value) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, value.to_string()).unwrap();
+    }
+
+    fn write_gemini_telemetry_fixture(home: &Path) -> PathBuf {
+        let path = home.join(".gemini/telemetry.log");
+        write_lines(
+            &path,
+            &[
+                serde_json::json!({
+                    "name": "gemini_cli.user_prompt",
+                    "timestamp": "2026-06-16T14:00:00Z",
+                    "attributes": {
+                        "prompt_id": "prompt-1",
+                        "prompt_length": 17,
+                        "prompt": "gemini prompt",
+                        "auth_type": "oauth-personal"
+                    }
+                }),
+                serde_json::json!({
+                    "name": "gemini_cli.tool_call",
+                    "timestamp": "2026-06-16T14:00:01Z",
+                    "attributes": {
+                        "prompt_id": "prompt-1",
+                        "function_name": "read_file",
+                        "function_args": "{\"path\":\"src/main.rs\"}",
+                        "duration_ms": 12,
+                        "success": true,
+                        "decision": "accept",
+                        "tool_type": "native"
+                    }
+                }),
+                serde_json::json!({
+                    "name": "gemini_cli.api_response",
+                    "timestamp": "2026-06-16T14:00:02Z",
+                    "attributes": {
+                        "prompt_id": "prompt-1",
+                        "model": "gemini-3-pro",
+                        "status_code": 200,
+                        "input_token_count": 100,
+                        "output_token_count": 40,
+                        "cached_content_token_count": 7,
+                        "thoughts_token_count": 5,
+                        "tool_token_count": 3,
+                        "total_token_count": 155,
+                        "response_text": "gemini output",
+                        "auth_type": "oauth-personal"
+                    }
+                }),
+            ],
+        );
+        path
+    }
+
+    fn write_qwen_telemetry_fixture(home: &Path) -> PathBuf {
+        let path = home.join(".qwen/telemetry.log");
+        write_lines(
+            &path,
+            &[
+                serde_json::json!({
+                    "name": "qwen-code.user_prompt",
+                    "timestamp": "2026-06-16T14:00:00Z",
+                    "attributes": {
+                        "prompt_id": "prompt-qwen-1",
+                        "prompt_length": 11,
+                        "prompt": "qwen prompt",
+                        "auth_type": "oauth-personal"
+                    }
+                }),
+                serde_json::json!({
+                    "name": "qwen-code.tool_call",
+                    "timestamp": "2026-06-16T14:00:01Z",
+                    "attributes": {
+                        "prompt_id": "prompt-qwen-1",
+                        "function_name": "read_file",
+                        "function_args": "{\"path\":\"src/lib.rs\"}",
+                        "duration_ms": 18,
+                        "success": true,
+                        "decision": "accept",
+                        "tool_type": "native"
+                    }
+                }),
+                serde_json::json!({
+                    "name": "qwen-code.api_response",
+                    "timestamp": "2026-06-16T14:00:02Z",
+                    "attributes": {
+                        "prompt_id": "prompt-qwen-1",
+                        "model": "qwen3-coder-plus",
+                        "status_code": 200,
+                        "input_token_count": 124,
+                        "output_token_count": 76,
+                        "cached_content_token_count": 5,
+                        "thoughts_token_count": 9,
+                        "tool_token_count": 4,
+                        "total_token_count": 218,
+                        "response_text": "qwen output",
+                        "auth_type": "oauth-personal"
+                    }
+                }),
+            ],
+        );
+        path
     }
 
     fn write_realistic_matrix_fixture(home: &Path, agent: &str) -> PathBuf {
@@ -4187,43 +4626,43 @@ mod tests {
                 path
             }
             "trae" => {
-                let path = home.join("Library/Application Support/Trae/usage/session-trae.json");
+                let path = home.join(
+                    "Library/Application Support/Trae/trajectories/trajectory_20260616_140000.json",
+                );
                 write_json_value(
                     &path,
-                    serde_json::json!([{
-                        "model_name": "GPT-5",
-                        "session_id": "trae-session",
-                        "usage_time": 1_781_589_600_i64,
-                        "dollar_float": 0.5,
-                        "extra_info": {
-                            "input_token": 100,
-                            "output_token": 44,
-                            "cache_read_token": 8,
-                            "cache_write_token": 4
-                        }
-                    }]),
-                );
-                path
-            }
-            "qwen" => {
-                let path = home.join(".qwen/projects/e2e/chats/session-qwen.jsonl");
-                write_lines(
-                    &path,
-                    &[serde_json::json!({
-                        "type": "assistant",
-                        "model": "qwen3.5-plus",
+                    serde_json::json!({
+                        "task_id": "trae-session",
                         "timestamp": "2026-06-16T14:00:00Z",
-                        "sessionId": "qwen-session",
-                        "usageMetadata": {
-                            "promptTokenCount": 124,
-                            "candidatesTokenCount": 76,
-                            "thoughtsTokenCount": 9,
-                            "cachedContentTokenCount": 5
-                        }
-                    })],
+                        "input_messages": [{"role": "user", "content": "trae prompt"}],
+                        "response": {
+                            "role": "assistant",
+                            "content": "trae output",
+                            "usage": {
+                                "input_tokens": 100,
+                                "output_tokens": 44,
+                                "cache_read_tokens": 8,
+                                "cache_write_tokens": 4
+                            },
+                            "tool_calls": [{
+                                "id": "tool-1",
+                                "name": "read_file",
+                                "arguments": {"path": "src/main.rs"}
+                            }]
+                        },
+                        "agent_steps": [{
+                            "tool_calls": [{
+                                "id": "tool-1",
+                                "name": "read_file",
+                                "arguments": {"path": "src/main.rs"}
+                            }],
+                            "tool_results": [{"tool_call_id": "tool-1", "content": "file content"}]
+                        }]
+                    }),
                 );
                 path
             }
+            "qwen" => write_qwen_telemetry_fixture(home),
             "antigravity" => {
                 let path = home.join(".gemini/antigravity-ide/sessions/session-antigravity.jsonl");
                 write_lines(
@@ -4416,17 +4855,51 @@ mod tests {
                 path
             }
             "gemini" => {
-                let path = home.join(".gemini/tmp/session-gemini.json");
-                write_json_value(
+                let path = home.join(".gemini/telemetry.log");
+                write_lines(
                     &path,
-                    serde_json::json!({
-                        "sessionId": "gemini-session",
-                        "messages": [{
+                    &[
+                        serde_json::json!({
+                            "name": "gemini_cli.user_prompt",
                             "timestamp": "2026-06-16T14:00:00Z",
-                            "model": "gemini-3-pro",
-                            "tokens": {"input": 100, "output": 45, "cached": 10, "thoughts": 6}
-                        }]
-                    }),
+                            "attributes": {
+                                "prompt_id": "gemini-prompt",
+                                "prompt_length": 13,
+                                "prompt": "gemini prompt",
+                                "auth_type": "oauth-personal"
+                            }
+                        }),
+                        serde_json::json!({
+                            "name": "gemini_cli.tool_call",
+                            "timestamp": "2026-06-16T14:00:01Z",
+                            "attributes": {
+                                "prompt_id": "gemini-prompt",
+                                "function_name": "read_file",
+                                "function_args": "{\"path\":\"src/main.rs\"}",
+                                "duration_ms": 12,
+                                "success": true,
+                                "decision": "accept",
+                                "tool_type": "native"
+                            }
+                        }),
+                        serde_json::json!({
+                            "name": "gemini_cli.api_response",
+                            "timestamp": "2026-06-16T14:00:01Z",
+                            "attributes": {
+                                "prompt_id": "gemini-prompt",
+                                "model": "gemini-3-pro",
+                                "status_code": 200,
+                                "input_token_count": 100,
+                                "output_token_count": 45,
+                                "cached_content_token_count": 10,
+                                "thoughts_token_count": 6,
+                                "tool_token_count": 0,
+                                "total_token_count": 161,
+                                "response_text": "gemini output",
+                                "auth_type": "oauth-personal"
+                            }
+                        }),
+                    ],
                 );
                 path
             }
@@ -5130,6 +5603,71 @@ mod tests {
     }
 
     #[test]
+    fn monitoring_scan_caps_events_and_cache_prevents_repeat_growth() {
+        with_home(|home| {
+            let path = home.join(".qwen/telemetry.log");
+            let events = (0..(MAX_EVENTS_PER_FILE + 75))
+                .map(|idx| {
+                    serde_json::json!({
+                        "time_unix_nano": 1_781_604_000_000_000_000_i64 + (idx as i64 * 1_000_000_000_i64),
+                        "name": "qwen-code.user_prompt",
+                        "attributes": {
+                            "session.id": "bounded-qwen-session",
+                            "prompt_id": format!("prompt-{idx}"),
+                            "prompt": format!("bounded local prompt {idx}"),
+                            "model": "qwen3-coder-plus"
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            write_lines(&path, &events);
+
+            let mut conn = open_usage_db().unwrap();
+            let first = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["qwen".to_string()],
+                    since: Some("2026-06-16".to_string()),
+                    until: Some("2026-06-16".to_string()),
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(first.files_scanned, 1);
+            assert_eq!(first.monitoring_events_parsed, MAX_EVENTS_PER_FILE);
+            assert_eq!(first.monitoring_records_inserted, MAX_EVENTS_PER_FILE);
+            assert_eq!(monitoring_rows().len(), MAX_EVENTS_PER_FILE);
+
+            let second = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["qwen".to_string()],
+                    since: Some("2026-06-16".to_string()),
+                    until: Some("2026-06-16".to_string()),
+                },
+                None,
+            ))
+            .unwrap();
+            assert_eq!(second.files_scanned, 0);
+            assert_eq!(second.monitoring_events_parsed, 0);
+            assert_eq!(second.monitoring_records_inserted, 0);
+            assert_eq!(monitoring_rows().len(), MAX_EVENTS_PER_FILE);
+
+            let usage_db_size = sqlite_db_size_bytes(&conn);
+            assert!(
+                usage_db_size < 1_000_000,
+                "usage.sqlite should stay bounded with scan cache, got {usage_db_size} bytes"
+            );
+            let records = open_records_db().unwrap();
+            let records_db_size = sqlite_db_size_bytes(&records);
+            assert!(
+                records_db_size < 2_000_000,
+                "records.sqlite should stay bounded for capped local events, got {records_db_size} bytes"
+            );
+        });
+    }
+
+    #[test]
     fn json_scan_extracts_usage_and_prompt_monitoring_event() {
         with_home(|home| {
             let dir = home.join(".codex").join("sessions");
@@ -5758,6 +6296,53 @@ mod tests {
     }
 
     #[test]
+    fn default_scan_uses_global_recent_queue_so_late_agents_are_not_starved() {
+        with_home(|home| {
+            let codex_dir = home.join(".codex").join("sessions").join("2026").join("06");
+            fs::create_dir_all(&codex_dir).unwrap();
+            for idx in 0..(MAX_SCAN_FILES_PER_RUN + 10) {
+                fs::write(
+                    codex_dir.join(format!("session-{idx:03}.jsonl")),
+                    serde_json::json!({
+                        "session_id": format!("codex-frontier-{idx}"),
+                        "timestamp": "2026-06-16T10:00:00Z",
+                        "model": "gpt-5",
+                        "input_tokens": 1,
+                        "output_tokens": 2
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            write_qwen_telemetry_fixture(home);
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec![],
+                    since: Some("2026-06-16".to_string()),
+                    until: Some("2026-06-16".to_string()),
+                },
+                None,
+            ))
+            .unwrap();
+
+            assert_eq!(report.files_scanned, MAX_SCAN_FILES_PER_RUN);
+            assert!(
+                source_rollup_count(&conn, "qwen") >= 1,
+                "newer qwen source should not be starved by many codex files"
+            );
+            let (tokens_in, tokens_out, messages, _) = agent_rollup_totals_with_cost(&conn, "qwen");
+            assert!(
+                tokens_in > 0 || tokens_out > 0 || messages > 0,
+                "qwen rollup should be parsed from the global recent queue"
+            );
+        });
+    }
+
+    #[test]
     fn discovery_helpers_cover_roots_supported_files_and_skipped_dirs() {
         with_home(|home| {
             assert!(selected_scan_tools(&[]).contains(&"codex".to_string()));
@@ -5811,6 +6396,9 @@ mod tests {
                 (text.contains("/logs/custom") || text.contains("/cache/custom"))
                     && p.kind == ScanRootKind::Import
             }));
+            assert!(scan_roots(home, "codex")
+                .iter()
+                .any(|p| p.path == home.join(".codex/sessions")));
             assert!(!scan_roots(home, "codex")
                 .iter()
                 .any(|p| p.path == home.join(".codex")));
@@ -5871,6 +6459,38 @@ mod tests {
                 &home.join(".codex/logs_2.sqlite")
             ));
             assert!(is_supported_file(
+                "codex",
+                &ScanRoot {
+                    path: home.join(".codex/history.jsonl"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(".codex/history.jsonl")
+            ));
+            assert!(is_supported_file(
+                "qwen",
+                &ScanRoot {
+                    path: home.join(".qwen/telemetry.log"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(".qwen/telemetry.log")
+            ));
+            assert!(is_supported_file(
+                "gemini",
+                &ScanRoot {
+                    path: home.join(".gemini/telemetry.log"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(".gemini/telemetry.log")
+            ));
+            assert!(!is_supported_file(
+                "gemini",
+                &ScanRoot {
+                    path: home.join(".gemini/logs_2/session.log"),
+                    kind: ScanRootKind::Native,
+                },
+                &home.join(".gemini/logs_2/session.log")
+            ));
+            assert!(is_supported_file(
                 "qoder",
                 &ScanRoot {
                     path: home.join(
@@ -5927,7 +6547,7 @@ mod tests {
     fn native_default_agent_fixture_matrix_scans_usage_and_monitoring() {
         with_home(|home| {
             let agents = agent::default_scan_agent_names();
-            assert_eq!(agents.len(), 35);
+            assert_eq!(agents.len(), 30);
             for agent in &agents {
                 write_matrix_fixture(home, agent);
             }
@@ -5951,7 +6571,7 @@ mod tests {
                 assert!(
                     report.monitoring_events_parsed
                         >= realistic_fixture_min_monitoring_events(&agent),
-                    "{agent} native fixture should produce expected monitoring events"
+                    "{agent} native fixture should produce expected monitoring events, report={report:?}"
                 );
 
                 assert_eq!(
@@ -5992,6 +6612,162 @@ mod tests {
                     );
                 }
             }
+        });
+    }
+
+    #[test]
+    fn gemini_official_local_telemetry_emits_usage_prompt_and_tool_events() {
+        with_home(|home| {
+            write_gemini_telemetry_fixture(home);
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["gemini".to_string()],
+                    since: None,
+                    until: None,
+                },
+                Some("device-gemini-telemetry"),
+            ))
+            .unwrap();
+
+            assert_eq!(report.parsed_messages, 1);
+            assert_eq!(report.monitoring_events_parsed, 3);
+            assert_eq!(report.monitoring_records_inserted, 3);
+
+            let (tokens_in, tokens_out, message_count, _) =
+                agent_rollup_totals_with_cost(&conn, "gemini");
+            assert_eq!((tokens_in, tokens_out, message_count), (100, 40, 1));
+
+            let rows = monitoring_rows();
+            let event_types = rows
+                .iter()
+                .map(|(metadata, _, _, _, _, _)| event_type(metadata))
+                .collect::<Vec<_>>();
+            assert_eq!(event_types, vec!["prompt", "tool", "output"]);
+        });
+    }
+
+    #[test]
+    fn qwen_official_local_telemetry_emits_usage_prompt_output_and_tool_events() {
+        with_home(|home| {
+            write_qwen_telemetry_fixture(home);
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["qwen".to_string()],
+                    since: None,
+                    until: None,
+                },
+                Some("device-qwen-telemetry"),
+            ))
+            .unwrap();
+
+            assert_eq!(report.parsed_messages, 1);
+            assert_eq!(report.monitoring_events_parsed, 3);
+            assert_eq!(report.monitoring_records_inserted, 3);
+
+            let (tokens_in, tokens_out, message_count, _) =
+                agent_rollup_totals_with_cost(&conn, "qwen");
+            assert_eq!((tokens_in, tokens_out, message_count), (124, 76, 1));
+
+            let rows = monitoring_rows();
+            let event_types = rows
+                .iter()
+                .map(|(metadata, _, _, _, _, _)| event_type(metadata))
+                .collect::<Vec<_>>();
+            assert_eq!(event_types, vec!["prompt", "tool", "output"]);
+        });
+    }
+
+    #[test]
+    fn trae_agent_trajectory_emits_usage_prompt_output_and_tool_events() {
+        with_home(|home| {
+            let path = home.join("Library/Application Support/Trae/trajectories/trajectory.json");
+            write_json_value(
+                &path,
+                serde_json::json!({
+                    "task_id": "trae-task-1",
+                    "timestamp": "2026-06-16T14:00:00Z",
+                    "input_messages": [
+                        {"role": "user", "content": "trae prompt"}
+                    ],
+                    "response": {
+                        "role": "assistant",
+                        "content": "trae output",
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 40,
+                            "cache_read_tokens": 8,
+                            "cache_write_tokens": 3
+                        },
+                        "tool_calls": [
+                            {
+                                "id": "tool-1",
+                                "name": "read_file",
+                                "arguments": {"path": "src/main.rs"}
+                            }
+                        ]
+                    },
+                    "agent_steps": [
+                        {
+                            "timestamp": "2026-06-16T14:00:01Z",
+                            "tool_calls": [
+                                {
+                                    "id": "tool-1",
+                                    "name": "read_file",
+                                    "arguments": {"path": "src/main.rs"}
+                                }
+                            ],
+                            "tool_results": [
+                                {
+                                    "tool_call_id": "tool-1",
+                                    "content": "file content"
+                                }
+                            ]
+                        }
+                    ]
+                }),
+            );
+
+            let mut conn = open_usage_db().unwrap();
+            let report = tokio_test::block_on(scan_into(
+                &mut conn,
+                UsageScanOptions {
+                    tools: vec!["trae".to_string()],
+                    since: None,
+                    until: None,
+                },
+                Some("device-trae-trajectory"),
+            ))
+            .unwrap();
+
+            assert_eq!(report.parsed_messages, 1);
+            assert!(
+                report.monitoring_events_parsed >= 3,
+                "trajectory should produce prompt, output and tool monitoring records"
+            );
+
+            let (tokens_in, tokens_out, message_count, _) =
+                agent_rollup_totals_with_cost(&conn, "trae");
+            assert_eq!((tokens_in, tokens_out, message_count), (100, 40, 1));
+
+            let event_types = monitoring_rows()
+                .iter()
+                .map(|(metadata, _, _, _, _, _)| event_type(metadata))
+                .collect::<Vec<_>>();
+            assert!(
+                event_types.contains(&"prompt".to_string()),
+                "{event_types:?}"
+            );
+            assert!(
+                event_types.contains(&"output".to_string()),
+                "{event_types:?}"
+            );
+            assert!(event_types.contains(&"tool".to_string()), "{event_types:?}");
         });
     }
 

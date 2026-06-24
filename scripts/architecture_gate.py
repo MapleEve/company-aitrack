@@ -13,31 +13,36 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_MATRIX = [
     ("claude", "HookJsonl"),
+    ("claude", "SessionJsonl"),
     ("codex", "HookJsonl"),
+    ("codex", "SessionJsonl"),
     ("cursor", "HookJsonl"),
-    ("opencode", "HookJsonl"),
+    ("opencode", "SessionJsonl"),
+    ("opencode", "Sqlite"),
     ("qoder", "HookJsonl"),
     ("qoder-cn", "HookJsonl"),
-    ("qoder-work", "HookJsonl"),
-    ("qoder-work-cn", "HookJsonl"),
-    ("qoder", "Sqlite"),
-    ("qoder-cn", "Sqlite"),
-    ("qoder-work", "Sqlite"),
-    ("qoder-work-cn", "Sqlite"),
-    ("qoder", "IdeSnapshot"),
-    ("qoder-cn", "IdeSnapshot"),
-    ("qoder", "SessionJsonl"),
-    ("qoder-work", "SessionJsonl"),
     ("wukong", "SessionJsonl"),
     ("trae", "SessionJsonl"),
+    ("openclaw", "SessionJsonl"),
+    ("gemini", "TelemetryLog"),
+    ("copilot", "IdeSnapshot"),
+    ("cline", "SessionJsonl"),
+    ("kiro", "Sqlite"),
+    ("zed", "Sqlite"),
+    ("goose", "Sqlite"),
+    ("pi", "SessionJsonl"),
+    ("crush", "Sqlite"),
 ]
 
 DEFAULT_SCAN_EXCLUDED_NAMES = {
+    "antigravity",
     "roocode",
+    "roo-code",
     "kilo-code",
     "gajae-code",
-    "baidu-comate",
-    "wenxin",
+    "qoder-work",
+    "qoder-work-cn",
+    "synthetic",
 }
 
 ALLOWED_CLIENT_DEPS = {
@@ -110,10 +115,15 @@ def assert_agent_source_specs() -> None:
         "LocalSourceCapabilities",
         "LocalSourceSpec",
         "local_source_specs",
-        "LOCAL_MONITORING_CAPABILITIES",
+        "OFFICIAL_TRANSCRIPT_CAPABILITIES",
+        "OFFICIAL_HOOK_ACTION_CAPABILITIES",
+        "OFFICIAL_PROMPT_TOOL_HOOK_CAPABILITIES",
+        "LOCAL_USAGE_STATS_CAPABILITIES",
     ]:
         if symbol not in text:
             fail(f"missing agent source spec symbol {symbol}")
+    if "UNVERIFIED_LOCAL_CAPABILITIES" in text:
+        fail("unverified local capabilities must not be listed as default support evidence")
 
     for field in [
         "prompt_input",
@@ -141,6 +151,11 @@ def assert_agent_source_specs() -> None:
     for agent in default_agents:
         if re.search(rf'agent:\s*"{re.escape(agent)}"', text) is None:
             fail(f"missing local source spec for default agent {agent}")
+    for agent in DEFAULT_SCAN_EXCLUDED_NAMES:
+        if agent in {"roocode", "kilo-code", "gajae-code"}:
+            continue
+        if re.search(rf'agent:\s*"{re.escape(agent)}"', text) is not None:
+            fail(f"{agent} must not have a default source spec without verified local evidence")
     for agent in ["baidu-comate", "wenxin"]:
         if re.search(rf'agent:\s*"{re.escape(agent)}"', text):
             fail(f"{agent} has no verified default local root and must not have a default source spec")
@@ -150,9 +165,13 @@ def assert_usage_parser_surface() -> None:
     text = read("client/src/usage/mod.rs")
     for symbol in [
         "DEFAULT_SCAN_LOOKBACK_DAYS",
+        "MAX_SCAN_WINDOW_DAYS",
         "MAX_SCAN_FILES_PER_RUN",
         "MAX_SCAN_CANDIDATES_PER_AGENT",
         "MAX_SCAN_DIR_ENTRIES_PER_AGENT",
+        "MAX_USAGE_SCAN_FILE_CACHE_ROWS",
+        "MAX_USAGE_MONITORING_SEEN_ROWS",
+        "MAX_USAGE_ROLLUP_SOURCE_ROWS",
         "MAX_JSONL_LINES_PER_FILE",
         "MAX_CSV_ROWS_PER_FILE",
         "MAX_SQLITE_TABLES_PER_FILE",
@@ -160,6 +179,7 @@ def assert_usage_parser_surface() -> None:
         "MAX_EVENTS_PER_FILE",
         "ScanWindow",
         "FileScanPlan",
+        "ScanCandidate",
         "usage_scan_file_cache",
         "ensure_usage_scan_file_cache_schema",
         "usage_rollup_sources",
@@ -168,6 +188,9 @@ def assert_usage_parser_surface() -> None:
         "compact_legacy_usage_sessions",
         "should_scan_source_file",
         "mark_source_file_scanned",
+        "prune_usage_auxiliary_tables",
+        "prune_table_by_rowid",
+        "prune_rollup_source_rows",
         "output_text_from_object",
         "tool_arguments_from_object",
         "tool_result_from_object",
@@ -186,6 +209,8 @@ def assert_usage_parser_surface() -> None:
             fail(f"usage parser missing {symbol}")
     if "collect_files_with_extension" in text:
         fail("codex quota reader must not use unbounded extension recursion")
+    if "roots.push(codex_home.clone())" in read("client/src/agent.rs"):
+        fail("codex default scan roots must not include the whole CODEX_HOME")
     if (
         re.search(r'join\(\s*"logs"\s*\)[\s\S]{0,120}join\(\s*tool\s*\)', text)
         or re.search(r'join\(\s*"cache"\s*\)[\s\S]{0,120}join\(\s*tool\s*\)', text)
@@ -197,12 +222,16 @@ def assert_usage_parser_surface() -> None:
     for test_name in [
         "default_scan_uses_recent_window_and_explicit_window_backfills_old_usage",
         "scan_file_cache_skips_unchanged_default_scan_and_reopens_changed_file",
+        "explicit_scan_window_is_clamped_to_thirty_days",
+        "usage_auxiliary_pruning_keeps_newest_rows",
+        "rollup_source_pruning_subtracts_old_contributions_before_rescan",
         "json_scan_extracts_output_tool_call_and_tool_result_monitoring_records",
         "json_scan_extracts_skill_approval_and_explicit_other_agent_events",
         "discovery_helpers_cover_roots_supported_files_and_skipped_dirs",
         "changed_source_replaces_previous_rollup_contribution",
         "source_rollup_keeps_database_bounded_for_many_messages",
         "scan_budget_resumes_after_cached_frontier",
+        "default_scan_uses_global_recent_queue_so_late_agents_are_not_starved",
     ]:
         if test_name not in text:
             fail(f"missing usage parser regression test {test_name}")
@@ -216,10 +245,14 @@ def assert_usage_parser_surface() -> None:
 
     expected_limits = {
         "DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30": "default usage scan window must stay bounded",
+        "MAX_SCAN_WINDOW_DAYS: i64 = 30": "explicit usage scan window must stay bounded",
         "MAX_SCAN_FILES_PER_RUN: usize = 5": "per-run scan file budget must stay bounded",
         "MAX_SCAN_FILES_PER_AGENT: usize = 200": "per-agent scan file cap must stay bounded",
         "MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800": "per-agent candidate cap must stay bounded",
         "MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000": "directory traversal cap must stay bounded",
+        "MAX_USAGE_SCAN_FILE_CACHE_ROWS: usize = 20_000": "scan file cache row cap must stay bounded",
+        "MAX_USAGE_MONITORING_SEEN_ROWS: usize = 50_000": "monitoring seen row cap must stay bounded",
+        "MAX_USAGE_ROLLUP_SOURCE_ROWS: usize = 20_000": "rollup source row cap must stay bounded",
         "MAX_JSONL_LINES_PER_FILE: usize = 2000": "jsonl line cap must stay bounded",
         "MAX_CSV_ROWS_PER_FILE: usize = 2000": "csv row cap must stay bounded",
         "MAX_SQLITE_TABLES_PER_FILE: usize = 10": "sqlite table cap must stay bounded",
@@ -230,13 +263,17 @@ def assert_usage_parser_surface() -> None:
         if needle not in text:
             fail(message)
 
+    schema_text = read("client/src/adapter/sqlite/schema.rs")
+    if "idx_record_sig" not in schema_text:
+        fail("records sqlite schema must index record_sig for bounded dedup lookups")
+
 
 def assert_e2e_matrix_gate() -> None:
     text = read("e2e/run-client-e2e.sh")
     fixture_text = read("e2e/local_usage_matrix.py")
     agent_text = read("client/src/agent.rs")
-    if "MIN_E2E_COVERAGE=90" not in text:
-        fail("client e2e coverage threshold is not 90")
+    if "MIN_E2E_COVERAGE=100" not in text:
+        fail("client e2e coverage threshold must require every default local source agent")
     if "MATRIX_COVERAGE" not in text:
         fail("client e2e matrix coverage calculation missing")
     if "Local scan cache skips unchanged" not in text:
@@ -254,8 +291,6 @@ def assert_e2e_matrix_gate() -> None:
         if re.search(rf"^\s*{re.escape(agent)}\s*$", text, re.MULTILINE) is None:
             fail(f"client e2e matrix missing agent {agent}")
     for agent in DEFAULT_SCAN_EXCLUDED_NAMES:
-        if agent in {"roocode", "kilo-code", "gajae-code"}:
-            continue
         if re.search(rf"^\s*{re.escape(agent)}\s*$", text, re.MULTILINE) is not None:
             fail(f"client e2e matrix must not claim default native support for {agent}")
     combined = text + "\n" + fixture_text
@@ -273,6 +308,11 @@ def assert_e2e_matrix_gate() -> None:
         "local_usage_matrix.py",
         "usage_fixture_requires_positive_tokens",
         "usage_fixture_min_monitoring_events",
+        "usage_fixture_required_event_types",
+        "prompt_summary",
+        "assistant_output",
+        "tool_name",
+        "tool_arguments",
     ]:
         if needle not in text:
             fail(f"client e2e matrix missing harness marker {needle}")
@@ -309,12 +349,19 @@ def assert_e2e_matrix_gate() -> None:
             fail(f"client e2e fixture generator missing real fixture branch for {agent}")
     if 'source_dir="${root}/sources/${agent}"' in text:
         fail("client e2e matrix still uses one generic sources/<agent> fixture")
-    for agent in ["qoder-work", "qoder-work-cn", "wukong"]:
-        if agent not in re.search(
-            r"usage_fixture_min_monitoring_events\(\)[\s\S]*?\n}",
-            text,
-        ).group(0):
+    min_events_body = re.search(
+        r"usage_fixture_min_monitoring_events\(\)[\s\S]*?\n}",
+        text,
+    ).group(0)
+    required_events_body = re.search(
+        r"usage_fixture_required_event_types\(\)[\s\S]*?\n}",
+        text,
+    ).group(0)
+    for agent in ["gemini", "qwen", "trae", "wukong"]:
+        if agent not in min_events_body:
             fail(f"client e2e monitoring event expectation missing {agent}")
+        if agent not in required_events_body:
+            fail(f"client e2e monitoring field expectation missing {agent}")
 
 
 def assert_e2e_diagnostics_gate() -> None:
@@ -359,6 +406,10 @@ def assert_public_docs_support_counts() -> None:
         ]
     )
     for forbidden in [
+        "35 个默认",
+        "默认 35",
+        "扫描默认 35",
+        "35 / 35",
         "3" + "7 个默认",
         "默认 " + "3" + "7",
         "扫描默认 " + "3" + "7",
@@ -379,6 +430,54 @@ def assert_public_docs_support_counts() -> None:
     ]:
         if forbidden in docs:
             fail(f"public docs contain stale support wording: {forbidden}")
+
+    expected_agents = [
+        "claude",
+        "codex",
+        "cursor",
+        "trae",
+        "qwen",
+        "opencode",
+        "qoder",
+        "qoder-cn",
+        "wukong",
+        "hermes",
+        "openclaw",
+        "gemini",
+        "copilot",
+        "cline",
+        "kiro",
+        "zed",
+        "goose",
+        "amp",
+        "droid",
+        "pi",
+        "mux",
+        "crush",
+        "codebuff",
+        "kilo",
+        "kilocode",
+        "kimi",
+        "gjc",
+        "grok",
+        "warp",
+        "zcode",
+    ]
+    support_doc = read("docs/AGENT_SUPPORT.md")
+    default_list_match = re.search(
+        r"以下 30 个规范 key：\n\n(.+?)。",
+        support_doc,
+        flags=re.S,
+    )
+    if not default_list_match:
+        fail("AGENT_SUPPORT default scan list must explicitly name 30 verified keys")
+    default_list = default_list_match.group(1)
+    for agent in expected_agents:
+        if f"`{agent}`" not in default_list:
+            fail(f"AGENT_SUPPORT default scan list missing {agent}")
+    for agent in ["antigravity", "qoder-work", "qoder-work-cn", "roo-code", "synthetic"]:
+        if f"`{agent}`" in default_list:
+            fail(f"AGENT_SUPPORT default scan list includes unverified key {agent}")
 
 
 def assert_ci_gate() -> None:

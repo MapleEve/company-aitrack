@@ -92,7 +92,7 @@ aitrack consists of three independent components communicating via Protocol v1.2
 | `cursor` | yes | no | yes: Cursor globalStorage, `~/.aitrack/sources/cursor` | yes | no |
 | default local-scan agents | no | no | typed native paths plus explicit structured import roots | token, message count, source cost | no |
 
-Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases; default scans use canonical keys to avoid double-ingesting the same local path. When local JSON, JSONL, NDJSON, CSV, SQLite, or local source files expose prompt, tool, window, edit, or token fields, aitrack routes them into the matching monitoring or usage data plane.
+Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `opencode`, `qoder`, `qoder-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases. Registered keys without verified local source evidence are not counted as default local-scan support.
 
 ---
 
