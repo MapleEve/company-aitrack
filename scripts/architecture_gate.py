@@ -233,6 +233,7 @@ def assert_usage_parser_surface() -> None:
 
 def assert_e2e_matrix_gate() -> None:
     text = read("e2e/run-client-e2e.sh")
+    fixture_text = read("e2e/local_usage_matrix.py")
     agent_text = read("client/src/agent.rs")
     if "MIN_E2E_COVERAGE=90" not in text:
         fail("client e2e coverage threshold is not 90")
@@ -257,22 +258,63 @@ def assert_e2e_matrix_gate() -> None:
             continue
         if re.search(rf"^\s*{re.escape(agent)}\s*$", text, re.MULTILINE) is not None:
             fail(f"client e2e matrix must not claim default native support for {agent}")
-    for needle in [
+    combined = text + "\n" + fixture_text
+    for forbidden in [
+        "matrix-${agent}",
+        "prompt for local collection",
         "write_usage_jsonl_fixture",
         "write_usage_sqlite_fixture",
         "write_usage_json_fixture",
-        "SharedClientCache/cache/db",
-        "opencode.db",
-        "state.db",
-        "threads.db",
+        "CREATE TABLE messages (data TEXT)",
+    ]:
+        if forbidden in combined:
+            fail(f"client e2e matrix still accepts generic fixture proof: {forbidden}")
+    for needle in [
+        "local_usage_matrix.py",
+        "usage_fixture_requires_positive_tokens",
+        "usage_fixture_min_monitoring_events",
     ]:
         if needle not in text:
+            fail(f"client e2e matrix missing harness marker {needle}")
+    for needle in [
+        "state.vscdb",
+        "ui_messages.json",
+        "api_conversation_history.json",
+        "session-usage.json",
+        "chat_message",
+        "token_info",
+        "opencode.db",
+        "threads.db",
+        "sessions.db",
+        "crush.db",
+        "kilo.db",
+        "db.sqlite",
+        "usage-2026-06-16.json",
+        "session-events.jsonl",
+        "messages.json",
+        "wire.jsonl",
+        "updates.jsonl",
+        "usageMetadata",
+        "candidatesTokenCount",
+        "tokensIn",
+        "cacheReads",
+        "spendCents",
+    ]:
+        if needle not in fixture_text:
             fail(f"client e2e native fixture coverage missing {needle}")
+    for agent in registered:
+        if agent in DEFAULT_SCAN_EXCLUDED_NAMES:
+            continue
+        if f'"{agent}"' not in fixture_text:
+            fail(f"client e2e fixture generator missing real fixture branch for {agent}")
     if 'source_dir="${root}/sources/${agent}"' in text:
         fail("client e2e matrix still uses one generic sources/<agent> fixture")
-    for event_type in ["output", "tool_result", "skill", "tool_approval", "other"]:
-        if f'\\"event_type\\":\\"{event_type}\\"' not in text:
-            fail(f"client e2e does not assert {event_type}")
+    for agent in ["qoder-work", "qoder-work-cn", "wukong"]:
+        if agent not in re.search(
+            r"usage_fixture_min_monitoring_events\(\)[\s\S]*?\n}",
+            text,
+        ).group(0):
+            fail(f"client e2e monitoring event expectation missing {agent}")
 
 
 def assert_e2e_diagnostics_gate() -> None:
