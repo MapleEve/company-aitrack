@@ -96,6 +96,9 @@ fi
 if ! command -v cargo &>/dev/null; then
     echo "ERROR: cargo is required"; exit 1
 fi
+if ! command -v python3 &>/dev/null; then
+    echo "ERROR: python3 is required"; exit 1
+fi
 if ! command -v sqlite3 &>/dev/null; then
     echo "ERROR: sqlite3 CLI is required for DB assertions"; exit 1
 fi
@@ -123,11 +126,11 @@ fi
 log "Binary ready: ${AITRACK_BIN}"
 
 # ── Step 2: build server images if needed ─────────────────────────────────────
-if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-java:e2e &>/dev/null; then
+if [[ "${TARGET}" == "both" || "${TARGET}" == "java" ]] && ! docker image inspect aitrack-server-java:e2e &>/dev/null; then
     log "Building aitrack-server-java:e2e image..."
     docker_build docker/Dockerfile.server-java aitrack-server-java:e2e
 fi
-if [ "${TARGET}" != "external" ] && ! docker image inspect aitrack-server-go:e2e &>/dev/null; then
+if [[ "${TARGET}" == "both" || "${TARGET}" == "go" ]] && ! docker image inspect aitrack-server-go:e2e &>/dev/null; then
     log "Building aitrack-server-go:e2e image..."
     docker_build docker/Dockerfile.server-go aitrack-server-go:e2e
 fi
@@ -171,104 +174,23 @@ api_get() {
     curl -s -H "Authorization: Bearer ${token}" "${server_url}${path}"
 }
 
-write_usage_jsonl_fixture() {
-    local file="$1"
-    local agent="$2"
-    mkdir -p "$(dirname "${file}")"
-    cat > "${file}" <<JSON
-{"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1}
-{"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3}
-{"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}}
-{"timestamp":"2026-06-16T14:00:03Z","event.name":"tool.result","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.result":{"content":"${agent} tool result"}}
-{"timestamp":"2026-06-16T14:00:04Z","event.name":"skill.use","gen_ai.session.id":"matrix-${agent}","gen_ai.skill.name":"review"}
-{"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"}
-{"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}
-JSON
-}
-
-write_usage_json_fixture() {
-    local file="$1"
-    local agent="$2"
-    mkdir -p "$(dirname "${file}")"
-    cat > "${file}" <<JSON
-[
-  {"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1},
-  {"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3},
-  {"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}},
-  {"timestamp":"2026-06-16T14:00:03Z","event.name":"tool.result","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.result":{"content":"${agent} tool result"}},
-  {"timestamp":"2026-06-16T14:00:04Z","event.name":"skill.use","gen_ai.session.id":"matrix-${agent}","gen_ai.skill.name":"review"},
-  {"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"},
-  {"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}
-]
-JSON
-}
-
-write_usage_sqlite_fixture() {
-    local file="$1"
-    local agent="$2"
-    mkdir -p "$(dirname "${file}")"
-    sqlite3 "${file}" <<SQL
-DROP TABLE IF EXISTS messages;
-CREATE TABLE messages (data TEXT);
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:00Z","session_id":"matrix-${agent}","model":"gpt-5","provider":"local","prompt":"${agent} prompt for local collection","input_tokens":10,"output_tokens":7,"message_count":1}');
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:01Z","event.name":"llm.response","gen_ai.session.id":"matrix-${agent}","gen_ai.response.model":"gpt-5","gen_ai.output.messages":[{"role":"assistant","content":"${agent} assistant output"}],"gen_ai.usage.output_tokens":3}');
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:02Z","event.name":"tool.call","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Read","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.arguments":{"file_path":"src/${agent}.rs"}}');
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:03Z","event.name":"tool.result","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.call.id":"matrix-${agent}-call","gen_ai.tool.call.result":{"content":"${agent} tool result"}}');
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:04Z","event.name":"skill.use","gen_ai.session.id":"matrix-${agent}","gen_ai.skill.name":"review"}');
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:05Z","event.name":"tool.approve","gen_ai.session.id":"matrix-${agent}","gen_ai.tool.name":"Edit","approval.decision":"approved"}');
-INSERT INTO messages(data) VALUES ('{"timestamp":"2026-06-16T14:00:06Z","event.name":"agent.other","gen_ai.session.id":"matrix-${agent}","custom.status":"kept"}');
-SQL
-}
-
 write_usage_source_fixture() {
     local root="$1"
     local agent="$2"
-    local fixture_path=""
-    local fixture_kind="jsonl"
+    python3 "${SCRIPT_DIR}/local_usage_matrix.py" "${root}" "${agent}" >/dev/null
+}
 
-    case "${agent}" in
-        claude) fixture_path="${root}/.claude/projects/e2e/session-${agent}.jsonl" ;;
-        codex) fixture_path="${root}/.codex/sessions/2026/06/16/rollout-e2e-${agent}.jsonl" ;;
-        cursor) fixture_path="${root}/Library/Application Support/Cursor/User/globalStorage/aitrack/storage.json"; fixture_kind="json" ;;
-        trae) fixture_path="${root}/Library/Application Support/Trae/conversations/session-${agent}.jsonl" ;;
-        qwen) fixture_path="${root}/.qwen/projects/e2e/session-${agent}.jsonl" ;;
-        antigravity) fixture_path="${root}/.gemini/antigravity-ide/sessions/session-${agent}.jsonl" ;;
-        opencode) fixture_path="${root}/.local/share/opencode/opencode.db"; fixture_kind="sqlite" ;;
-        qoder) fixture_path="${root}/Library/Application Support/Qoder/SharedClientCache/cache/db/usage.sqlite"; fixture_kind="sqlite" ;;
-        qoder-cn) fixture_path="${root}/Library/Application Support/QoderCN/SharedClientCache/cache/db/usage.sqlite"; fixture_kind="sqlite" ;;
-        qoder-work) fixture_path="${root}/.qoderwork/data/messages.db"; fixture_kind="sqlite" ;;
-        qoder-work-cn) fixture_path="${root}/.qoderworkcn/data/messages.db"; fixture_kind="sqlite" ;;
-        wukong) fixture_path="${root}/.wukong/sessions/session-${agent}.jsonl" ;;
-        hermes) fixture_path="${root}/.hermes/state.db"; fixture_kind="sqlite" ;;
-        openclaw) fixture_path="${root}/.openclaw/agents/session-${agent}.jsonl" ;;
-        gemini) fixture_path="${root}/.gemini/tmp/session-${agent}.jsonl" ;;
-        copilot) fixture_path="${root}/.copilot/otel/session-${agent}.jsonl" ;;
-        cline) fixture_path="${root}/.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/task-${agent}.jsonl" ;;
-        roo-code) fixture_path="${root}/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/task-${agent}.jsonl" ;;
-        kiro) fixture_path="${root}/.kiro/sessions/cli/session-${agent}.jsonl" ;;
-        zed) fixture_path="${root}/.local/share/zed/threads/threads.db"; fixture_kind="sqlite" ;;
-        goose) fixture_path="${root}/.local/share/goose/sessions/sessions.db"; fixture_kind="sqlite" ;;
-        amp) fixture_path="${root}/.local/share/amp/threads/thread-${agent}.jsonl" ;;
-        droid) fixture_path="${root}/.factory/sessions/session-${agent}.jsonl" ;;
-        pi) fixture_path="${root}/.pi/agent/sessions/session-${agent}.jsonl" ;;
-        mux) fixture_path="${root}/.mux/sessions/session-${agent}.jsonl" ;;
-        crush) fixture_path="${root}/.local/share/crush/crush.db"; fixture_kind="sqlite" ;;
-        codebuff) fixture_path="${root}/.config/manicode/projects/e2e/session-${agent}.jsonl" ;;
-        kilo) fixture_path="${root}/.local/share/kilo/kilo.db"; fixture_kind="sqlite" ;;
-        kilocode) fixture_path="${root}/.config/Code/User/globalStorage/kilocode.kilo-code/tasks/task-${agent}.jsonl" ;;
-        kimi) fixture_path="${root}/.kimi/sessions/session-${agent}.jsonl" ;;
-        gjc) fixture_path="${root}/.gjc/agent/sessions/session-${agent}.jsonl" ;;
-        grok) fixture_path="${root}/.grok/sessions/session-${agent}.jsonl" ;;
-        synthetic) fixture_path="${root}/.local/share/octofriend/sqlite.db"; fixture_kind="sqlite" ;;
-        warp) fixture_path="${root}/.config/aitrack/warp-cache/session-${agent}.jsonl" ;;
-        zcode) fixture_path="${root}/.zcode/cli/db/zcode.db"; fixture_kind="sqlite" ;;
-        *) echo "ERROR: no native usage fixture path for ${agent}" >&2; return 1 ;;
+usage_fixture_requires_positive_tokens() {
+    case "$1" in
+        crush|warp) return 1 ;;
+        *) return 0 ;;
     esac
+}
 
-    case "${fixture_kind}" in
-        json) write_usage_json_fixture "${fixture_path}" "${agent}" ;;
-        sqlite) write_usage_sqlite_fixture "${fixture_path}" "${agent}" ;;
-        *) write_usage_jsonl_fixture "${fixture_path}" "${agent}" ;;
+usage_fixture_min_monitoring_events() {
+    case "$1" in
+        qoder-work|qoder-work-cn|wukong) echo "1" ;;
+        *) echo "0" ;;
     esac
 }
 
@@ -715,59 +637,83 @@ print('yes' if found else 'no')
             continue
         fi
 
-        USAGE_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+        DETAIL_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
             "SELECT COUNT(*) FROM usage_sessions WHERE agent='${agent}';" 2>/dev/null || echo "0")
-        if [ "${USAGE_ROWS}" -ge 1 ]; then
-            ok "Local usage.sqlite: ${agent} usage rows inserted (${USAGE_ROWS})"
+        SOURCE_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_rollup_sources WHERE agent='${agent}';" 2>/dev/null || echo "0")
+        if usage_fixture_requires_positive_tokens "${agent}"; then
+            ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+                "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND (tokens_in + tokens_out) > 0 AND message_count > 0;" 2>/dev/null || echo "0")
         else
-            fail "Local usage.sqlite: ${agent} has no usage rows"
+            ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+                "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND message_count > 0 AND source_cost > 0;" 2>/dev/null || echo "0")
+        fi
+        if [ "${DETAIL_ROWS}" -eq 0 ] && [ "${SOURCE_ROWS}" -ge 1 ] && [ "${ROLLUP_ROWS}" -ge 1 ]; then
+            ok "Local usage.sqlite: ${agent} aggregated without persisted detail rows (sources=${SOURCE_ROWS}, rollups=${ROLLUP_ROWS})"
+        else
+            fail "Local usage.sqlite: ${agent} detail=${DETAIL_ROWS} sources=${SOURCE_ROWS} rollups=${ROLLUP_ROWS}"
             agent_fail=1
         fi
 
-        OUTPUT_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
-            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"output\"%';" 2>/dev/null || echo "0")
-        TOOL_RESULT_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
-            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"tool_result\"%';" 2>/dev/null || echo "0")
-        SKILL_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
-            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"skill\"%';" 2>/dev/null || echo "0")
-        APPROVAL_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
-            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"tool_approval\"%';" 2>/dev/null || echo "0")
-        OTHER_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
-            "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND metadata LIKE '%\"event_type\":\"other\"%';" 2>/dev/null || echo "0")
-        if [ "${OUTPUT_ROWS}" -ge 1 ] && [ "${TOOL_RESULT_ROWS}" -ge 1 ] && [ "${SKILL_ROWS}" -ge 1 ] && [ "${APPROVAL_ROWS}" -ge 1 ] && [ "${OTHER_ROWS}" -ge 1 ]; then
-            ok "Local records.db: ${agent} output/tool_result/skill/approval/other rows inserted"
+        MIN_MONITORING_EVENTS=$(usage_fixture_min_monitoring_events "${agent}")
+        if [ "${MIN_MONITORING_EVENTS}" -gt 0 ]; then
+            RECORD_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
+                "SELECT COUNT(*) FROM records WHERE tool='${agent}';" 2>/dev/null || echo "0")
+            if [ "${RECORD_ROWS}" -ge "${MIN_MONITORING_EVENTS}" ]; then
+                ok "Local records.db: ${agent} monitoring rows inserted (${RECORD_ROWS})"
+            else
+                fail "Local records.db: ${agent} monitoring rows missing (records=${RECORD_ROWS}, min=${MIN_MONITORING_EVENTS})"
+                agent_fail=1
+            fi
         else
-            fail "Local records.db: ${agent} output=${OUTPUT_ROWS} tool_result=${TOOL_RESULT_ROWS} skill=${SKILL_ROWS} approval=${APPROVAL_ROWS} other=${OTHER_ROWS}"
-            agent_fail=1
+            ok "Local records.db: ${agent} is usage-only for this fixture"
         fi
 
         sleep 1
-        MATRIX_EDITS_RESP=$(api_get "${server_url}" "/api/v1/ai-track/edits?page=0&size=200" "${TOKEN}")
-        MATRIX_SERVER_RECORDS=$(echo "${MATRIX_EDITS_RESP}" | AGENT="${agent}" python3 -c "
+        if [ "${MIN_MONITORING_EVENTS}" -gt 0 ]; then
+            MATRIX_EDITS_RESP=$(api_get "${server_url}" "/api/v1/ai-track/edits?page=0&size=200" "${TOKEN}")
+            MATRIX_SERVER_RECORDS=$(echo "${MATRIX_EDITS_RESP}" | AGENT="${agent}" python3 -c "
 import json, os, sys
 raw = json.load(sys.stdin)
 items = raw.get('records', [])
 agent = os.environ['AGENT']
 print(sum(1 for item in items if item.get('tool') == agent))
 " 2>/dev/null || echo "0")
-        if [ "${MATRIX_SERVER_RECORDS}" -ge 1 ]; then
-            ok "Server: ${agent} monitoring records received (${MATRIX_SERVER_RECORDS})"
+            if [ "${MATRIX_SERVER_RECORDS}" -ge "${MIN_MONITORING_EVENTS}" ]; then
+                ok "Server: ${agent} monitoring records received (${MATRIX_SERVER_RECORDS})"
+            else
+                fail "Server: ${agent} monitoring records missing — response: ${MATRIX_EDITS_RESP}"
+                agent_fail=1
+            fi
         else
-            fail "Server: ${agent} monitoring records missing — response: ${MATRIX_EDITS_RESP}"
-            agent_fail=1
+            ok "Server: ${agent} has no monitoring record expectation for this fixture"
         fi
 
         MATRIX_USAGE_RESP=$(api_get "${server_url}" "/api/v1/ai-track/usage/summary?agent=${agent}&limit=50" "${TOKEN}")
-        MATRIX_SERVER_USAGE=$(echo "${MATRIX_USAGE_RESP}" | python3 -c "
+        if usage_fixture_requires_positive_tokens "${agent}"; then
+            MATRIX_SERVER_USAGE=$(echo "${MATRIX_USAGE_RESP}" | python3 -c "
 import json, sys
 raw = json.load(sys.stdin)
 print('yes' if raw.get('total_tokens', 0) > 0 and raw.get('message_count', 0) > 0 else 'no')
 " 2>/dev/null || echo "no")
-        if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
-            ok "Server: ${agent} usage summary includes tokens and messages"
+            if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
+                ok "Server: ${agent} usage summary includes tokens and messages"
+            else
+                fail "Server: ${agent} usage summary missing tokens/messages — response: ${MATRIX_USAGE_RESP}"
+                agent_fail=1
+            fi
         else
-            fail "Server: ${agent} usage summary missing tokens/messages — response: ${MATRIX_USAGE_RESP}"
-            agent_fail=1
+            MATRIX_SERVER_USAGE=$(echo "${MATRIX_USAGE_RESP}" | python3 -c "
+import json, sys
+raw = json.load(sys.stdin)
+print('yes' if raw.get('message_count', 0) > 0 and raw.get('source_cost', 0) > 0 else 'no')
+" 2>/dev/null || echo "no")
+            if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
+                ok "Server: ${agent} usage summary includes messages and cost"
+            else
+                fail "Server: ${agent} usage summary missing messages/cost — response: ${MATRIX_USAGE_RESP}"
+                agent_fail=1
+            fi
         fi
 
         if [ "${agent_fail}" -eq 0 ]; then

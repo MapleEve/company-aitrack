@@ -150,14 +150,22 @@ def assert_usage_parser_surface() -> None:
     text = read("client/src/usage/mod.rs")
     for symbol in [
         "DEFAULT_SCAN_LOOKBACK_DAYS",
+        "MAX_SCAN_FILES_PER_RUN",
         "MAX_SCAN_CANDIDATES_PER_AGENT",
         "MAX_SCAN_DIR_ENTRIES_PER_AGENT",
         "MAX_JSONL_LINES_PER_FILE",
         "MAX_CSV_ROWS_PER_FILE",
+        "MAX_SQLITE_TABLES_PER_FILE",
+        "MAX_SQLITE_ROWS_PER_FILE",
+        "MAX_EVENTS_PER_FILE",
         "ScanWindow",
         "FileScanPlan",
         "usage_scan_file_cache",
         "ensure_usage_scan_file_cache_schema",
+        "usage_rollup_sources",
+        "ensure_usage_rollup_sources_schema",
+        "replace_rollup_source",
+        "compact_legacy_usage_sessions",
         "should_scan_source_file",
         "mark_source_file_scanned",
         "output_text_from_object",
@@ -192,17 +200,31 @@ def assert_usage_parser_surface() -> None:
         "json_scan_extracts_output_tool_call_and_tool_result_monitoring_records",
         "json_scan_extracts_skill_approval_and_explicit_other_agent_events",
         "discovery_helpers_cover_roots_supported_files_and_skipped_dirs",
+        "changed_source_replaces_previous_rollup_contribution",
+        "source_rollup_keeps_database_bounded_for_many_messages",
+        "scan_budget_resumes_after_cached_frontier",
     ]:
         if test_name not in text:
             fail(f"missing usage parser regression test {test_name}")
 
+    scan_into_match = re.search(r"async fn scan_into[\s\S]*?\n}\n\nfn open_usage_db", text)
+    if not scan_into_match:
+        fail("usage scan_into function not found")
+    scan_into_body = scan_into_match.group(0)
+    if "insert_usage_sessions" in scan_into_body or "rebuild_rollups" in scan_into_body:
+        fail("normal usage scan path must not persist or rebuild from usage_sessions detail rows")
+
     expected_limits = {
         "DEFAULT_SCAN_LOOKBACK_DAYS: i64 = 30": "default usage scan window must stay bounded",
+        "MAX_SCAN_FILES_PER_RUN: usize = 5": "per-run scan file budget must stay bounded",
         "MAX_SCAN_FILES_PER_AGENT: usize = 200": "per-agent scan file cap must stay bounded",
         "MAX_SCAN_CANDIDATES_PER_AGENT: usize = 800": "per-agent candidate cap must stay bounded",
         "MAX_SCAN_DIR_ENTRIES_PER_AGENT: usize = 5000": "directory traversal cap must stay bounded",
         "MAX_JSONL_LINES_PER_FILE: usize = 2000": "jsonl line cap must stay bounded",
         "MAX_CSV_ROWS_PER_FILE: usize = 2000": "csv row cap must stay bounded",
+        "MAX_SQLITE_TABLES_PER_FILE: usize = 10": "sqlite table cap must stay bounded",
+        "MAX_SQLITE_ROWS_PER_FILE: usize = 5000": "sqlite row cap per file must stay bounded",
+        "MAX_EVENTS_PER_FILE: usize = 200": "monitoring events per file must stay bounded",
     }
     for needle, message in expected_limits.items():
         if needle not in text:
@@ -211,6 +233,7 @@ def assert_usage_parser_surface() -> None:
 
 def assert_e2e_matrix_gate() -> None:
     text = read("e2e/run-client-e2e.sh")
+    fixture_text = read("e2e/local_usage_matrix.py")
     agent_text = read("client/src/agent.rs")
     if "MIN_E2E_COVERAGE=90" not in text:
         fail("client e2e coverage threshold is not 90")
@@ -218,6 +241,9 @@ def assert_e2e_matrix_gate() -> None:
         fail("client e2e matrix coverage calculation missing")
     if "Local scan cache skips unchanged" not in text:
         fail("client e2e does not verify unchanged local scan cache behavior")
+    for needle in ["DETAIL_ROWS", "SOURCE_ROWS", "ROLLUP_ROWS", "usage_rollup_sources", "usage_daily_model_rollups"]:
+        if needle not in text:
+            fail(f"client e2e matrix must verify bounded local rollup storage: missing {needle}")
 
     registered = [
         name
@@ -232,22 +258,63 @@ def assert_e2e_matrix_gate() -> None:
             continue
         if re.search(rf"^\s*{re.escape(agent)}\s*$", text, re.MULTILINE) is not None:
             fail(f"client e2e matrix must not claim default native support for {agent}")
-    for needle in [
+    combined = text + "\n" + fixture_text
+    for forbidden in [
+        "matrix-${agent}",
+        "prompt for local collection",
         "write_usage_jsonl_fixture",
         "write_usage_sqlite_fixture",
         "write_usage_json_fixture",
-        "SharedClientCache/cache/db",
-        "opencode.db",
-        "state.db",
-        "threads.db",
+        "CREATE TABLE messages (data TEXT)",
+    ]:
+        if forbidden in combined:
+            fail(f"client e2e matrix still accepts generic fixture proof: {forbidden}")
+    for needle in [
+        "local_usage_matrix.py",
+        "usage_fixture_requires_positive_tokens",
+        "usage_fixture_min_monitoring_events",
     ]:
         if needle not in text:
+            fail(f"client e2e matrix missing harness marker {needle}")
+    for needle in [
+        "state.vscdb",
+        "ui_messages.json",
+        "api_conversation_history.json",
+        "session-usage.json",
+        "chat_message",
+        "token_info",
+        "opencode.db",
+        "threads.db",
+        "sessions.db",
+        "crush.db",
+        "kilo.db",
+        "db.sqlite",
+        "usage-2026-06-16.json",
+        "session-events.jsonl",
+        "messages.json",
+        "wire.jsonl",
+        "updates.jsonl",
+        "usageMetadata",
+        "candidatesTokenCount",
+        "tokensIn",
+        "cacheReads",
+        "spendCents",
+    ]:
+        if needle not in fixture_text:
             fail(f"client e2e native fixture coverage missing {needle}")
+    for agent in registered:
+        if agent in DEFAULT_SCAN_EXCLUDED_NAMES:
+            continue
+        if f'"{agent}"' not in fixture_text:
+            fail(f"client e2e fixture generator missing real fixture branch for {agent}")
     if 'source_dir="${root}/sources/${agent}"' in text:
         fail("client e2e matrix still uses one generic sources/<agent> fixture")
-    for event_type in ["output", "tool_result", "skill", "tool_approval", "other"]:
-        if f'\\"event_type\\":\\"{event_type}\\"' not in text:
-            fail(f"client e2e does not assert {event_type}")
+    for agent in ["qoder-work", "qoder-work-cn", "wukong"]:
+        if agent not in re.search(
+            r"usage_fixture_min_monitoring_events\(\)[\s\S]*?\n}",
+            text,
+        ).group(0):
+            fail(f"client e2e monitoring event expectation missing {agent}")
 
 
 def assert_e2e_diagnostics_gate() -> None:

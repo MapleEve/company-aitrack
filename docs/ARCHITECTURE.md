@@ -159,8 +159,8 @@ capture → lib.rs → uploader::flush_unsynced(&HttpUploader)
 
 ### 本地用量与会话记录扫描流
 
-1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机会话目录、JSONL、SQLite 和 CSV；默认只处理近窗口内的有界候选文件，显式 `--since/--until` 用于小范围回填
-2. 提取 token 分桶、消息数和成本估算，写入 `usage_sessions` 并重建 `usage_daily_model_rollups`
+1. `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描已登记工具的本机会话目录、JSONL、SQLite 和 CSV；默认只处理近窗口内的有界候选文件，并按单轮预算分批推进；显式 `--since/--until` 用于小范围回填
+2. 提取 token 分桶、消息数和成本估算，在内存中按来源替换聚合，写入 `usage_rollup_sources` 与 `usage_daily_model_rollups`；旧明细表只用于升级迁移后清空
 3. 提取提示词、工具调用、窗口和可还原编辑事件，经 `usage_monitoring_seen` 去重后写入 `records.db`
 4. `usage sync` 同时上传 `/api/v1/ai-track/usage/rollup`、`/usage/subscription` 与 `/edits`
 
