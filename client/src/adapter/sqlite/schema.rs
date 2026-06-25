@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS records (
   prompt_summary TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_synced ON records(synced);
+CREATE INDEX IF NOT EXISTS idx_record_sig ON records(record_sig);
 ";
 
 /// Idempotent migrations applied after table creation.
@@ -36,6 +37,7 @@ pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE records ADD COLUMN record_sig TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE records ADD COLUMN embedding BLOB",
     "ALTER TABLE records ADD COLUMN prompt_summary TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_record_sig ON records(record_sig)",
 ];
 
 /// DDL for the key-value store table.

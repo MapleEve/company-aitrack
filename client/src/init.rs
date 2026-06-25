@@ -242,25 +242,20 @@ pub fn remove_claude_hook(path: &Path) -> Result<()> {
 
 pub fn has_codex_hook(path: &Path) -> bool {
     fs::read_to_string(path)
-        .map(|text| text.contains(COMMENT_MARKER))
+        .map(|text| has_codex_edit_hook_text(&text))
+        .unwrap_or(false)
+}
+
+pub fn has_codex_prompt_hook(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .map(|text| has_codex_prompt_hook_text(&text))
         .unwrap_or(false)
 }
 
 pub fn install_codex_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
-    if has_codex_hook(path) {
-        return Ok(());
-    }
-
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-
-    // Escape backslashes and double-quotes so the binary path embeds safely in a
-    // TOML double-quoted string (relevant on Windows or unusual install paths).
-    let bin_escaped = aitrack_bin.replace('\\', "\\\\").replace('"', "\\\"");
-    let snippet = format!(
-        "\n{COMMENT_MARKER}\n[[hooks.PostToolUse]]\nmatcher = \"apply_patch|Edit|Write\"\n\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = \"{bin_escaped} capture --tool codex\"\ntimeout = 10\n"
-    );
 
     let existing = if path.exists() {
         fs::read_to_string(path)?
@@ -268,8 +263,37 @@ pub fn install_codex_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
         String::new()
     };
 
+    if has_codex_edit_hook_text(&existing) && has_codex_prompt_hook_text(&existing) {
+        return Ok(());
+    }
+
+    // Escape backslashes and double-quotes so the binary path embeds safely in a
+    // TOML double-quoted string (relevant on Windows or unusual install paths).
+    let bin_escaped = aitrack_bin.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut snippet = format!("\n{COMMENT_MARKER}\n");
+
+    if !has_codex_edit_hook_text(&existing) {
+        snippet.push_str(&format!(
+            "[[hooks.PostToolUse]]\nmatcher = \"apply_patch|Edit|Write\"\n\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = \"{bin_escaped} capture --tool codex\"\ntimeout = 10\n"
+        ));
+    }
+
+    if !has_codex_prompt_hook_text(&existing) {
+        snippet.push_str(&format!(
+            "\n[[hooks.UserPromptSubmit]]\n\n[[hooks.UserPromptSubmit.hooks]]\ntype = \"command\"\ncommand = \"{bin_escaped} prompt-capture --tool codex\"\ntimeout = 10\n"
+        ));
+    }
+
     fs::write(path, format!("{existing}{snippet}")).context("write codex config.toml")?;
     Ok(())
+}
+
+fn has_codex_edit_hook_text(text: &str) -> bool {
+    text.contains(COMMENT_MARKER) && text.contains("capture --tool codex")
+}
+
+fn has_codex_prompt_hook_text(text: &str) -> bool {
+    text.contains(COMMENT_MARKER) && text.contains("prompt-capture --tool codex")
 }
 
 pub fn remove_codex_hook(path: &Path) -> Result<()> {
@@ -307,6 +331,7 @@ fn remove_codex_block(text: &str) -> String {
             }
             if in_block {
                 if line.starts_with("[[hooks.PostToolUse")
+                    || line.starts_with("[[hooks.UserPromptSubmit")
                     || line.starts_with("matcher")
                     || line.starts_with("type")
                     || line.starts_with("command")
@@ -346,7 +371,7 @@ pub fn has_cursor_hook(path: &Path) -> bool {
     let Ok(val) = serde_json::from_str::<Value>(&text) else {
         return false;
     };
-    // Check either registration point — both are installed together
+    // Check any registration point; install keeps the full set in sync.
     let check_array = |key: &str| -> bool {
         val["hooks"][key]
             .as_array()
@@ -363,11 +388,17 @@ pub fn has_cursor_hook(path: &Path) -> bool {
     check_array("afterFileEdit") || check_array("postToolUse")
 }
 
-pub fn install_cursor_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
-    if has_cursor_hook(path) {
-        return Ok(());
-    }
+pub fn has_cursor_prompt_hook(path: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(val) = serde_json::from_str::<Value>(&text) else {
+        return false;
+    };
+    cursor_hook_array_contains(&val, "beforeSubmitPrompt", "prompt-capture --tool cursor")
+}
 
+pub fn install_cursor_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
     let mut val = if path.exists() {
         let text = fs::read_to_string(path)?;
         serde_json::from_str::<Value>(&text).unwrap_or_else(|_| serde_json::json!({}))
@@ -378,9 +409,13 @@ pub fn install_cursor_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
         serde_json::json!({})
     };
 
-    let new_entry = serde_json::json!({
+    let edit_entry = serde_json::json!({
         "command": format!("{aitrack_bin} capture --tool cursor"),
         "matcher": "Write",
+        "timeout": 10
+    });
+    let prompt_entry = serde_json::json!({
+        "command": format!("{aitrack_bin} prompt-capture --tool cursor"),
         "timeout": 10
     });
 
@@ -389,33 +424,56 @@ pub fn install_cursor_hook(path: &Path, aitrack_bin: &str) -> Result<()> {
         val["hooks"] = serde_json::json!({});
     }
 
-    // Register in postToolUse (catches tool-use events)
-    {
-        let post_tool_use = val["hooks"]
-            .as_object_mut()
-            .unwrap()
-            .entry("postToolUse")
-            .or_insert_with(|| serde_json::json!([]));
-        if let Some(arr) = post_tool_use.as_array_mut() {
-            arr.push(new_entry.clone());
-        }
-    }
-
-    // Register in afterFileEdit (catches file-edit events)
-    {
-        let after_file_edit = val["hooks"]
-            .as_object_mut()
-            .unwrap()
-            .entry("afterFileEdit")
-            .or_insert_with(|| serde_json::json!([]));
-        if let Some(arr) = after_file_edit.as_array_mut() {
-            arr.push(new_entry);
-        }
-    }
+    ensure_cursor_hook_entry(
+        &mut val,
+        "postToolUse",
+        edit_entry.clone(),
+        "capture --tool cursor",
+    );
+    ensure_cursor_hook_entry(
+        &mut val,
+        "afterFileEdit",
+        edit_entry,
+        "capture --tool cursor",
+    );
+    ensure_cursor_hook_entry(
+        &mut val,
+        "beforeSubmitPrompt",
+        prompt_entry,
+        "prompt-capture --tool cursor",
+    );
 
     let text = serde_json::to_string_pretty(&val)?;
     fs::write(path, text)?;
     Ok(())
+}
+
+fn cursor_hook_array_contains(val: &Value, key: &str, command_needle: &str) -> bool {
+    val["hooks"][key]
+        .as_array()
+        .map(|arr| {
+            arr.iter().any(|entry| {
+                entry["command"]
+                    .as_str()
+                    .map(|c| c.contains(command_needle))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn ensure_cursor_hook_entry(val: &mut Value, key: &str, entry: Value, command_needle: &str) {
+    if cursor_hook_array_contains(val, key, command_needle) {
+        return;
+    }
+    let hook_arr = val["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .entry(key)
+        .or_insert_with(|| serde_json::json!([]));
+    if let Some(arr) = hook_arr.as_array_mut() {
+        arr.push(entry);
+    }
 }
 
 pub fn remove_cursor_hook(path: &Path) -> Result<()> {
@@ -453,6 +511,20 @@ pub fn remove_cursor_hook(path: &Path) -> Result<()> {
         }
     }
 
+    if let Some(arr) = val["hooks"]["beforeSubmitPrompt"].as_array_mut() {
+        arr.retain(|entry| {
+            !entry["command"]
+                .as_str()
+                .map(|c| c.contains("aitrack"))
+                .unwrap_or(false)
+        });
+        if arr.is_empty() {
+            if let Some(hooks) = val["hooks"].as_object_mut() {
+                hooks.remove("beforeSubmitPrompt");
+            }
+        }
+    }
+
     let text = serde_json::to_string_pretty(&val)?;
     fs::write(path, text)?;
     Ok(())
@@ -465,9 +537,18 @@ pub fn detect_tool_statuses(home: &Path) -> HashMap<String, bool> {
         .iter()
         .map(|registered| {
             let active = match registered.name {
-                "claude" => has_claude_hook(&home.join(".claude").join("settings.json")),
-                "codex" => has_codex_hook(&home.join(".codex").join("config.toml")),
-                "cursor" => has_cursor_hook(&home.join(".cursor").join("hooks.json")),
+                "claude" => {
+                    let path = home.join(".claude").join("settings.json");
+                    has_claude_hook(&path) && has_claude_prompt_hook(&path)
+                }
+                "codex" => {
+                    let path = home.join(".codex").join("config.toml");
+                    has_codex_hook(&path) && has_codex_prompt_hook(&path)
+                }
+                "cursor" => {
+                    let path = home.join(".cursor").join("hooks.json");
+                    has_cursor_hook(&path) && has_cursor_prompt_hook(&path)
+                }
                 _ => registered.marker_path(home).exists(),
             };
             (registered.name.to_string(), active)
@@ -682,9 +763,12 @@ mod tests {
         let path = home.path().join(".codex").join("config.toml");
         install_codex_hook(&path, "/usr/local/bin/aitrack").unwrap();
         assert!(has_codex_hook(&path));
+        assert!(has_codex_prompt_hook(&path));
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("aitrack"));
         assert!(text.contains("PostToolUse"));
+        assert!(text.contains("UserPromptSubmit"));
+        assert!(text.contains("prompt-capture --tool codex"));
     }
 
     #[test]
@@ -706,6 +790,7 @@ mod tests {
         assert!(has_codex_hook(&path));
         remove_codex_hook(&path).unwrap();
         assert!(!has_codex_hook(&path));
+        assert!(!has_codex_prompt_hook(&path));
     }
 
     #[test]
@@ -758,6 +843,10 @@ mod tests {
             val["hooks"]["afterFileEdit"].as_array().is_some(),
             "afterFileEdit array should exist"
         );
+        assert!(
+            val["hooks"]["beforeSubmitPrompt"].as_array().is_some(),
+            "beforeSubmitPrompt array should exist"
+        );
         // Verify matcher and timeout fields are present
         let entry = &val["hooks"]["afterFileEdit"][0];
         assert_eq!(entry["matcher"], "Write", "matcher field should be Write");
@@ -765,6 +854,12 @@ mod tests {
         let entry = &val["hooks"]["postToolUse"][0];
         assert_eq!(entry["matcher"], "Write", "matcher field should be Write");
         assert_eq!(entry["timeout"], 10, "timeout field should be 10");
+        let entry = &val["hooks"]["beforeSubmitPrompt"][0];
+        assert_eq!(entry["timeout"], 10, "timeout field should be 10");
+        assert!(entry["command"]
+            .as_str()
+            .unwrap()
+            .contains("prompt-capture --tool cursor"));
     }
 
     #[test]
@@ -779,6 +874,12 @@ mod tests {
         assert_eq!(arr.len(), 1, "idempotent: only 1 afterFileEdit hook entry");
         let arr = val["hooks"]["postToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 1, "idempotent: only 1 postToolUse hook entry");
+        let arr = val["hooks"]["beforeSubmitPrompt"].as_array().unwrap();
+        assert_eq!(
+            arr.len(),
+            1,
+            "idempotent: only 1 beforeSubmitPrompt hook entry"
+        );
     }
 
     #[test]
@@ -806,6 +907,10 @@ mod tests {
         assert!(
             val["hooks"]["postToolUse"].is_null(),
             "empty postToolUse should be removed"
+        );
+        assert!(
+            val["hooks"]["beforeSubmitPrompt"].is_null(),
+            "empty beforeSubmitPrompt should be removed"
         );
     }
 
@@ -844,6 +949,38 @@ mod tests {
 
         let statuses = detect_tool_statuses(home.path());
         assert_eq!(statuses.get("claude"), Some(&true));
+        assert_eq!(statuses.get("codex"), Some(&false));
+        assert_eq!(statuses.get("cursor"), Some(&false));
+    }
+
+    #[test]
+    fn detect_tool_statuses_require_complete_native_hook_sets() {
+        let home = setup_home();
+        let codex_path = home.path().join(".codex").join("config.toml");
+        std::fs::create_dir_all(codex_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &codex_path,
+            "# aitrack\n[[hooks.PostToolUse]]\nmatcher = \"apply_patch|Edit|Write\"\n\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = \"/usr/local/bin/aitrack capture --tool codex\"\ntimeout = 10\n",
+        )
+        .unwrap();
+
+        let cursor_path = home.path().join(".cursor").join("hooks.json");
+        std::fs::create_dir_all(cursor_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &cursor_path,
+            serde_json::json!({
+                "hooks": {
+                    "beforeSubmitPrompt": [{
+                        "command": "/usr/local/bin/aitrack prompt-capture --tool cursor",
+                        "timeout": 10
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let statuses = detect_tool_statuses(home.path());
         assert_eq!(statuses.get("codex"), Some(&false));
         assert_eq!(statuses.get("cursor"), Some(&false));
     }
@@ -940,8 +1077,6 @@ mod tests {
                 "cursor",
                 "trae",
                 "qwen",
-                "baidu-comate",
-                "wenxin",
                 "antigravity",
                 "opencode",
                 "qoder",

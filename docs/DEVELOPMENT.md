@@ -76,8 +76,8 @@ client/src/
 v1.7.0 当前支持边界：
 
 - 原生编辑钩子适配器：`claude`、`codex`、`cursor`。
-- 原生提示词钩子：仅 `claude`。
-- 默认本地扫描：35 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- 原生提示词钩子：`claude`、`codex`、`cursor`。
+- 默认本地扫描：30 个已验证来源的规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 - 本地来源类型：本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态。
 - 默认扫描窗口：近 30 天；显式 `--since/--until` 用于小范围回填；扫描游标缓存会跳过未变化来源。
 
@@ -88,7 +88,7 @@ v1.7.0 当前支持边界：
 | `domain/` | 纯业务逻辑、HMAC、diff、关键词分类 | Rust 覆盖率 LINE ≥ 90% |
 | `port/` | 存储 / 上传端口契约 | Rust 覆盖率 LINE ≥ 90% |
 | `adapter/` | SQLite、HTTP、事件适配、本地用量来源 | Rust 覆盖率 LINE ≥ 90% |
-| **TOTAL** | client 全量单测 + 覆盖率 | **301 tests；LINE ≥ 90%** |
+| **TOTAL** | client 全量单测 + 覆盖率 | **LINE ≥ 90%** |
 
 > v1.7 本地来源扩展后，Rust 客户端单测覆盖动态工具注册表、用量汇总、会话记录监控、窗口化扫描和文件游标缓存。
 
@@ -127,7 +127,7 @@ let big = tampered_oversized_lines(1);  // added_lines = 99,999,999
 ### usage 子命令
 
 ```bash
-# 扫描默认 35 个工具 key，只写入本地 usage.sqlite
+# 扫描默认 30 个工具 key，只写入本地 usage.sqlite
 ./target/debug/aitrack usage scan
 
 # 针对单个工具做小范围回填
@@ -324,7 +324,7 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 
 | 组件 | 工具 | 命令 | 门槛 | 当前覆盖率 |
 |------|------|------|------|------------|
-| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **301 tests；LINE ≥ 90%** |
+| Rust 客户端 | cargo-llvm-cov | `cargo llvm-cov --summary-only` | LINE ≥ 90% | **LINE ≥ 90%** |
 | Java 服务端 | JaCoCo | `mvn verify` | LINE ≥ 90% | **LINE ≥ 90%** |
 | Go 服务端 | go cover | `go tool cover -func cover.out` | total ≥ 90% | **95.3%** |
 
@@ -334,11 +334,11 @@ docker compose -f docker/docker-compose.e2e.yml --profile go up --abort-on-conta
 
 ## 本地钩子配置更新（重新激活）
 
-`aitrack init --claude` 会将 aitrack 的钩子配置写入 `~/.claude/settings.json`（`hooks` 字段）。当 aitrack 发布新版本并更新钩子配置（例如新增 `UserPromptSubmit` 钩子用于提示词捕获）时，**已安装旧版本的用户必须重新执行 init 命令**，才能激活新版钩子。
+`aitrack init` 会将 aitrack 的钩子配置写入对应工具的本地配置文件。当 aitrack 发布新版本并更新钩子配置（例如新增提示词捕获钩子）时，**已安装旧版本的用户必须重新执行 init 命令**，才能激活新版钩子。
 
 ```bash
-# 重新激活最新钩子配置（安全：只写入 ~/.claude/settings.json，不影响本地代码库）
-aitrack init --claude \
+# 重新激活最新钩子配置（安全：只写入工具本地配置，不影响本地代码库）
+aitrack init --claude --codex --cursor \
   --api-url <your-server-url> \
   --credential <your-credential>
 ```
@@ -355,20 +355,22 @@ aitrack init --claude \
 **验证钩子已激活**：
 
 ```bash
-# 确认 ~/.claude/settings.json 中存在 UserPromptSubmit 钩子
+# 确认 Claude / Codex / Cursor 的提示词钩子存在
 grep -A 5 '"UserPromptSubmit"' ~/.claude/settings.json
+grep -A 5 'hooks.UserPromptSubmit' ~/.codex/config.toml
+grep -A 5 '"beforeSubmitPrompt"' ~/.cursor/hooks.json
 
 # 检查 aitrack 当前配置与钩子状态
 aitrack status
 ```
 
-> 注意：`aitrack init --claude` 会覆盖 `~/.claude/settings.json` 中已有的 aitrack 钩子条目，但不会删除其他工具写入的钩子。
+> 注意：`aitrack init --claude --codex --cursor` 只维护对应配置文件中的 aitrack 钩子条目，不会删除其他工具写入的钩子。
 
 **自动检测模式**：不传任何工具 flag 时，`aitrack init` 会检测 `~/.claude`、`~/.codex`、`~/.cursor` 目录是否存在，对检测到的原生编辑适配工具自动安装钩子。若均未检测到，打印提示并退出。其他已登记工具可通过 `--tool <name>` 写入注册/状态路径，但不会因此获得原生编辑适配能力。
 
 **第三方冲突告警**：Claude 安装时若发现 `settings.json` 中已存在非 aitrack 的 PostToolUse hook command，通过 stderr 警告用户，但不中止安装。
 
-**Cursor 双注册**：Cursor 钩子同时写入 `hooks.postToolUse` 和 `hooks.afterFileEdit`，每个 entry 带 `matcher: "Write"` 和 `timeout: 10`，覆盖所有触发路径。
+**Cursor 三注册**：Cursor 钩子写入 `hooks.postToolUse`、`hooks.afterFileEdit` 和 `hooks.beforeSubmitPrompt`，编辑 entry 带 `matcher: "Write"` 和 `timeout: 10`，提示词 entry 写入同一套本地提示词捕获流程。
 
 ---
 

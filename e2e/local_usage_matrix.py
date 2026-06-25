@@ -165,41 +165,108 @@ def write_agent_fixture(root: Path, agent: str) -> Path:
         return path
 
     if agent == "trae":
-        path = root / "Library/Application Support/Trae/usage/session-trae.json"
+        path = root / "Library/Application Support/Trae/trajectories/trajectory_20260616_140000.json"
         write_json(
             path,
-            [
-                {
-                    "model_name": "GPT-5",
-                    "session_id": "trae-session",
-                    "usage_time": EPOCH_S,
-                    "dollar_float": 0.5,
-                    "extra_info": {
-                        "input_token": 100,
-                        "output_token": 44,
-                        "cache_read_token": 8,
-                        "cache_write_token": 4,
+            {
+                "task_id": "trae-session",
+                "timestamp": "2026-06-16T14:00:00Z",
+                "input_messages": [{"role": "user", "content": "trae prompt"}],
+                "response": {
+                    "role": "assistant",
+                    "content": "trae output",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 44,
+                        "cache_read_tokens": 8,
+                        "cache_write_tokens": 4,
                     },
-                }
-            ],
+                    "tool_calls": [
+                        {
+                            "id": "tool-1",
+                            "name": "read_file",
+                            "arguments": {"path": "src/main.rs"},
+                        }
+                    ],
+                },
+                "agent_steps": [
+                    {
+                        "tool_calls": [
+                            {
+                                "id": "tool-1",
+                                "name": "read_file",
+                                "arguments": {"path": "src/main.rs"},
+                            }
+                        ],
+                        "tool_results": [
+                            {"tool_call_id": "tool-1", "content": "file content"}
+                        ],
+                    }
+                ],
+            },
         )
         return path
 
     if agent == "qwen":
-        path = root / ".qwen/projects/e2e/chats/session-qwen.jsonl"
+        path = root / ".qwen/telemetry.log"
         write_jsonl(
             path,
             [
                 {
-                    "type": "assistant",
-                    "model": "qwen3.5-plus",
+                    "name": "qwen-code.user_prompt",
                     "timestamp": ISO_TS,
+                    "attributes": {
+                        "prompt_id": "qwen-prompt",
+                        "prompt_length": 11,
+                        "prompt": "qwen prompt",
+                        "auth_type": "oauth-personal",
+                    },
+                },
+                {
+                    "name": "qwen-code.tool_call",
+                    "timestamp": ISO_TS_1,
+                    "attributes": {
+                        "prompt_id": "qwen-prompt",
+                        "function_name": "read_file",
+                        "function_args": "{\"path\":\"src/lib.rs\"}",
+                        "duration_ms": 18,
+                        "success": True,
+                        "decision": "accept",
+                        "tool_type": "native",
+                    },
+                },
+                {
+                    "name": "qwen-code.api_response",
+                    "timestamp": ISO_TS_1,
+                    "attributes": {
+                        "prompt_id": "qwen-prompt",
+                        "model": "qwen3-coder-plus",
+                        "status_code": 200,
+                        "input_token_count": 124,
+                        "output_token_count": 76,
+                        "cached_content_token_count": 5,
+                        "thoughts_token_count": 9,
+                        "tool_token_count": 4,
+                        "total_token_count": 218,
+                        "response_text": "qwen output",
+                        "auth_type": "oauth-personal",
+                    },
+                },
+            ],
+        )
+        write_jsonl(
+            root / ".qwen/projects/project-one/chats/session-qwen.jsonl",
+            [
+                {
+                    "model": "qwen3-coder-plus",
+                    "provider": "qwen",
                     "sessionId": "qwen-session",
+                    "timestamp": ISO_TS,
                     "usageMetadata": {
-                        "promptTokenCount": 124,
-                        "candidatesTokenCount": 76,
-                        "thoughtsTokenCount": 9,
-                        "cachedContentTokenCount": 5,
+                        "promptTokenCount": 120,
+                        "candidatesTokenCount": 45,
+                        "cachedContentTokenCount": 12,
+                        "thoughtsTokenCount": 7,
                     },
                 }
             ],
@@ -398,19 +465,51 @@ def write_agent_fixture(root: Path, agent: str) -> Path:
         return path
 
     if agent == "gemini":
-        path = root / ".gemini/tmp/session-gemini.json"
-        write_json(
+        path = root / ".gemini/telemetry.log"
+        write_jsonl(
             path,
-            {
-                "sessionId": "gemini-session",
-                "messages": [
-                    {
-                        "timestamp": ISO_TS,
+            [
+                {
+                    "name": "gemini_cli.user_prompt",
+                    "timestamp": ISO_TS,
+                    "attributes": {
+                        "prompt_id": "gemini-prompt",
+                        "prompt_length": 13,
+                        "prompt": "gemini prompt",
+                        "auth_type": "oauth-personal",
+                    },
+                },
+                {
+                    "name": "gemini_cli.tool_call",
+                    "timestamp": ISO_TS_1,
+                    "attributes": {
+                        "prompt_id": "gemini-prompt",
+                        "function_name": "read_file",
+                        "function_args": "{\"path\":\"src/main.rs\"}",
+                        "duration_ms": 12,
+                        "success": True,
+                        "decision": "accept",
+                        "tool_type": "native",
+                    },
+                },
+                {
+                    "name": "gemini_cli.api_response",
+                    "timestamp": ISO_TS_1,
+                    "attributes": {
+                        "prompt_id": "gemini-prompt",
                         "model": "gemini-3-pro",
-                        "tokens": {"input": 100, "output": 45, "cached": 10, "thoughts": 6},
-                    }
-                ],
-            },
+                        "status_code": 200,
+                        "input_token_count": 100,
+                        "output_token_count": 45,
+                        "cached_content_token_count": 10,
+                        "thoughts_token_count": 6,
+                        "tool_token_count": 0,
+                        "total_token_count": 161,
+                        "response_text": "gemini output",
+                        "auth_type": "oauth-personal",
+                    },
+                },
+            ],
         )
         return path
 

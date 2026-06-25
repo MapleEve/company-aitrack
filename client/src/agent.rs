@@ -12,6 +12,7 @@ pub struct Agent {
 pub enum LocalSourceKind {
     HookJsonl,
     SessionJsonl,
+    TelemetryLog,
     Sqlite,
     IdeSnapshot,
     GenericCache,
@@ -35,9 +36,172 @@ pub struct LocalSourceSpec {
     pub capabilities: LocalSourceCapabilities,
 }
 
-const LOCAL_MONITORING_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+const NATIVE_EDIT_HOOK_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: false,
+    tool_call: false,
+    tool_result: false,
+    token_usage: false,
+    session_context: true,
+};
+
+const CLAUDE_HOOK_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: false,
+    tool_call: false,
+    tool_result: false,
+    token_usage: false,
+    session_context: true,
+};
+
+const GEMINI_TELEMETRY_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
     prompt_input: true,
     assistant_output: true,
+    tool_call: true,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const QWEN_TELEMETRY_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const LOCAL_USAGE_STATS_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: false,
+    assistant_output: false,
+    tool_call: false,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const OFFICIAL_TRANSCRIPT_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: true,
+    token_usage: true,
+    session_context: true,
+};
+
+const OFFICIAL_SESSION_EXPORT_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: false,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const OFFICIAL_SESSION_TEXT_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: false,
+    tool_result: false,
+    token_usage: false,
+    session_context: true,
+};
+
+const OFFICIAL_SESSION_ACTION_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: true,
+    token_usage: false,
+    session_context: true,
+};
+
+const OFFICIAL_HOOK_ACTION_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: true,
+    token_usage: false,
+    session_context: true,
+};
+
+const OFFICIAL_PROMPT_TOOL_HOOK_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: false,
+    tool_call: true,
+    tool_result: true,
+    token_usage: false,
+    session_context: true,
+};
+
+const OFFICIAL_STREAM_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: false,
+    token_usage: false,
+    session_context: false,
+};
+
+const OFFICIAL_SESSION_USAGE_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: false,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const OFFICIAL_SESSION_TOOL_USAGE_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const OFFICIAL_OUTPUT_TOOL_EVENT_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: false,
+    assistant_output: true,
+    tool_call: true,
+    tool_result: true,
+    token_usage: false,
+    session_context: false,
+};
+
+const OFFICIAL_TELEMETRY_USAGE_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: false,
+    assistant_output: false,
+    tool_call: true,
+    tool_result: false,
+    token_usage: true,
+    session_context: true,
+};
+
+const OFFICIAL_PROMPT_OUTPUT_SESSION_CAPABILITIES: LocalSourceCapabilities =
+    LocalSourceCapabilities {
+        prompt_input: true,
+        assistant_output: true,
+        tool_call: false,
+        tool_result: false,
+        token_usage: false,
+        session_context: true,
+    };
+
+const OFFICIAL_TOOL_RESULT_USAGE_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: true,
+    assistant_output: true,
+    tool_call: false,
+    tool_result: true,
+    token_usage: true,
+    session_context: true,
+};
+
+const CONDITIONAL_OTEL_CAPABILITIES: LocalSourceCapabilities = LocalSourceCapabilities {
+    prompt_input: false,
+    assistant_output: false,
     tool_call: true,
     tool_result: true,
     token_usage: true,
@@ -61,13 +225,13 @@ pub const REGISTERED_AGENTS: &[Agent] = &[
         name: "codex",
         marker: ".codex",
         has_native_edit_adapter: true,
-        has_native_prompt_hook: false,
+        has_native_prompt_hook: true,
     },
     Agent {
         name: "cursor",
         marker: ".cursor",
         has_native_edit_adapter: true,
-        has_native_prompt_hook: false,
+        has_native_prompt_hook: true,
     },
     Agent {
         name: "trae",
@@ -78,18 +242,6 @@ pub const REGISTERED_AGENTS: &[Agent] = &[
     Agent {
         name: "qwen",
         marker: ".qwen",
-        has_native_edit_adapter: false,
-        has_native_prompt_hook: false,
-    },
-    Agent {
-        name: "baidu-comate",
-        marker: ".baidu-comate",
-        has_native_edit_adapter: false,
-        has_native_prompt_hook: false,
-    },
-    Agent {
-        name: "wenxin",
-        marker: ".wenxin",
         has_native_edit_adapter: false,
         has_native_prompt_hook: false,
     },
@@ -298,277 +450,199 @@ const LOCAL_SOURCE_SPECS: &[LocalSourceSpec] = &[
         agent: "claude",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: CLAUDE_HOOK_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "claude",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "projects-jsonl",
+        capabilities: OFFICIAL_SESSION_ACTION_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "codex",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: NATIVE_EDIT_HOOK_CAPABILITIES,
+    },
+    LocalSourceSpec {
+        agent: "codex",
+        kind: LocalSourceKind::SessionJsonl,
+        label: "rollout-jsonl",
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "cursor",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: NATIVE_EDIT_HOOK_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "trae",
         kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        label: "trajectory-json",
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qwen",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "antigravity",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        kind: LocalSourceKind::TelemetryLog,
+        label: "telemetry-log",
+        capabilities: QWEN_TELEMETRY_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "opencode",
-        kind: LocalSourceKind::HookJsonl,
-        label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        kind: LocalSourceKind::SessionJsonl,
+        label: "export-json",
+        capabilities: OFFICIAL_SESSION_EXPORT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "opencode",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: LOCAL_USAGE_STATS_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_PROMPT_TOOL_HOOK_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "qoder-cn",
         kind: LocalSourceKind::HookJsonl,
         label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-work",
-        kind: LocalSourceKind::HookJsonl,
-        label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-work-cn",
-        kind: LocalSourceKind::HookJsonl,
-        label: "hook-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder",
-        kind: LocalSourceKind::Sqlite,
-        label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-cn",
-        kind: LocalSourceKind::Sqlite,
-        label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-work",
-        kind: LocalSourceKind::Sqlite,
-        label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-work-cn",
-        kind: LocalSourceKind::Sqlite,
-        label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder",
-        kind: LocalSourceKind::IdeSnapshot,
-        label: "ide-snapshot",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-cn",
-        kind: LocalSourceKind::IdeSnapshot,
-        label: "ide-snapshot",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-work",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-cn",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "qoder-work-cn",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_PROMPT_TOOL_HOOK_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "wukong",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_SESSION_USAGE_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "hermes",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_SESSION_USAGE_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "openclaw",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "gemini",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        kind: LocalSourceKind::TelemetryLog,
+        label: "telemetry-log",
+        capabilities: GEMINI_TELEMETRY_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "copilot",
         kind: LocalSourceKind::IdeSnapshot,
         label: "otel-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: CONDITIONAL_OTEL_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "cline",
         kind: LocalSourceKind::SessionJsonl,
         label: "vscode-tasks",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "roo-code",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "vscode-tasks",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "kiro",
-        kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        kind: LocalSourceKind::Sqlite,
+        label: "sessions-db",
+        capabilities: OFFICIAL_HOOK_ACTION_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "zed",
         kind: LocalSourceKind::Sqlite,
         label: "threads-db",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "goose",
         kind: LocalSourceKind::Sqlite,
         label: "sessions-db",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "amp",
         kind: LocalSourceKind::SessionJsonl,
         label: "threads-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_STREAM_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "droid",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TELEMETRY_USAGE_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "pi",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TRANSCRIPT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "mux",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: LOCAL_USAGE_STATS_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "crush",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_SESSION_TOOL_USAGE_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "codebuff",
         kind: LocalSourceKind::SessionJsonl,
         label: "project-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_OUTPUT_TOOL_EVENT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "kilo",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_SESSION_EXPORT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "kilocode",
         kind: LocalSourceKind::SessionJsonl,
         label: "vscode-tasks",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_SESSION_TEXT_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "kimi",
         kind: LocalSourceKind::SessionJsonl,
-        label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        label: "wire-jsonl",
+        capabilities: OFFICIAL_SESSION_ACTION_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "gjc",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_TOOL_RESULT_USAGE_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "grok",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
-    },
-    LocalSourceSpec {
-        agent: "synthetic",
-        kind: LocalSourceKind::Sqlite,
-        label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_PROMPT_OUTPUT_SESSION_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "warp",
         kind: LocalSourceKind::SessionJsonl,
         label: "session-jsonl",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: OFFICIAL_PROMPT_OUTPUT_SESSION_CAPABILITIES,
     },
     LocalSourceSpec {
         agent: "zcode",
         kind: LocalSourceKind::Sqlite,
         label: "sqlite",
-        capabilities: LOCAL_MONITORING_CAPABILITIES,
+        capabilities: LOCAL_USAGE_STATS_CAPABILITIES,
     },
 ];
 
@@ -585,11 +659,13 @@ pub fn registered_agent_names() -> Vec<&'static str> {
 }
 
 pub fn default_scan_agent_names() -> Vec<&'static str> {
-    REGISTERED_AGENTS
-        .iter()
-        .map(|agent| agent.name)
-        .filter(|name| !is_default_scan_excluded(name))
-        .collect()
+    let mut names = Vec::new();
+    for spec in LOCAL_SOURCE_SPECS {
+        if !is_default_scan_excluded(spec.agent) && !names.contains(&spec.agent) {
+            names.push(spec.agent);
+        }
+    }
+    names
 }
 
 pub fn agent_by_name(name: &str) -> Option<&'static Agent> {
@@ -610,10 +686,7 @@ pub fn canonical_agent_name(name: &str) -> &str {
 }
 
 fn is_default_scan_excluded(name: &str) -> bool {
-    matches!(
-        name,
-        "roocode" | "kilo-code" | "gajae-code" | "baidu-comate" | "wenxin"
-    )
+    matches!(name, "roocode" | "kilo-code" | "gajae-code")
 }
 
 pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
@@ -625,7 +698,8 @@ pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
             roots.push(home.join(".claude").join("transcripts"));
         }
         "codex" => {
-            roots.push(env_or_home(home, "CODEX_HOME", ".codex").join("sessions"));
+            let codex_home = env_or_home(home, "CODEX_HOME", ".codex");
+            roots.push(codex_home.join("sessions"));
         }
         "cursor" => {
             roots.push(home.join("Library/Application Support/Cursor/User/globalStorage"));
@@ -667,7 +741,9 @@ pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
             roots.push(home.join(".wukong"));
         }
         "gemini" => {
-            roots.push(env_or_home(home, "GEMINI_CLI_HOME", ".gemini").join("tmp"));
+            let gemini_home = env_or_home(home, "GEMINI_CLI_HOME", ".gemini");
+            roots.push(gemini_home.clone());
+            roots.push(gemini_home.join("tmp"));
         }
         "copilot" => {
             roots.push(home.join(".copilot").join("otel"));
@@ -677,7 +753,16 @@ pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
             }
         }
         "cline" => {
+            roots.push(env_or_home(home, "CLINE_DATA_DIR", ".cline/data").join("sessions"));
             roots.push(home.join(".config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks"));
+            roots.push(home.join(
+                "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks",
+            ));
+            roots.push(
+                home.join(
+                    "Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/tasks",
+                ),
+            );
             roots.push(
                 home.join(".vscode-server/data/User/globalStorage/saoudrizwan.claude-dev/tasks"),
             );
@@ -688,19 +773,42 @@ pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
             );
             roots.push(
                 home.join(
+                    "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+                ),
+            );
+            roots.push(
+                home.join(
+                    "Library/Application Support/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
+                ),
+            );
+            roots.push(
+                home.join(
                     ".vscode-server/data/User/globalStorage/rooveterinaryinc.roo-cline/tasks",
                 ),
             );
         }
         "kilocode" | "kilo-code" => {
             roots.push(home.join(".config/Code/User/globalStorage/kilocode.kilo-code/tasks"));
+            roots.push(home.join(
+                "Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/tasks",
+            ));
+            roots.push(home.join(
+                "Library/Application Support/Cursor/User/globalStorage/kilocode.kilo-code/tasks",
+            ));
             roots
                 .push(home.join(".vscode-server/data/User/globalStorage/kilocode.kilo-code/tasks"));
+            roots.push(home.join(".kilocode/cli/global/tasks"));
+            roots.push(home.join(".kilocode/cli/workspaces"));
         }
         "kilo" => {
             roots.push(xdg_data_home(home).join("kilo"));
+            roots.push(xdg_data_home(home).join("kilo/storage/session"));
+            roots.push(home.join("Library/Application Support/kilo/storage/session"));
         }
         "kiro" => {
+            let kiro_home = env_or_home(home, "KIRO_HOME", ".kiro");
+            roots.push(kiro_home.clone());
+            roots.push(kiro_home.join("sessions"));
             roots.push(home.join(".kiro/sessions/cli"));
             roots.push(xdg_data_home(home).join("kiro-cli"));
             roots.push(home.join("Library/Application Support/kiro-cli"));
@@ -735,10 +843,13 @@ pub fn default_scan_roots(home: &Path, tool: &str) -> Vec<PathBuf> {
             roots.push(home.join(".omp/agent/sessions"));
         }
         "kimi" => {
+            let kimi_home = env_or_home(home, "KIMI_CODE_HOME", ".kimi-code");
             roots.push(home.join(".kimi/sessions"));
-            roots.push(env_or_home(home, "KIMI_CODE_HOME", ".kimi-code").join("sessions"));
+            roots.push(kimi_home.join("sessions"));
+            roots.push(kimi_home.join("session_index.jsonl"));
         }
         "qwen" => {
+            roots.push(home.join(".qwen"));
             roots.push(home.join(".qwen/projects"));
         }
         "codebuff" => {
@@ -874,62 +985,197 @@ mod tests {
         assert!(!default_scan_agent_names().contains(&"roocode"));
         assert!(!default_scan_agent_names().contains(&"kilo-code"));
         assert!(!default_scan_agent_names().contains(&"gajae-code"));
-        assert!(!default_scan_agent_names().contains(&"baidu-comate"));
-        assert!(!default_scan_agent_names().contains(&"wenxin"));
-        assert_eq!(default_scan_agent_names().len(), 35);
+        assert!(!default_scan_agent_names().contains(&"antigravity"));
+        assert!(!default_scan_agent_names().contains(&"qoder-work"));
+        assert!(!default_scan_agent_names().contains(&"qoder-work-cn"));
+        assert!(!default_scan_agent_names().contains(&"roo-code"));
+        assert!(!default_scan_agent_names().contains(&"synthetic"));
+        assert_eq!(default_scan_agent_names().len(), 30);
         assert_eq!(canonical_agent_name("roocode"), "roo-code");
         assert_eq!(canonical_agent_name("kilo-code"), "kilocode");
         assert_eq!(canonical_agent_name("gajae-code"), "gjc");
+        assert!(
+            agent_by_name("codex")
+                .expect("codex registered")
+                .has_native_prompt_hook,
+            "Codex official hooks include UserPromptSubmit"
+        );
+        assert!(
+            agent_by_name("cursor")
+                .expect("cursor registered")
+                .has_native_prompt_hook,
+            "Cursor official hooks include beforeSubmitPrompt"
+        );
     }
 
     #[test]
-    fn local_source_specs_cover_default_local_collection_matrix() {
+    fn local_source_specs_do_not_overclaim_undocumented_local_fields() {
         let specs = local_source_specs();
 
         for agent in default_scan_agent_names() {
-            let spec = specs
+            let matching = specs
                 .iter()
-                .find(|spec| spec.agent == agent)
-                .unwrap_or_else(|| panic!("{agent} source spec missing"));
+                .filter(|spec| spec.agent == agent)
+                .collect::<Vec<_>>();
+            assert!(!matching.is_empty(), "{agent} source spec missing");
             assert!(
-                spec.capabilities.prompt_input,
-                "{agent} {:?} prompt missing",
-                spec.kind
-            );
-            assert!(
-                spec.capabilities.assistant_output,
-                "{agent} {:?} output missing",
-                spec.kind
-            );
-            assert!(
-                spec.capabilities.tool_call,
-                "{agent} {:?} tool call missing",
-                spec.kind
-            );
-            assert!(
-                spec.capabilities.tool_result,
-                "{agent} {:?} tool result missing",
-                spec.kind
-            );
-            assert!(
-                spec.capabilities.token_usage,
-                "{agent} {:?} token missing",
-                spec.kind
-            );
-            assert!(
-                spec.capabilities.session_context,
-                "{agent} {:?} session context missing",
-                spec.kind
+                matching.iter().all(|spec| {
+                    !all_capabilities_enabled(spec.capabilities)
+                        || official_full_capability_source(spec)
+                }),
+                "{agent} source spec overclaims every local field without official evidence"
             );
         }
+
         assert!(!specs.iter().any(|spec| spec.agent == "baidu-comate"));
         assert!(!specs.iter().any(|spec| spec.agent == "wenxin"));
-        assert!(specs
+        assert!(!specs.iter().any(|spec| spec.agent == "synthetic"));
+        assert!(!specs.iter().any(|spec| spec.agent == "antigravity"));
+        assert!(!specs.iter().any(|spec| spec.agent == "qoder-work"));
+        assert!(!specs.iter().any(|spec| spec.agent == "qoder-work-cn"));
+        assert!(!specs.iter().any(|spec| spec.agent == "roo-code"));
+        assert!(!specs
             .iter()
             .any(|spec| spec.agent == "qoder" && spec.kind == LocalSourceKind::Sqlite));
         assert!(specs
             .iter()
             .any(|spec| spec.agent == "copilot" && spec.kind == LocalSourceKind::IdeSnapshot));
+
+        let gemini = specs
+            .iter()
+            .find(|spec| spec.agent == "gemini")
+            .expect("gemini source spec missing");
+        assert_eq!(
+            gemini.capabilities,
+            LocalSourceCapabilities {
+                prompt_input: true,
+                assistant_output: true,
+                tool_call: true,
+                tool_result: false,
+                token_usage: true,
+                session_context: true,
+            }
+        );
+
+        let qwen = specs
+            .iter()
+            .find(|spec| spec.agent == "qwen")
+            .expect("qwen source spec missing");
+        assert_eq!(
+            qwen.capabilities,
+            LocalSourceCapabilities {
+                prompt_input: true,
+                assistant_output: true,
+                tool_call: true,
+                tool_result: false,
+                token_usage: true,
+                session_context: true,
+            }
+        );
+
+        let codex_rollout = specs
+            .iter()
+            .find(|spec| spec.agent == "codex" && spec.label == "rollout-jsonl")
+            .expect("codex rollout source spec missing");
+        assert_eq!(codex_rollout.capabilities, OFFICIAL_TRANSCRIPT_CAPABILITIES);
+
+        let claude_projects = specs
+            .iter()
+            .find(|spec| spec.agent == "claude" && spec.label == "projects-jsonl")
+            .expect("claude projects source spec missing");
+        assert_eq!(
+            claude_projects.capabilities,
+            OFFICIAL_SESSION_ACTION_CAPABILITIES
+        );
+
+        let opencode_sqlite = specs
+            .iter()
+            .find(|spec| spec.agent == "opencode" && spec.kind == LocalSourceKind::Sqlite)
+            .expect("opencode sqlite source spec missing");
+        assert_eq!(
+            opencode_sqlite.capabilities,
+            LocalSourceCapabilities {
+                prompt_input: false,
+                assistant_output: false,
+                tool_call: false,
+                tool_result: false,
+                token_usage: true,
+                session_context: true,
+            }
+        );
+
+        let opencode_export = specs
+            .iter()
+            .find(|spec| spec.agent == "opencode" && spec.label == "export-json")
+            .expect("opencode export source spec missing");
+        assert_eq!(
+            opencode_export.capabilities,
+            OFFICIAL_SESSION_EXPORT_CAPABILITIES
+        );
+
+        let kilo = specs
+            .iter()
+            .find(|spec| spec.agent == "kilo" && spec.label == "sqlite")
+            .expect("kilo source spec missing");
+        assert_eq!(kilo.capabilities, OFFICIAL_SESSION_EXPORT_CAPABILITIES);
+
+        let kiro = specs
+            .iter()
+            .find(|spec| spec.agent == "kiro" && spec.label == "sessions-db")
+            .expect("kiro source spec missing");
+        assert_eq!(kiro.capabilities, OFFICIAL_HOOK_ACTION_CAPABILITIES);
+
+        let zed = specs
+            .iter()
+            .find(|spec| spec.agent == "zed" && spec.label == "threads-db")
+            .expect("zed source spec missing");
+        assert_eq!(zed.capabilities, OFFICIAL_TRANSCRIPT_CAPABILITIES);
+
+        let openclaw = specs
+            .iter()
+            .find(|spec| spec.agent == "openclaw" && spec.label == "session-jsonl")
+            .expect("openclaw source spec missing");
+        assert_eq!(openclaw.capabilities, OFFICIAL_TRANSCRIPT_CAPABILITIES);
+
+        let pi = specs
+            .iter()
+            .find(|spec| spec.agent == "pi" && spec.label == "session-jsonl")
+            .expect("pi source spec missing");
+        assert_eq!(pi.capabilities, OFFICIAL_TRANSCRIPT_CAPABILITIES);
+
+        let kilocode = specs
+            .iter()
+            .find(|spec| spec.agent == "kilocode" && spec.label == "vscode-tasks")
+            .expect("kilocode source spec missing");
+        assert_eq!(kilocode.capabilities, OFFICIAL_SESSION_TEXT_CAPABILITIES);
+
+        let kimi = specs
+            .iter()
+            .find(|spec| spec.agent == "kimi" && spec.label == "wire-jsonl")
+            .expect("kimi source spec missing");
+        assert_eq!(kimi.capabilities, OFFICIAL_SESSION_ACTION_CAPABILITIES);
+    }
+
+    fn all_capabilities_enabled(capabilities: LocalSourceCapabilities) -> bool {
+        capabilities.prompt_input
+            && capabilities.assistant_output
+            && capabilities.tool_call
+            && capabilities.tool_result
+            && capabilities.token_usage
+            && capabilities.session_context
+    }
+
+    fn official_full_capability_source(spec: &LocalSourceSpec) -> bool {
+        matches!(
+            (spec.agent, spec.label),
+            ("codex", "rollout-jsonl")
+                | ("trae", "trajectory-json")
+                | ("cline", "vscode-tasks")
+                | ("openclaw", "session-jsonl")
+                | ("zed", "threads-db")
+                | ("goose", "sessions-db")
+                | ("pi", "session-jsonl")
+        )
     }
 
     #[test]
@@ -939,6 +1185,9 @@ mod tests {
         let home = dir.path();
         std::env::set_var("CODEX_HOME", home.join("custom-codex"));
         std::env::set_var("GEMINI_CLI_HOME", home.join("custom-gemini"));
+        std::env::set_var("CLINE_DATA_DIR", home.join(".cline/data"));
+        std::env::set_var("KIMI_CODE_HOME", home.join(".custom-kimi-code"));
+        std::env::set_var("KIRO_HOME", home.join(".custom-kiro"));
         std::env::set_var(
             "COPILOT_OTEL_FILE_EXPORTER_PATH",
             home.join("copilot.jsonl"),
@@ -950,12 +1199,26 @@ mod tests {
         assert!(!default_scan_roots(home, "codex")
             .iter()
             .any(|p| p == &home.join("custom-codex")));
+        assert!(default_scan_roots(home, "qwen")
+            .iter()
+            .any(|p| p == &home.join(".qwen")));
+        assert!(default_scan_roots(home, "gemini")
+            .iter()
+            .any(|p| p.ends_with("custom-gemini")));
         assert!(default_scan_roots(home, "gemini")
             .iter()
             .any(|p| p.ends_with("custom-gemini/tmp")));
         assert!(default_scan_roots(home, "copilot")
             .iter()
             .any(|p| p.ends_with("copilot.jsonl")));
+        assert!(default_scan_roots(home, "cline")
+            .iter()
+            .any(|p| p.ends_with(".cline/data/sessions")));
+        assert!(default_scan_roots(home, "cline")
+            .iter()
+            .any(|p| p.to_string_lossy().contains(
+                "Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/tasks"
+            )));
         assert!(default_scan_roots(home, "zed")
             .iter()
             .any(|p| p.to_string_lossy().contains("Zed/threads")));
@@ -965,16 +1228,45 @@ mod tests {
         assert!(default_scan_roots(home, "roo-code")
             .iter()
             .any(|p| p.to_string_lossy().contains("roo-cline/tasks")));
+        assert!(default_scan_roots(home, "roo-code").iter().any(|p| p
+            .to_string_lossy()
+            .contains("Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks")));
         assert!(default_scan_roots(home, "kilocode")
             .iter()
             .any(|p| p.to_string_lossy().contains("kilo-code/tasks")));
+        assert!(default_scan_roots(home, "kilocode")
+            .iter()
+            .any(|p| p.ends_with(".kilocode/cli/global/tasks")));
+        assert!(default_scan_roots(home, "kilocode")
+            .iter()
+            .any(|p| p.ends_with(".kilocode/cli/workspaces")));
+        assert!(default_scan_roots(home, "kilo")
+            .iter()
+            .any(|p| p.ends_with(".local/share/kilo/storage/session")));
+        assert!(default_scan_roots(home, "kilo").iter().any(|p| p
+            .to_string_lossy()
+            .contains("Library/Application Support/kilo/storage/session")));
+        assert!(default_scan_roots(home, "kimi")
+            .iter()
+            .any(|p| p.ends_with(".custom-kimi-code/sessions")));
+        assert!(default_scan_roots(home, "kimi")
+            .iter()
+            .any(|p| p.ends_with(".custom-kimi-code/session_index.jsonl")));
+        assert!(default_scan_roots(home, "kiro")
+            .iter()
+            .any(|p| p == &home.join(".custom-kiro")));
+        assert!(default_scan_roots(home, "kiro")
+            .iter()
+            .any(|p| p.ends_with(".custom-kiro/sessions")));
         assert!(default_scan_roots(home, "zcode")
             .iter()
             .any(|p| p.ends_with(".zcode/cli/db")));
-        assert!(default_scan_roots(home, "baidu-comate").is_empty());
 
         std::env::remove_var("CODEX_HOME");
         std::env::remove_var("GEMINI_CLI_HOME");
+        std::env::remove_var("CLINE_DATA_DIR");
+        std::env::remove_var("KIMI_CODE_HOME");
+        std::env::remove_var("KIRO_HOME");
         std::env::remove_var("COPILOT_OTEL_FILE_EXPORTER_PATH");
     }
 }

@@ -556,8 +556,10 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
     }
     let stdin_json = raw.trim();
 
-    // Only agents with native prompt hooks run prompt capture. Currently Claude.
-    if args.tool.as_str() != "claude" {
+    let prompt_hook_supported = agent::agent_by_name(args.tool.as_str())
+        .map(|registered| registered.has_native_prompt_hook)
+        .unwrap_or(false);
+    if !prompt_hook_supported {
         if agent::is_known_agent(args.tool.as_str()) {
             eprintln!(
                 "[aitrack] known agent has no native prompt-capture hook yet: {}",
@@ -569,7 +571,6 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Parse: {"session_id": "...", "prompt": "..."}
     let val: serde_json::Value = match serde_json::from_str(stdin_json) {
         Ok(v) => v,
         Err(e) => {
@@ -578,20 +579,36 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
         }
     };
 
-    let session_id = val.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-    let prompt = val.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+    let session_id = prompt_session_id(&val).unwrap_or_default();
+    let prompt = prompt_text(&val).unwrap_or_default();
 
     if session_id.is_empty() || prompt.is_empty() {
         return Ok(());
     }
 
     let conn = open_db()?;
-    insert_prompt_context(&conn, session_id, &prompt_capture_text(prompt))?;
+    insert_prompt_context(&conn, &session_id, &prompt_capture_text(&prompt))?;
     Ok(())
 }
 
 fn prompt_capture_text(prompt: &str) -> String {
     prompt.chars().take(4096).collect()
+}
+
+fn prompt_session_id(val: &serde_json::Value) -> Option<String> {
+    string_field(val, &["session_id", "conversation_id", "transcript_path"])
+}
+
+fn prompt_text(val: &serde_json::Value) -> Option<String> {
+    string_field(val, &["prompt"])
+}
+
+fn string_field(val: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| val.get(*key).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
@@ -890,6 +907,29 @@ mod tests {
 
         assert!(text.contains("customer"));
         assert!(text.contains("checkout"));
+    }
+
+    #[test]
+    fn prompt_capture_extracts_supported_hook_payloads() {
+        let codex = serde_json::json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "codex-session",
+            "turn_id": "turn-1",
+            "prompt": "codex prompt"
+        });
+        assert_eq!(prompt_session_id(&codex).as_deref(), Some("codex-session"));
+        assert_eq!(prompt_text(&codex).as_deref(), Some("codex prompt"));
+
+        let cursor = serde_json::json!({
+            "hook_event_name": "beforeSubmitPrompt",
+            "transcript_path": "/tmp/cursor/transcript.jsonl",
+            "prompt": "cursor prompt"
+        });
+        assert_eq!(
+            prompt_session_id(&cursor).as_deref(),
+            Some("/tmp/cursor/transcript.jsonl")
+        );
+        assert_eq!(prompt_text(&cursor).as_deref(), Some("cursor prompt"));
     }
 
     // -------------------------------------------------------------------------

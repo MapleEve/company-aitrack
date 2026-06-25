@@ -66,10 +66,10 @@ v1.7.0 之后，aitrack 的采集能力分成三层，不再只围绕三条固�
 | 层级 | 已支持能力 | 适用工具 |
 |------|------------|----------|
 | 原生编辑证据 | 生成带 diff、行数、仓库信息和 `record_sig` 的 `EditRecord` | Claude Code、Codex CLI、Cursor |
-| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 35 个默认工具 key 和显式别名 |
-| 本地用量扫描 | 扫描本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态，提取提示词、工具调用、窗口、可还原编辑事件、token、消息数和成本估算 | 默认 35 个工具 key；可用 `--tool` 限定范围 |
+| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 已登记工具 key 和显式别名 |
+| 本地用量扫描 | 按各工具文档和本地数据结构读取本机会话、导出、遥测或本地数据库；只在来源本身提供字段时提取提示词、输出、工具调用、token、消息数和成本估算 | 默认 30 个工具 key；可用 `--tool` 限定范围 |
 
-默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；`antigravity`、`qoder-work`、`qoder-work-cn`、`roo-code`、`synthetic` 只保留登记或显式入口，不计入默认本地扫描矩阵。
 
 详细支持矩阵、扫描路径、性能上限和管理员解读方式见 [AI 编码工具支持矩阵](docs/AGENT_SUPPORT.md)。
 
@@ -213,7 +213,7 @@ aitrack status
 # 查看本地记录（最近 20 条）
 aitrack inspect --limit 20
 
-# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 35 个工具 key
+# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 30 个工具 key
 aitrack usage scan
 
 # 扫描、汇总并上传用量，也会上传本地会话记录中可还原的监控事件

@@ -27,7 +27,7 @@ ADMIN_KEY="e2e-client-admin-key"
 SERVER_PORT="18080"   # distinct port to avoid conflict with run.sh
 PASS_COUNT=0
 FAIL_COUNT=0
-MIN_E2E_COVERAGE=90
+MIN_E2E_COVERAGE=100
 CLIENT_E2E_NET="aitrack-client-e2e-net-$$"
 PG_CONTAINER="aitrack-client-e2e-postgres-$$"
 REQUIRED_LOCAL_SOURCE_AGENTS=(
@@ -36,19 +36,15 @@ REQUIRED_LOCAL_SOURCE_AGENTS=(
     cursor
     trae
     qwen
-    antigravity
     opencode
     qoder
     qoder-cn
-    qoder-work
-    qoder-work-cn
     wukong
     hermes
     openclaw
     gemini
     copilot
     cline
-    roo-code
     kiro
     zed
     goose
@@ -63,7 +59,6 @@ REQUIRED_LOCAL_SOURCE_AGENTS=(
     kimi
     gjc
     grok
-    synthetic
     warp
     zcode
 )
@@ -189,8 +184,18 @@ usage_fixture_requires_positive_tokens() {
 
 usage_fixture_min_monitoring_events() {
     case "$1" in
-        qoder-work|qoder-work-cn|wukong) echo "1" ;;
+        gemini|qwen|trae) echo "3" ;;
+        wukong) echo "1" ;;
         *) echo "0" ;;
+    esac
+}
+
+usage_fixture_required_event_types() {
+    case "$1" in
+        gemini|qwen) echo "prompt,tool,output" ;;
+        trae) echo "prompt,output,tool" ;;
+        wukong) echo "output" ;;
+        *) echo "" ;;
     esac
 }
 
@@ -664,6 +669,69 @@ print('yes' if found else 'no')
             else
                 fail "Local records.db: ${agent} monitoring rows missing (records=${RECORD_ROWS}, min=${MIN_MONITORING_EVENTS})"
                 agent_fail=1
+            fi
+
+            REQUIRED_EVENT_TYPES="$(usage_fixture_required_event_types "${agent}")"
+            if [ -n "${REQUIRED_EVENT_TYPES}" ]; then
+                if python3 - "${AITRACK_HOME}/records.db" "${agent}" "${REQUIRED_EVENT_TYPES}" <<'PY'
+import json
+import sqlite3
+import sys
+
+db_path, agent, required_raw = sys.argv[1:4]
+required = [item for item in required_raw.split(",") if item]
+rows = sqlite3.connect(db_path).execute(
+    "SELECT metadata, prompt_summary, session_id, provider, model FROM records WHERE tool = ?",
+    (agent,),
+).fetchall()
+if not rows:
+    raise SystemExit(f"{agent}: no monitoring rows")
+events = []
+for metadata, prompt_summary, session_id, provider, model in rows:
+    if not session_id:
+        raise SystemExit(f"{agent}: missing session_id")
+    try:
+        payload = json.loads(metadata or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{agent}: invalid metadata JSON: {exc}") from exc
+    event_type = payload.get("event_type")
+    if event_type:
+        events.append((event_type, payload, prompt_summary))
+
+seen = {event_type for event_type, _, _ in events}
+for event_type in required:
+    if event_type not in seen:
+        raise SystemExit(f"{agent}: missing event_type={event_type}, seen={sorted(seen)}")
+
+if "prompt" in required and not any(
+    event_type == "prompt" and (prompt_summary or "").strip()
+    for event_type, _, prompt_summary in events
+):
+    raise SystemExit(f"{agent}: prompt event missing prompt_summary")
+if "output" in required and not any(
+    event_type == "output" and (payload.get("assistant_output") or "").strip()
+    for event_type, payload, _ in events
+):
+    raise SystemExit(f"{agent}: output event missing assistant_output")
+if "tool" in required and not any(
+    event_type == "tool"
+    and (payload.get("tool_name") or "").strip()
+    and (payload.get("tool_arguments") or "").strip()
+    for event_type, payload, _ in events
+):
+    raise SystemExit(f"{agent}: tool event missing tool_name/tool_arguments")
+if "tool_result" in required and not any(
+    event_type == "tool_result" and (payload.get("tool_result") or "").strip()
+    for event_type, payload, _ in events
+):
+    raise SystemExit(f"{agent}: tool_result event missing tool_result")
+PY
+                then
+                    ok "Local records.db: ${agent} monitoring metadata includes ${REQUIRED_EVENT_TYPES}"
+                else
+                    fail "Local records.db: ${agent} monitoring metadata missing required fields (${REQUIRED_EVENT_TYPES})"
+                    agent_fail=1
+                fi
             fi
         else
             ok "Local records.db: ${agent} is usage-only for this fixture"

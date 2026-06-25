@@ -16,15 +16,15 @@ aitrack 是通用、自托管、开源的员工 AI 编码监控与治理工具�
 | 工具注册、状态与心跳 | `POST /api/v1/ai-track/heartbeat` 与 `GET /devices`，`hooks` 是按工具 key 组织的动态状态图 |
 | 用量汇总与额度快照 | 标量用量域，用于请求数、token 数、成本估算或本地客户端活跃统计；纯 token 或纯用量数据不能伪装成监控事件 |
 
-Claude Code、Codex CLI、Cursor 当前具备原生编辑钩子适配器，可生成文件编辑类 `EditRecord`。其他已登记工具可进入注册、状态、心跳与本地用量来源路线；本地会话记录扫描可补齐提示词、工具调用、窗口和可还原编辑监控事件。
+Claude Code、Codex CLI、Cursor 当前具备原生编辑钩子适配器和原生提示词钩子，可生成文件编辑类 `EditRecord` 并补充提示词上下文。其他已登记工具可进入注册、状态、心跳与本地用量来源路线；只有稳定本地来源提供对应字段时，本地扫描才补齐提示词、工具调用、窗口和可还原编辑监控事件。
 
 本地用量来源包括本机会话目录、JSONL、SQLite 和本地客户端状态。客户端只读取本机可见文件和本地状态，不要求用户手动粘第三方服务 token。
 
 ### 工具支持范围
 
-v1.7.0 默认本地扫描覆盖 35 个工具 key，并接受 3 个显式别名。完整清单、原生钩子范围、用量汇总、额度快照、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
+v1.7.0 默认本地扫描覆盖 30 个已验证来源的工具 key，并接受 3 个显式别名。完整清单、原生钩子范围、用量汇总、额度快照、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
 
-这些工具 key 可以出现在 `heartbeat.hooks`、`GET /devices`、`/usage/*` 的 `agent` 字段和本地会话记录扫描生成的监控事件中。`hooks.<tool> = true` 只表示该工具在本机可见或对应钩子可用，不代表所有工具都具备原生编辑钩子。
+这些工具 key 可以出现在 `heartbeat.hooks`、`GET /devices`、`/usage/*` 的 `agent` 字段和本地会话记录扫描生成的监控事件中。`hooks.<tool> = true` 只表示该工具在本机可见或对应钩子可用，不代表所有工具都具备原生编辑钩子或完整本地正文来源。
 
 ---
 
@@ -760,7 +760,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/devices" \
 | `hostname` | 上报机器的 OS hostname（v1.1 新增） |
 | `client_version` | 客户端版本 |
 | `last_seen` | 最后一次心跳时间 |
-| `hooks` | 动态工具 key 到安装/可用状态的映射；Claude/Codex/Cursor 代表当前原生编辑钩子适配器状态，其他 key 代表注册、状态或本地用量来源状态 |
+| `hooks` | 动态工具 key 到安装/可用状态的映射；Claude/Codex/Cursor 代表当前原生编辑钩子和提示词钩子状态，其他 key 代表注册、状态或本地用量来源状态 |
 | `pending_count` | 客户端本地未同步的记录数（较大值提示上报异常） |
 | `silent` | `true` 表示该设备 7 天以上无心跳（或从未上报心跳），需人工跟进 |
 

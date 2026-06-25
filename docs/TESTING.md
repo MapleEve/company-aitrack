@@ -29,7 +29,7 @@ E2E 测试
 
 | 组件 | 测量方式 | 当前门禁（2026-06-17） | 失败行为 |
 |---|---|---|---|
-| **Rust 客户端** | `cargo llvm-cov --summary-only` → 解析 `TOTAL` 行 | **301 tests；LINE ≥ 90%** | 低于 90% 构建失败 |
+| **Rust 客户端** | `cargo llvm-cov --summary-only` → 解析 `TOTAL` 行 | **LINE ≥ 90%** | 低于 90% 构建失败 |
 | **Java 服务端** | JaCoCo `LINE COVEREDRATIO >= 0.90`（pom.xml `verify` 阶段） | **LINE ≥ 90%**（mvn verify） | 低于 90% 构建失败 |
 | **Go 服务端** | `go tool cover -func cover.out` → 解析 `total` 行 | **95.3% total** | 低于 90% 构建失败 |
 
@@ -301,8 +301,8 @@ cd e2e && go test ./... -run TestReal -v
 | `test_auto_detect_installs_found_tools` | 无工具标志时自动检测 ~/.claude/~/.codex/~/.cursor 并安装所有已找到的工具钩子 |
 | `test_auto_detect_no_tools_found` | 未检测到任何工具目录时报错退出（不静默成功） |
 | `test_claude_posttooluse_conflict_warning` | `init --claude` 检测到已有非 aitrack PostToolUse 钩子时向 stderr 输出警告 |
-| `test_cursor_dual_registration` | Cursor 钩子同时写入 `postToolUse` 和 `afterFileEdit` 两个数组 |
-| `test_remove_cursor_hook_cleans_both_arrays` | `remove_cursor_hook` 同时清理 `postToolUse` 和 `afterFileEdit` 两个数组 |
+| `test_cursor_dual_registration` | Cursor 钩子写入 `postToolUse`、`afterFileEdit` 和 `beforeSubmitPrompt` 三个数组 |
+| `test_remove_cursor_hook_cleans_both_arrays` | `remove_cursor_hook` 同时清理 `postToolUse`、`afterFileEdit` 和 `beforeSubmitPrompt` 三个数组 |
 
 ### Java HmacUtil
 
