@@ -23,7 +23,7 @@ aitrack is a general, self-hosted, open-source monitoring and governance tool fo
 
 <br>
 
-[Quick Start](#quick-start) · [Architecture](#architecture) · [Deploy](docs/DEPLOYMENT.md) · [API](docs/API.md) · [Contribute](CONTRIBUTING.md)
+[Quick Start](#quick-start) · [Support](docs/AGENT_SUPPORT.md) · [Architecture](#architecture) · [Deploy](docs/DEPLOYMENT.md) · [API](docs/API.md) · [Contribute](CONTRIBUTING.md)
 
 </div>
 
@@ -59,13 +59,31 @@ AI coding tools have entered engineering teams at scale, creating three governan
 
 ---
 
+## Current Support Scope
+
+Since v1.8.0, aitrack's collection model has three layers instead of only three fixed hooks:
+
+| Layer | Supported capability | Applies to |
+|-------|----------------------|------------|
+| Native edit evidence | Generate `EditRecord` payloads with diff, line counts, repository metadata, and `record_sig` | Claude Code, Codex CLI, Cursor |
+| Status heartbeat | Dynamically report tool registration, hook status, and local visibility | Registered canonical tool keys; explicit aliases are normalized only at input time |
+| Local usage scan | Read local sessions, exports, telemetry, or local databases by source type; the default list is merged into an agent-level complete data surface from field-level native, local-derived, and auxiliary usage/status sources | 35 default tool keys; `--tool` can narrow the scan |
+
+Default scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases for `roo-code`, `kilocode`, and `gjc`; these aliases are not registration or coverage keys.
+
+All 35 default keys enter the agent-level data surface through their own local structures. `claude`, `codex`, and `cursor` use native hooks for edit and prompt context; field-level, local-derived, and auxiliary sources are merged according to the fields that actually exist. Gemini ChatRecording JSONL is handled as a field-level local source, while telemetry logs provide usage and tool telemetry. Missing fields are not invented.
+
+See [AI coding tool support matrix](docs/AGENT_SUPPORT.md) for the full matrix, scan paths, performance limits, and administrator interpretation guidance.
+
+---
+
 ## Architecture
 
 aitrack consists of three independent components communicating via Protocol v1.2:
 
 | Component | Stack | Responsibility |
 |-----------|-------|----------------|
-| **Rust client** `aitrack` | Rust · single binary · no runtime dependencies · hexagonal architecture (v1.6) | Install hooks, capture edit events, HMAC signing, upload data, auto-update (ed25519) |
+| **Rust client** `aitrack` | Rust · single binary · no runtime dependencies · hexagonal architecture (v1.6) | Install hooks, capture edit events, scan local usage sources, HMAC signing, upload data, auto-update (ed25519) |
 | **Java server** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB (v1.3+) | 10-step validation chain, trusted attribution, effectiveness queries, semantic search (primary implementation) |
 | **Go server** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB (required) | Feature-equivalent lightweight alternative implementation with semantic search support |
 
@@ -79,20 +97,10 @@ aitrack consists of three independent components communicating via Protocol v1.2
 **Agent and data-domain boundaries:**
 
 - Claude Code, Codex CLI, and Cursor currently have native edit hook adapters that can produce `EditRecord` payloads with diff, line counts, repository metadata, and `record_sig`
-- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; typed local scans can recover prompt, tool, window, and reconstructable edit monitoring events even when no native hook is available
+- Other registered agents may participate in registry, status, heartbeat, and local usage source flows; typed local scans can recover prompt, assistant output, tool calls, tool results, windows, usage, model context, and reconstructable edit monitoring events when the corresponding fields exist
 - `EditRecord` is the edit evidence domain; usage rollups and snapshots are scalar usage domains, so token-only or usage-only data cannot be represented as edit records
-- Local usage sources include typed transcript/session directories, JSONL files, SQLite databases, and local client state; explicit import directories are opt-in roots, and aitrack does not require users to paste third-party service tokens
-
-**Current agent framework support:**
-
-| agent key | native edit hook | native prompt hook | local transcript scan | usage rollup | quota / subscription snapshot |
-|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | yes | yes | yes: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude` | yes | yes: local rate-limit snapshot |
-| `codex` | yes | no | yes: `.codex/sessions`, `~/.aitrack/sources/codex` | yes | yes: session rate-limit snapshot |
-| `cursor` | yes | no | yes: Cursor globalStorage, `~/.aitrack/sources/cursor` | yes | no |
-| default local-scan agents | no | no | typed native paths plus explicit structured import roots | token, message count, source cost | no |
-
-Default local scans cover `claude`, `codex`, `cursor`, `trae`, `qwen`, `opencode`, `qoder`, `qoder-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `warp`, and `zcode`. Explicit `--tool` also accepts `roocode`, `kilo-code`, and `gajae-code` as aliases. Registered keys without verified local source evidence are not counted as default local-scan support.
+- Local usage scans only read local files, local exports, and local state. aitrack does not require users to paste third-party service tokens.
+- `hooks.<tool> = true` means the tool is visible locally or the corresponding hook is available. It does not mean the tool has a native edit hook.
 
 ---
 
@@ -148,9 +156,9 @@ The server database has been upgraded to **ParadeDB** (PostgreSQL + pg_search + 
 
 Profile data is used solely to understand actual AI tool adoption — it is not used as a direct basis for individual performance evaluation.
 
-### Prompt and Local Transcript Monitoring (v1.7+)
+### Prompt and Local Transcript Monitoring (v1.8+)
 
-The client can optionally install a `UserPromptSubmit` hook and can also scan typed local session directories, JSONL files, SQLite databases, and local state files with `aitrack usage scan|sync` by agent, time window, and local cursor cache. The default mode is a recent-window incremental scan; explicit `--since/--until` flags provide small, targeted backfills. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events from typed local sources.
+The client can optionally install local prompt hooks and can scan local session directories, exports, telemetry logs, JSONL, SQLite databases, and local state files with `aitrack usage scan|sync` by agent, time window, and local cursor cache. The default mode is a recent-window incremental scan; explicit `--since/--until` flags provide small, targeted backfills, and a single scan window is capped at 30 days. `prompt_summary` carries bounded prompt content with edit monitoring records; agents without native hooks can still recover prompt, tool, window, and edit monitoring events when typed local sources provide those fields.
 
 The `usage` command also maintains a separate usage rollup / subscription snapshot data plane. It aggregates token buckets, message count, and source cost by day, agent, model, and account, then uploads them to Java or Go servers through `/api/v1/ai-track/usage/*`.
 
@@ -159,7 +167,7 @@ The `usage` command also maintains a separate usage rollup / subscription snapsh
 - The Rust client has been refactored to hexagonal architecture (domain / port / adapter three-layer), with all I/O routed through `StoragePort` / `UploadPort` interfaces — business logic fully decoupled from infrastructure
 - `aitrack update` subcommand: fetches the latest release from GitHub Releases and atomically replaces the current binary after ed25519 signature verification
 - Keyword library tamper protection: keywords are hardcoded as compile-time constants; `keyword_fingerprint()` computes a SHA-256 fingerprint for server-side verification
-- All three components have coverage ≥ 90% (Rust 301 tests / Java and Go package tests)
+- All three components have coverage ≥ 90% (Rust 342 tests / Java and Go package tests)
 
 ---
 
@@ -206,6 +214,14 @@ aitrack status
 
 # View local records (latest 20)
 aitrack inspect --limit 20
+
+# Scan local AI coding usage; without --tool it scans the 35 default tool keys
+aitrack usage scan
+
+# Scan, aggregate, and upload usage plus reconstructable monitoring events from local sessions
+aitrack usage sync \
+  --api-url https://aitrack.example.com \
+  --credential <credential>
 ```
 
 ### 4. View Team Data
@@ -267,10 +283,12 @@ bash e2e/run.sh both
 | Document | Description |
 |----------|-------------|
 | [CONTRACT.md](CONTRACT.md) | Client/server protocol contract (endpoints, field definitions, signing spec, hook templates) |
+| [docs/AGENT_SUPPORT.md](docs/AGENT_SUPPORT.md) | AI coding tool support matrix (native hooks, local scans, usage rollups, quota snapshots, scan limits) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture design (component diagram, data flow, deployment topology) |
 | [docs/API.md](docs/API.md) | API reference (all endpoints, request/response structures) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide (Docker, PostgreSQL migration, production configuration) |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide (local build, module structure, contribution workflow) |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Product roadmap (current v1.8 baseline, v1.9 reverse heartbeat and production-hardening plan) |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | Security model (threat modeling, HMAC spec, defense layers) |
 | [docs/TESTING.md](docs/TESTING.md) | Testing system (three-tier architecture, factory pattern, coverage thresholds, Docker verification) |
 | [CHANGELOG.md](CHANGELOG.md) | Version changelog |
