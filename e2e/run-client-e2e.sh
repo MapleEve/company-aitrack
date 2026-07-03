@@ -1502,7 +1502,7 @@ run_e2e_impl() {
             return 1
         fi
         pg_timeout=30
-        while ! docker exec "${PG_CONTAINER}" pg_isready -U aitrack -d aitrack_client_e2e >/dev/null 2>&1; do
+        while ! docker exec "${PG_CONTAINER}" pg_isready -h 127.0.0.1 -p 5432 -U aitrack -d aitrack_client_e2e >/dev/null 2>&1; do
             if [ "${pg_timeout}" -le 0 ]; then
                 log "ERROR: Postgres did not become ready for ${impl} client e2e"
                 docker logs "${PG_CONTAINER}" 2>&1 | tail -20 || true
