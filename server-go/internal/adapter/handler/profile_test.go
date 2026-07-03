@@ -38,7 +38,7 @@ func insertEditRecord(t *testing.T, env *testEnv, tokenKey, tool, filePath strin
 		tokenKey, "device-1", "host-1", tool, "1.0", "openai", "gpt-4",
 		"sess-1", "https://github.com/test/repo", "main", "abc123", filePath,
 		added, removed, "diff hunk", "{}",
-		fmt.Sprintf("%d", epochTs), "sig-abc", "ACCEPTED", "",
+		fmt.Sprintf("%d", epochTs), fmt.Sprintf("sig-%s-%s-%s-%d-%d-%d", tokenKey, tool, filePath, epochTs, added, removed), "ACCEPTED", "",
 		time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
@@ -213,7 +213,7 @@ func TestProfile_RejectedRecordsExcluded(t *testing.T) {
 		"aitrack_reject", "device-1", "host-1", "cursor", "1.0", "openai", "gpt-4",
 		"sess-2", "https://github.com/test/repo", "main", "abc123", "src/bad.go",
 		999, 999, "diff", "{}",
-		fmt.Sprintf("%d", now-50), "sig-rejected", "REJECTED", "",
+		fmt.Sprintf("%d", now-50), fmt.Sprintf("sig-rejected-%d", now-50), "REJECTED", "",
 		time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
