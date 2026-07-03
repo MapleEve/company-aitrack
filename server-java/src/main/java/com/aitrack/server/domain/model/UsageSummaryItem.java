@@ -14,6 +14,8 @@ public class UsageSummaryItem {
     private String agent;
     private String model;
     private String account;
+    @JsonProperty("usage_basis")
+    private String usageBasis;
     @JsonProperty("total_tokens")
     private long totalTokens;
     @JsonProperty("message_count")

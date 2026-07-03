@@ -87,7 +87,7 @@ impl HttpUploader {
     }
 
     /// Build the JSON payload from a slice of `Record`s.
-    fn build_payload(records: &[Record], device_id: &str) -> Result<Vec<u8>> {
+    pub(crate) fn build_payload(records: &[Record], device_id: &str) -> Result<Vec<u8>> {
         let edits: Vec<EditRecord> = records
             .iter()
             .map(|r| EditRecord {
@@ -118,6 +118,10 @@ impl HttpUploader {
             edits,
         };
         Ok(serde_json::to_vec(&payload)?)
+    }
+
+    pub(crate) fn payload_size_bytes(records: &[Record], device_id: &str) -> Result<usize> {
+        Ok(Self::build_payload(records, device_id)?.len())
     }
 
     /// Async POST — returns the parsed `UploadResponse` on HTTP 2xx.
@@ -261,8 +265,14 @@ impl UploadPort for HttpUploader {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::port::upload::UploadPort;
 
     use super::{HttpUploader, PostBatchResult};
     use crate::testkit::factories::EditRecordFactory;
@@ -275,6 +285,27 @@ mod tests {
 
     fn make_record(seed: u64) -> crate::domain::model::Record {
         EditRecordFactory::new(seed).build()
+    }
+
+    fn spawn_blocking_http_server(
+        status_line: &'static str,
+        response_body: &'static str,
+    ) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 8192];
+            let n = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                response_body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            request
+        });
+        (format!("http://{addr}"), handle)
     }
 
     // ── build_payload ─────────────────────────────────────────────────────────
@@ -483,5 +514,35 @@ mod tests {
         );
         let result = uploader.post_batch(&[make_record(9)], "dev-test").await;
         assert!(matches!(result, PostBatchResult::Success(_)));
+    }
+
+    #[test]
+    fn test_upload_batch_blocking_success_2xx() {
+        let (base_url, handle) =
+            spawn_blocking_http_server("200 OK", r#"{"accepted":1,"rejected":[],"flagged":[]}"#);
+        let uploader = HttpUploader::new(base_url, TEST_CREDENTIAL.to_string());
+
+        <HttpUploader as UploadPort>::upload_batch(&uploader, &[make_record(11)]).unwrap();
+
+        let request = handle.join().unwrap();
+        assert!(request.starts_with("POST /api/v1/ai-track/edits HTTP/1.1"));
+        assert!(request.contains("authorization: Bearer aitrack_testtoken12345"));
+        assert!(request.contains("x-aitrack-signature: "));
+    }
+
+    #[test]
+    fn test_upload_batch_blocking_non_2xx_returns_error() {
+        let (base_url, handle) =
+            spawn_blocking_http_server("503 Service Unavailable", r#"{"error":"busy"}"#);
+        let uploader = HttpUploader::new(base_url, TEST_CREDENTIAL.to_string());
+
+        let err =
+            <HttpUploader as UploadPort>::upload_batch(&uploader, &[make_record(12)]).unwrap_err();
+
+        assert!(err.to_string().contains("HTTP 503"));
+        assert!(handle
+            .join()
+            .unwrap()
+            .starts_with("POST /api/v1/ai-track/edits HTTP/1.1"));
     }
 }

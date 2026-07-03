@@ -1,4 +1,4 @@
-# server-go/internal/ — Go 服务端内部包
+# server-go/internal/ — Go 服务端包约定
 
 六边形架构四层：
 

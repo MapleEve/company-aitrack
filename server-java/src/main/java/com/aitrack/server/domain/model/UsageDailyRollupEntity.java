@@ -9,7 +9,7 @@ import java.time.Instant;
 @Entity
 @Table(name = "usage_daily_rollups",
     uniqueConstraints = @UniqueConstraint(name = "uk_usage_daily_rollup", columnNames = {
-        "token_key", "device_id", "\"day\"", "agent", "model", "account"
+        "token_key", "device_id", "\"day\"", "agent", "model", "account", "usage_basis"
     }),
     indexes = {
         @Index(name = "idx_usage_daily_rollups_token_key", columnList = "token_key"),
@@ -40,6 +40,9 @@ public class UsageDailyRollupEntity {
 
     @Column(nullable = false, length = 255)
     private String account = "";
+
+    @Column(name = "usage_basis", nullable = false, length = 32, columnDefinition = "varchar(32) default 'native'")
+    private String usageBasis = "native";
 
     @Column(name = "tokens_in", nullable = false)
     private long tokensIn;

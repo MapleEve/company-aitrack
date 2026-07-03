@@ -49,7 +49,7 @@ cargo llvm-cov --open
 
 覆盖率门槛：LINE ≥ 90%，低于此值 Docker 构建会失败。
 
-### 客户端模块结构（v1.7）
+### 客户端模块结构（v1.8）
 
 客户端采用六边形架构。旧 `db/`、`adapters/`、顶层 `crypto.rs`、顶层 `diff.rs` 已删除，核心逻辑按领域、端口、适配器和本地来源扫描拆分：
 
@@ -73,11 +73,11 @@ client/src/
 └── testkit/         ← factories.rs（测试工厂，使用 domain::model）
 ```
 
-v1.7.0 当前支持边界：
+v1.8.0 当前支持边界：
 
 - 原生编辑钩子适配器：`claude`、`codex`、`cursor`。
 - 原生提示词钩子：`claude`、`codex`、`cursor`。
-- 默认本地扫描：30 个已验证来源的规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- 默认本地扫描：35 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名并归并到规范 key，避免同一工具重复扫描和重复汇总。
 - 本地来源类型：本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态。
 - 默认扫描窗口：近 30 天；显式 `--since/--until` 用于小范围回填；扫描游标缓存会跳过未变化来源。
 
@@ -90,7 +90,7 @@ v1.7.0 当前支持边界：
 | `adapter/` | SQLite、HTTP、事件适配、本地用量来源 | Rust 覆盖率 LINE ≥ 90% |
 | **TOTAL** | client 全量单测 + 覆盖率 | **LINE ≥ 90%** |
 
-> v1.7 本地来源扩展后，Rust 客户端单测覆盖动态工具注册表、用量汇总、会话记录监控、窗口化扫描和文件游标缓存。
+> v1.8 本地来源扩展后，Rust 客户端单测覆盖动态工具注册表、用量汇总、会话记录监控、窗口化扫描、文件游标缓存和 agent 级完整数据面。
 
 测试均为 `#[cfg(test)]` 内联模块。HTTP mock 使用 `wiremock`，临时文件使用 `tempfile`。
 
@@ -127,7 +127,7 @@ let big = tampered_oversized_lines(1);  // added_lines = 99,999,999
 ### usage 子命令
 
 ```bash
-# 扫描默认 30 个工具 key，只写入本地 usage.sqlite
+# 扫描默认 35 个工具 key，只写入本地 usage.sqlite
 ./target/debug/aitrack usage scan
 
 # 针对单个工具做小范围回填

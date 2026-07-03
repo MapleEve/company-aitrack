@@ -10,6 +10,12 @@ import (
 	"github.com/aitrack/server/internal/domain/service"
 )
 
+const (
+	maxStoredDiffHunkChars = 8192
+	maxStoredMetadataChars = 4096
+	maxStoredPromptChars   = 4096
+)
+
 // IngestService processes a batch of edits through the validation chain and persists them.
 type IngestService struct {
 	validation *service.ValidationService
@@ -28,6 +34,7 @@ func (s *IngestService) Ingest(token *model.Token, req *model.EditBatchRequest) 
 		Rejected: []model.IndexedReason{},
 		Flagged:  []model.IndexedReason{},
 	}
+	savedAny := false
 
 	for i, edit := range req.Edits {
 		editCopy := edit
@@ -53,6 +60,7 @@ func (s *IngestService) Ingest(token *model.Token, req *model.EditBatchRequest) 
 				})
 				continue
 			}
+			savedAny = true
 			resp.Flagged = append(resp.Flagged, model.IndexedReason{
 				Index:  i,
 				Reason: strings.Join(result.Reasons, ","),
@@ -65,7 +73,17 @@ func (s *IngestService) Ingest(token *model.Token, req *model.EditBatchRequest) 
 				})
 				continue
 			}
+			savedAny = true
 			resp.Accepted++
+		}
+	}
+
+	if savedAny {
+		if err := s.applyEditRawRetention(); err != nil {
+			resp.Rejected = append(resp.Rejected, model.IndexedReason{
+				Index:  -1,
+				Reason: fmt.Sprintf("retention_error: %v", err),
+			})
 		}
 	}
 
@@ -96,18 +114,36 @@ func (s *IngestService) saveEdit(token *model.Token, edit *model.EditDTO, status
 		rec.Model = *edit.Model
 	}
 	if edit.DiffHunk != nil {
-		rec.DiffHunk = *edit.DiffHunk
+		rec.DiffHunk = truncateRunes(*edit.DiffHunk, maxStoredDiffHunkChars)
 	}
 	if edit.Metadata != nil {
-		rec.Metadata = *edit.Metadata
+		rec.Metadata = truncateRunes(*edit.Metadata, maxStoredMetadataChars)
 	}
 	if edit.PromptSummary != nil {
-		rec.PromptSummary = edit.PromptSummary
+		promptSummary := truncateRunes(*edit.PromptSummary, maxStoredPromptChars)
+		rec.PromptSummary = &promptSummary
 	}
 	if len(flags) > 0 {
 		rec.Flags = strings.Join(flags, ",")
 	}
 	return s.editRepo.Save(rec)
+}
+
+func (s *IngestService) applyEditRawRetention() error {
+	retentionRepo, ok := s.editRepo.(port.EditRecordRetentionPort)
+	if !ok {
+		return nil
+	}
+	_, err := retentionRepo.ApplyRawRetention(time.Now().UTC())
+	return err
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes])
 }
 
 // QueryEdits returns a paginated list of stored edit records.

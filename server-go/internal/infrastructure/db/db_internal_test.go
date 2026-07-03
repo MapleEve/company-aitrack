@@ -62,9 +62,25 @@ func TestPostgresDDL(t *testing.T) {
 		"embedding",
 		"BIGSERIAL",
 		"BYTEA",
+		"usage_basis",
+		"UNIQUE(token_key, device_id, day, agent, model, account, usage_basis)",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("postgresDDL missing %q", want)
+		}
+	}
+}
+
+func TestPostgresDDL_DropsLegacyUsageDailyRollupConstraints(t *testing.T) {
+	joined := strings.Join(postgresDDL(), "\n")
+	for _, name := range []string{
+		"usage_daily_rollups_token_key_device_id_day_agent_model_account_key",
+		"usage_daily_rollups_token_key_device_id_day_agent_model_acc_key",
+		"uk_usage_daily_rollup",
+	} {
+		want := "ALTER TABLE usage_daily_rollups DROP CONSTRAINT IF EXISTS " + name
+		if !strings.Contains(joined, want) {
+			t.Errorf("postgresDDL missing legacy usage rollup constraint drop %q", want)
 		}
 	}
 }

@@ -58,6 +58,9 @@ public class EditRecordView {
 
     private String metadata;
 
+    @JsonProperty("prompt_summary")
+    private String promptSummary;
+
     private String timestamp;
 
     @JsonProperty("record_sig")
@@ -89,6 +92,7 @@ public class EditRecordView {
         v.removedLines = e.getRemovedLines();
         v.diffHunk = e.getDiffHunk();
         v.metadata = e.getMetadata();
+        v.promptSummary = e.getPromptSummary();
         v.timestamp = e.getTimestamp();
         v.recordSig = e.getRecordSig();
         v.status = e.getStatus() != null ? e.getStatus().name() : null;

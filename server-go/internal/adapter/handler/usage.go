@@ -133,9 +133,13 @@ func (h *UsageHandler) readUsageBody(w http.ResponseWriter, r *http.Request) ([]
 			return nil, nil, false
 		}
 		defer reader.Close()
-		rawJSON, err := io.ReadAll(reader)
+		rawJSON, err := io.ReadAll(io.LimitReader(reader, maxBodyBytes+1))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid gzip body")
+			return nil, nil, false
+		}
+		if len(rawJSON) > maxBodyBytes {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return nil, nil, false
 		}
 		return rawJSON, token, true

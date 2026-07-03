@@ -7,7 +7,7 @@
 - 原生编辑证据：`claude`、`codex`、`cursor` 适配器可生成带 `diff_hunk`、行数、仓库信息和 `record_sig` 的 `EditRecord`。
 - 原生提示词钩子：`claude`、`codex`、`cursor` 支持提示词上下文采集。
 - 动态状态心跳：`aitrack status` 和 `aitrack heartbeat` 会上报本机工具可见性、钩子状态和待同步数量。
-- 本地用量扫描：`aitrack usage scan` / `aitrack usage sync` 默认扫描 30 个已验证来源的工具 key；其它已登记工具只保留状态或显式入口，不作为默认采集能力声明。
+- 本地用量扫描：`aitrack usage scan` / `aitrack usage sync` 默认扫描 35 个规范工具 key；默认列表按字段级、本地派生和辅助状态/用量来源分层处理，并合并成 agent 级完整数据面；显式 `--tool` 仍接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 
 完整工具矩阵、默认 key、别名和扫描边界见 [AI 编码工具支持矩阵](../docs/AGENT_SUPPORT.md)。
 
@@ -35,7 +35,7 @@ aitrack usage sync --api-url https://aitrack.example.com --credential <credentia
 aitrack remove --claude
 ```
 
-`usage scan` 只写入本地用量账本，不上传；`usage sync` 会先扫描，再上传用量汇总、额度快照和本地会话中可还原的监控事件。默认扫描按单轮预算分批推进，返回 `scan_budget_exhausted=true` 时重复运行会继续处理未缓存来源；需要限制范围时可重复指定 `--tool`，也可以用 `--since` / `--until` 做小窗口回填。
+`usage scan` 只写入本地用量账本，不上传；`usage sync` 会先扫描，再上传用量汇总、额度快照和本地来源中可还原的监控事件。默认扫描按单轮预算分批推进，返回 `scan_budget_exhausted=true` 时重复运行会继续处理未缓存来源；需要限制范围时可重复指定 `--tool`，也可以用 `--since` / `--until` 做小窗口回填。默认扫描会按 agent 合并本地来源，覆盖提示词、输出、工具结果、用量、模型、会话和编辑监控字段。
 
 ## 本地数据
 
@@ -45,7 +45,7 @@ aitrack remove --claude
 | `~/.aitrack/records.db` | 保存原生钩子和本地扫描生成的监控记录 |
 | `~/.aitrack/usage.sqlite` | 保存本地来源级用量贡献、汇总、额度快照、同步队列和扫描游标；正常扫描不长期保存逐条会话明细 |
 
-客户端只读取本机可见文件和本地状态，不要求用户手动粘贴第三方服务 token。
+客户端只读取本机可见文件和本地状态，不要求用户手动粘贴第三方服务 token。Gemini 的 ChatRecording JSONL 当前按字段级本地来源处理，telemetry log 只作为用量和工具遥测补充来源。各来源的完整分层见支持矩阵。
 
 ## 上报协议
 

@@ -108,6 +108,8 @@ pub enum UsageCommand {
     Scan(UsageScanArgs),
     /// Scan, roll up, enqueue, and upload scalar usage data
     Sync(UsageSyncArgs),
+    /// Probe local source structure safely and print a redacted JSON schema report
+    Probe(UsageProbeArgs),
     /// Show local usage ledger status
     Status,
 }
@@ -141,6 +143,28 @@ pub struct UsageSyncArgs {
     /// Combined credential string: "<token>-<hmac_secret>"
     #[arg(long)]
     pub credential: Option<String>,
+}
+
+#[derive(Args, Clone)]
+pub struct UsageProbeArgs {
+    /// Restrict probe to one or more agent keys; omit to probe schema-pending defaults
+    #[arg(long = "tool", value_name = "name")]
+    pub tool: Vec<String>,
+    /// Include files modified on or after YYYY-MM-DD
+    #[arg(long)]
+    pub since: Option<String>,
+    /// Include files modified on or before YYYY-MM-DD
+    #[arg(long)]
+    pub until: Option<String>,
+    /// Maximum source files inspected per agent
+    #[arg(long, default_value_t = 20)]
+    pub max_files: usize,
+    /// Maximum bytes read from one JSON/JSONL/SQLite source
+    #[arg(long, default_value_t = 1_048_576)]
+    pub max_bytes: u64,
+    /// Maximum JSON/JSONL records or SQLite rows counted per source/table
+    #[arg(long, default_value_t = 200)]
+    pub max_records: usize,
 }
 
 #[derive(Args)]
@@ -190,5 +214,33 @@ mod tests {
             panic!("expected usage scan");
         };
         assert_eq!(scan.tool, vec!["codex".to_string(), "cursor".to_string()]);
+    }
+
+    #[test]
+    fn usage_probe_accepts_limits_and_octofriend_alias() {
+        let cli = Cli::parse_from([
+            "aitrack",
+            "usage",
+            "probe",
+            "--tool",
+            "octofriend",
+            "--max-files",
+            "3",
+            "--max-bytes",
+            "4096",
+            "--max-records",
+            "7",
+        ]);
+
+        let Command::Usage(args) = cli.command else {
+            panic!("expected usage command");
+        };
+        let UsageCommand::Probe(probe) = args.command else {
+            panic!("expected usage probe");
+        };
+        assert_eq!(probe.tool, vec!["octofriend".to_string()]);
+        assert_eq!(probe.max_files, 3);
+        assert_eq!(probe.max_bytes, 4096);
+        assert_eq!(probe.max_records, 7);
     }
 }

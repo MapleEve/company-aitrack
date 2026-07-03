@@ -74,6 +74,9 @@ spring:
 | `GET` | `/api/v1/ai-track/devices` | Bearer | 查询设备与工具状态 |
 | `POST` | `/api/v1/ai-track/usage/rollup` | Bearer + HMAC | 接收本地用量汇总 |
 | `POST` | `/api/v1/ai-track/usage/subscription` | Bearer + HMAC | 接收额度或订阅快照 |
+| `GET` | `/api/v1/ai-track/usage/summary` | Bearer | 查询用量汇总 |
+
+用量汇总条目支持 `usage_basis` 字段，取值为 `native` 或 `local_derived`；上报时为空或缺失会按 `native` 处理。汇总查询的 `items` 会返回 `usage_basis`，响应顶层总计会聚合所有依据类型。
 
 签发示例：
 

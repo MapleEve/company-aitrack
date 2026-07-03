@@ -36,15 +36,19 @@ REQUIRED_LOCAL_SOURCE_AGENTS=(
     cursor
     trae
     qwen
+    antigravity
     opencode
     qoder
     qoder-cn
+    qoder-work
+    qoder-work-cn
     wukong
     hermes
     openclaw
     gemini
     copilot
     cline
+    roo-code
     kiro
     zed
     goose
@@ -59,6 +63,7 @@ REQUIRED_LOCAL_SOURCE_AGENTS=(
     kimi
     gjc
     grok
+    synthetic
     warp
     zcode
 )
@@ -107,7 +112,17 @@ fi
 docker_build() {
     local dockerfile="$1"
     local tag="$2"
-    (cd "${REPO_ROOT}" && docker build --progress=plain -f "${dockerfile}" -t "${tag}" .)
+    local log_file="${TMPDIR:-/tmp}/aitrack-docker-build-${tag//[:\\/]/-}.log"
+    if (cd "${REPO_ROOT}" && docker build --progress=plain -f "${dockerfile}" -t "${tag}" . 2>&1 | tee "${log_file}"); then
+        return 0
+    fi
+    if grep -Eq "Premature end of Content-Length|Could not transfer artifact|repo.maven.apache.org|Connection reset|Read timed out|502 Bad Gateway|503 Service Unavailable" "${log_file}"; then
+        echo "EXTERNAL_DEPENDENCY_FAILURE: Docker build for ${tag} failed while downloading Maven Central dependencies."
+        echo "EXTERNAL_DEPENDENCY_FAILURE_LOG: ${log_file}"
+    else
+        echo "DOCKER_BUILD_FAILURE: Docker build for ${tag} failed. Log: ${log_file}"
+    fi
+    return 1
 }
 
 # ── Step 1: build the real aitrack binary (once) ──────────────────────────────
@@ -175,27 +190,464 @@ write_usage_source_fixture() {
     python3 "${SCRIPT_DIR}/local_usage_matrix.py" "${root}" "${agent}" >/dev/null
 }
 
+expected_usage_sources_json() {
+    local agent="$1"
+    python3 "${SCRIPT_DIR}/local_usage_matrix.py" --expected-sources "${agent}"
+}
+
+validate_expected_usage_sources() {
+    local root="$1"
+    local agent="$2"
+    local expected_json="$3"
+    EXPECTED_SOURCES_JSON="${expected_json}" python3 - "${root}" "${agent}" <<'PY'
+import json
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+agent = sys.argv[2]
+try:
+    expected = json.loads(os.environ["EXPECTED_SOURCES_JSON"])
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"{agent}: expected source JSON is invalid: {exc}") from exc
+
+if not isinstance(expected, list) or not expected:
+    raise SystemExit(f"{agent}: expected source JSON must be a non-empty list")
+
+required_keys = {
+    "agent",
+    "label",
+    "kind",
+    "path_substring",
+    "expects_usage",
+    "expects_monitoring",
+    "session_id",
+    "required_usage_fields",
+    "required_record_fields",
+    "optional_record_fields",
+}
+all_paths = [str(path) for path in root.rglob("*")]
+usage_db = root / "usage.sqlite"
+records_db = root / "records.db"
+
+
+def normalized_path(value):
+    return os.path.normcase(os.path.normpath(str(value)))
+
+
+def equivalent_source_paths(value):
+    path = Path(value)
+    candidates = {normalized_path(path)}
+    root_resolved = root.resolve(strict=False)
+    if path.is_absolute():
+        resolved = path.resolve(strict=False)
+        candidates.add(normalized_path(resolved))
+        try:
+            candidates.add(normalized_path(resolved.relative_to(root_resolved)))
+        except ValueError:
+            pass
+    else:
+        resolved = (root / path).resolve(strict=False)
+        candidates.add(normalized_path(resolved))
+        try:
+            candidates.add(normalized_path(resolved.relative_to(root_resolved)))
+        except ValueError:
+            pass
+    return {candidate for candidate in candidates if candidate}
+
+
+def source_path_matches(row_path, path_substring, fixture_paths):
+    _ = path_substring
+    row_candidates = equivalent_source_paths(row_path)
+    for fixture_path in fixture_paths:
+        if row_candidates & equivalent_source_paths(fixture_path):
+            return True
+    return False
+
+
+def nonzero_number(value):
+    return value is not None and float(value) > 0
+
+
+def require_string_list(entry, key, source_name):
+    value = entry.get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise SystemExit(f"{source_name}: {key} must be a string list")
+    return value
+
+
+def metadata_payload(metadata, source_name):
+    try:
+        return json.loads(metadata or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{source_name}: invalid metadata JSON: {exc}") from exc
+
+
+SOURCE_PATH_METADATA_KEYS = {
+    "source_path",
+    "sourcePath",
+    "source_file",
+    "sourceFile",
+    "source_uri",
+    "sourceUri",
+    "transcript_path",
+    "transcriptPath",
+}
+SOURCE_NAME_METADATA_KEYS = {
+    "source_name",
+    "sourceName",
+    "source_label",
+    "sourceLabel",
+    "source_id",
+    "sourceId",
+}
+
+
+def string_values(value):
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            yield stripped
+    elif isinstance(value, list):
+        for item in value:
+            yield from string_values(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from string_values(item)
+
+
+def source_identifier_values(payload, keys):
+    if not isinstance(payload, dict):
+        return []
+    values = []
+    for key in keys:
+        if key in payload:
+            values.extend(string_values(payload[key]))
+    return values
+
+
+def source_identity_matches(value, entry, source_name):
+    normalized = value.strip().lower()
+    expected = {
+        source_name.lower(),
+        entry["label"].strip().lower(),
+        f"{entry['agent']}/{entry['label']}".lower(),
+    }
+    return normalized in expected
+
+
+def source_label_is_unique(entry):
+    return (
+        sum(
+            1
+            for candidate in expected
+            if candidate.get("agent") == entry["agent"]
+            and candidate.get("label") == entry["label"]
+        )
+        == 1
+    )
+
+
+def source_path_value_matches(value, path_substring, fixture_paths):
+    if path_substring in value:
+        return True
+    value_candidates = equivalent_source_paths(value)
+    for fixture_path in fixture_paths:
+        if value_candidates & equivalent_source_paths(fixture_path):
+            return True
+    return False
+
+
+def record_source_matches(row, entry, fixture_paths, source_name):
+    metadata, _prompt_summary, _session_id, _provider, _model, _timestamp, file_path, diff_hunk = row
+    payload = metadata_payload(metadata, source_name)
+    path_substring = entry["path_substring"]
+
+    metadata_path_values = source_identifier_values(payload, SOURCE_PATH_METADATA_KEYS)
+    if metadata_path_values:
+        return any(
+            source_path_value_matches(value, path_substring, fixture_paths)
+            for value in metadata_path_values
+        )
+
+    metadata_name_values = source_identifier_values(payload, SOURCE_NAME_METADATA_KEYS)
+    if metadata_name_values and source_label_is_unique(entry):
+        return any(
+            source_identity_matches(value, entry, source_name)
+            for value in metadata_name_values
+        )
+
+    fallback_values = [
+        value.strip()
+        for value in [file_path or "", diff_hunk or ""]
+        if value and value.strip()
+    ]
+    return any(
+        source_path_value_matches(value, path_substring, fixture_paths)
+        for value in fallback_values
+    )
+
+
+def describe_record_source_evidence(rows):
+    evidence = set()
+    for row in rows:
+        metadata, _prompt_summary, _session_id, _provider, _model, _timestamp, file_path, diff_hunk = row
+        payload = metadata_payload(metadata, "record source evidence")
+        for key in sorted(SOURCE_PATH_METADATA_KEYS | SOURCE_NAME_METADATA_KEYS):
+            if isinstance(payload, dict) and key in payload:
+                evidence.add(f"metadata.{key}")
+        if (file_path or "").strip():
+            evidence.add("file_path")
+        if (diff_hunk or "").strip():
+            evidence.add("diff_hunk")
+    return sorted(evidence)
+
+
+def record_field_present(field, rows, expected_session_id):
+    for row in rows:
+        metadata, prompt_summary, session_id, provider, model, timestamp, file_path, diff_hunk = row
+        payload = metadata_payload(metadata, f"{agent}/{expected_session_id}")
+        if field == "session_id" and session_id == expected_session_id:
+            return True
+        if field == "timestamp_ms" and ((timestamp or "").strip() or nonzero_number(payload.get("timestamp_ms"))):
+            return True
+        if field == "provider" and (provider or "").strip():
+            return True
+        if field == "model" and (model or "").strip():
+            return True
+        if field == "prompt_summary" and (prompt_summary or "").strip():
+            return True
+        if field == "assistant_output" and (payload.get("assistant_output") or "").strip():
+            return True
+        if field == "tool_name" and (payload.get("tool_name") or "").strip():
+            return True
+        if field == "tool_arguments" and (payload.get("tool_arguments") or "").strip():
+            return True
+        if field == "tool_result" and (payload.get("tool_result") or "").strip():
+            return True
+        if field == "file_path_or_diff" and (
+            (file_path or "").strip()
+            or (diff_hunk or "").strip()
+            or (payload.get("file_path") or "").strip()
+            or (payload.get("diff_hunk") or payload.get("diff") or "").strip()
+        ):
+            return True
+    return False
+
+KNOWN_USAGE_FIELDS = {
+    "tokens_in",
+    "tokens_out",
+    "message_count",
+    "source_cost",
+    "cache",
+    "reasoning",
+    "account",
+    "day",
+    "usage_basis",
+}
+KNOWN_RECORD_FIELDS = {
+    "session_id",
+    "timestamp_ms",
+    "provider",
+    "model",
+    "prompt_summary",
+    "assistant_output",
+    "tool_name",
+    "tool_arguments",
+    "tool_result",
+    "file_path_or_diff",
+}
+
+for entry in expected:
+    missing = sorted(required_keys - set(entry))
+    if missing:
+        raise SystemExit(f"{agent}: expected source entry missing keys {missing}: {entry}")
+    if entry["agent"] != agent:
+        raise SystemExit(f"{agent}: expected source row uses mismatched agent {entry['agent']}")
+
+    label = entry["label"]
+    path_substring = entry["path_substring"]
+    source_name = f"{agent}/{label}"
+    required_usage_fields = require_string_list(entry, "required_usage_fields", source_name)
+    required_record_fields = require_string_list(entry, "required_record_fields", source_name)
+    require_string_list(entry, "optional_record_fields", source_name)
+    unknown_usage_fields = sorted(set(required_usage_fields) - KNOWN_USAGE_FIELDS)
+    if unknown_usage_fields:
+        raise SystemExit(f"{source_name}: required_usage_fields has no validator mapping: {unknown_usage_fields}")
+    unknown_record_fields = sorted(set(required_record_fields) - KNOWN_RECORD_FIELDS)
+    if unknown_record_fields:
+        raise SystemExit(f"{source_name}: required_record_fields has no validator mapping: {unknown_record_fields}")
+    if entry.get("blocker"):
+        raise SystemExit(f"{source_name}: BLOCKER {entry['blocker']}")
+    fixture_paths = [path for path in all_paths if path_substring in path]
+    if not fixture_paths:
+        raise SystemExit(f"{source_name}: fixture path not found containing {path_substring!r}")
+
+    if entry["expects_usage"]:
+        if not usage_db.exists():
+            raise SystemExit(f"{source_name}: usage.sqlite missing")
+        rollup_rows = sqlite3.connect(usage_db).execute(
+            """
+            SELECT path, day, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write,
+                   tokens_reasoning, message_count, source_cost, usage_basis, account
+            FROM usage_rollup_sources
+            WHERE tool = ? AND agent = ?
+            """,
+            (agent, agent),
+        ).fetchall()
+        source_rows = [
+            row
+            for row in rollup_rows
+            if source_path_matches(row[0], path_substring, fixture_paths)
+        ]
+        if not source_rows:
+            raise SystemExit(
+                f"{source_name}: missing usage_rollup_sources row for expected source path "
+                f"{path_substring!r}"
+            )
+        columns = {
+            "tokens_in": 2,
+            "tokens_out": 3,
+            "message_count": 7,
+            "source_cost": 8,
+        }
+        for field, column in columns.items():
+            if field in required_usage_fields and not any(
+                nonzero_number(row[column]) for row in source_rows
+            ):
+                raise SystemExit(f"{source_name}: usage field {field} missing positive value")
+        if "cache" in required_usage_fields and not any(
+            nonzero_number(row[4]) or nonzero_number(row[5]) for row in source_rows
+        ):
+            raise SystemExit(f"{source_name}: usage field cache missing positive value")
+        if "reasoning" in required_usage_fields and not any(
+            nonzero_number(row[6]) for row in source_rows
+        ):
+            raise SystemExit(f"{source_name}: usage field reasoning missing positive value")
+        if "day" in required_usage_fields and not any((row[1] or "").strip() for row in source_rows):
+            raise SystemExit(f"{source_name}: usage field day missing time window value")
+        if "usage_basis" in required_usage_fields:
+            basis = (entry.get("usage_basis") or "").lower()
+            if basis not in {"native", "local_derived"}:
+                raise SystemExit(f"{source_name}: expected row missing source-level usage_basis")
+            if not any((row[9] or "").lower() == basis for row in source_rows):
+                seen_basis = sorted({(row[9] or "").lower() for row in source_rows})
+                raise SystemExit(
+                    f"{source_name}: usage_basis expected {basis!r}, seen={seen_basis}"
+                )
+        if "account" in required_usage_fields and not any((row[10] or "").strip() for row in source_rows):
+            raise SystemExit(f"{source_name}: usage field account missing value")
+
+    if entry["expects_monitoring"]:
+        required_events = entry.get("required_event_types")
+        if not required_events:
+            raise SystemExit(f"{source_name}: required_event_types missing for monitoring source")
+        if not records_db.exists():
+            raise SystemExit(f"{source_name}: records.db missing")
+        rows = sqlite3.connect(records_db).execute(
+            """
+            SELECT metadata, prompt_summary, session_id, provider, model, timestamp, file_path, diff_hunk
+            FROM records
+            WHERE tool = ? AND session_id = ?
+            """,
+            (agent, entry["session_id"]),
+        ).fetchall()
+        if not rows:
+            raise SystemExit(
+                f"{source_name}: no records row for session_id={entry['session_id']!r}"
+            )
+        source_rows = [
+            row
+            for row in rows
+            if record_source_matches(row, entry, fixture_paths, source_name)
+        ]
+        if not source_rows:
+            evidence = describe_record_source_evidence(rows)
+            raise SystemExit(
+                f"{source_name}: no source-bound records row for "
+                f"path_substring={path_substring!r} session_id={entry['session_id']!r}; "
+                f"source evidence seen={evidence or ['none']}. "
+                "records must carry metadata source_path/source_name or a file_path/diff_hunk "
+                "that traces back to the expected source"
+            )
+        seen = set()
+        for metadata, *_ in source_rows:
+            payload = metadata_payload(metadata, source_name)
+            event_type = payload.get("event_type")
+            if event_type:
+                seen.add(event_type)
+        missing_events = sorted(set(required_events) - seen)
+        if missing_events:
+            raise SystemExit(
+                f"{source_name}: missing monitoring event types {missing_events}, seen={sorted(seen)}"
+            )
+        missing_fields = [
+            field
+            for field in required_record_fields
+            if not record_field_present(field, source_rows, entry["session_id"])
+        ]
+        if missing_fields:
+            raise SystemExit(
+                f"{source_name}: missing required record fields {missing_fields} "
+                f"for session_id={entry['session_id']!r}"
+            )
+
+print(f"{agent}: checked {len(expected)} expected source entries")
+PY
+}
+
 usage_fixture_requires_positive_tokens() {
     case "$1" in
-        crush|warp) return 1 ;;
+        codebuff) return 1 ;;
         *) return 0 ;;
     esac
 }
 
-usage_fixture_min_monitoring_events() {
+usage_fixture_expects_usage() {
     case "$1" in
-        gemini|qwen|trae) echo "3" ;;
-        wukong) echo "1" ;;
-        *) echo "0" ;;
+        *) return 0 ;;
     esac
 }
 
-usage_fixture_required_event_types() {
+expected_usage_min_monitoring_events() {
+    local expected_json="$1"
+    EXPECTED_SOURCES_JSON="${expected_json}" python3 - <<'PY'
+import json
+import os
+
+rows = json.loads(os.environ["EXPECTED_SOURCES_JSON"])
+total = 0
+for row in rows:
+    if row.get("expects_monitoring"):
+        total += len(row.get("required_event_types") or [])
+print(total)
+PY
+}
+
+expected_usage_required_event_types() {
+    local expected_json="$1"
+    EXPECTED_SOURCES_JSON="${expected_json}" python3 - <<'PY'
+import json
+import os
+
+rows = json.loads(os.environ["EXPECTED_SOURCES_JSON"])
+ordered = []
+for row in rows:
+    if not row.get("expects_monitoring"):
+        continue
+    for event_type in row.get("required_event_types") or []:
+        if event_type not in ordered:
+            ordered.append(event_type)
+print(",".join(ordered))
+PY
+}
+
+usage_fixture_expects_reasoning_event() {
     case "$1" in
-        gemini|qwen) echo "prompt,tool,output" ;;
-        trae) echo "prompt,output,tool" ;;
-        wukong) echo "output" ;;
-        *) echo "" ;;
+        claude|codex|opencode|hermes|goose|pi|mux|crush) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
@@ -632,35 +1084,63 @@ print('yes' if found else 'no')
 
     for agent in "${REQUIRED_LOCAL_SOURCE_AGENTS[@]}"; do
         agent_fail=0
+        EXPECTED_SOURCES_JSON=""
         write_usage_source_fixture "${AITRACK_HOME}" "${agent}"
 
-        if (cd "${GIT_REPO}" && env "${E2E_ENV[@]}" "AITRACK_SCAN_HOME=${AITRACK_HOME}" "${AITRACK_BIN}" usage sync --tool "${agent}" >/tmp/aitrack-usage-sync-${impl}-${agent}.json); then
-            ok "usage sync --tool ${agent} exited 0"
+        if (cd "${GIT_REPO}" && env "${E2E_ENV[@]}" "AITRACK_SCAN_HOME=${AITRACK_HOME}" "${AITRACK_BIN}" usage scan --tool "${agent}" >/tmp/aitrack-usage-scan-${impl}-${agent}.json); then
+            ok "usage scan --tool ${agent} exited 0"
         else
-            fail "usage sync --tool ${agent} failed"
+            fail "usage scan --tool ${agent} failed"
             agent_fail=1
             continue
+        fi
+
+        if EXPECTED_SOURCES_JSON="$(expected_usage_sources_json "${agent}")"; then
+            if validate_expected_usage_sources "${AITRACK_HOME}" "${agent}" "${EXPECTED_SOURCES_JSON}"; then
+                ok "Local source-level expectations: ${agent} matched expected fixture rows"
+            else
+                fail "Local source-level expectations: ${agent} expected-source validation failed"
+                agent_fail=1
+            fi
+        else
+            fail "Local source-level expectations: ${agent} expected-source JSON generation failed"
+            agent_fail=1
         fi
 
         DETAIL_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
             "SELECT COUNT(*) FROM usage_sessions WHERE agent='${agent}';" 2>/dev/null || echo "0")
         SOURCE_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
             "SELECT COUNT(*) FROM usage_rollup_sources WHERE agent='${agent}';" 2>/dev/null || echo "0")
-        if usage_fixture_requires_positive_tokens "${agent}"; then
-            ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
-                "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND (tokens_in + tokens_out) > 0 AND message_count > 0;" 2>/dev/null || echo "0")
+        if usage_fixture_expects_usage "${agent}"; then
+            if usage_fixture_requires_positive_tokens "${agent}"; then
+                ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+                    "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND (tokens_in + tokens_out) > 0 AND message_count > 0;" 2>/dev/null || echo "0")
+            else
+                ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+                    "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND message_count > 0 AND source_cost > 0;" 2>/dev/null || echo "0")
+            fi
+            if [ "${DETAIL_ROWS}" -eq 0 ] && [ "${SOURCE_ROWS}" -ge 1 ] && [ "${ROLLUP_ROWS}" -ge 1 ]; then
+                ok "Local usage.sqlite: ${agent} aggregated without persisted detail rows (sources=${SOURCE_ROWS}, rollups=${ROLLUP_ROWS})"
+            else
+                fail "Local usage.sqlite: ${agent} detail=${DETAIL_ROWS} sources=${SOURCE_ROWS} rollups=${ROLLUP_ROWS}"
+                agent_fail=1
+            fi
         else
             ROLLUP_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
-                "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}' AND message_count > 0 AND source_cost > 0;" 2>/dev/null || echo "0")
-        fi
-        if [ "${DETAIL_ROWS}" -eq 0 ] && [ "${SOURCE_ROWS}" -ge 1 ] && [ "${ROLLUP_ROWS}" -ge 1 ]; then
-            ok "Local usage.sqlite: ${agent} aggregated without persisted detail rows (sources=${SOURCE_ROWS}, rollups=${ROLLUP_ROWS})"
-        else
-            fail "Local usage.sqlite: ${agent} detail=${DETAIL_ROWS} sources=${SOURCE_ROWS} rollups=${ROLLUP_ROWS}"
-            agent_fail=1
+                "SELECT COUNT(*) FROM usage_daily_model_rollups WHERE agent='${agent}';" 2>/dev/null || echo "0")
+            if [ "${DETAIL_ROWS}" -eq 0 ] && [ "${SOURCE_ROWS}" -eq 0 ] && [ "${ROLLUP_ROWS}" -eq 0 ]; then
+                ok "Local usage.sqlite: ${agent} usage-disabled fixture did not fabricate rollups"
+            else
+                fail "Local usage.sqlite: ${agent} usage-disabled fixture produced unexpected rows detail=${DETAIL_ROWS} sources=${SOURCE_ROWS} rollups=${ROLLUP_ROWS}"
+                agent_fail=1
+            fi
         fi
 
-        MIN_MONITORING_EVENTS=$(usage_fixture_min_monitoring_events "${agent}")
+        if ! MIN_MONITORING_EVENTS="$(expected_usage_min_monitoring_events "${EXPECTED_SOURCES_JSON}")"; then
+            fail "Local records.db: ${agent} could not derive monitoring event count from expected sources"
+            agent_fail=1
+            MIN_MONITORING_EVENTS=0
+        fi
         if [ "${MIN_MONITORING_EVENTS}" -gt 0 ]; then
             RECORD_ROWS=$(sqlite3 "${AITRACK_HOME}/records.db" \
                 "SELECT COUNT(*) FROM records WHERE tool='${agent}';" 2>/dev/null || echo "0")
@@ -671,14 +1151,18 @@ print('yes' if found else 'no')
                 agent_fail=1
             fi
 
-            REQUIRED_EVENT_TYPES="$(usage_fixture_required_event_types "${agent}")"
+            REQUIRED_EVENT_TYPES="$(expected_usage_required_event_types "${EXPECTED_SOURCES_JSON}")"
             if [ -n "${REQUIRED_EVENT_TYPES}" ]; then
-                if python3 - "${AITRACK_HOME}/records.db" "${agent}" "${REQUIRED_EVENT_TYPES}" <<'PY'
+                EXPECT_REASONING="no"
+                if usage_fixture_expects_reasoning_event "${agent}"; then
+                    EXPECT_REASONING="yes"
+                fi
+                if python3 - "${AITRACK_HOME}/records.db" "${agent}" "${REQUIRED_EVENT_TYPES}" "${EXPECT_REASONING}" <<'PY'
 import json
 import sqlite3
 import sys
 
-db_path, agent, required_raw = sys.argv[1:4]
+db_path, agent, required_raw, expects_reasoning = sys.argv[1:5]
 required = [item for item in required_raw.split(",") if item]
 rows = sqlite3.connect(db_path).execute(
     "SELECT metadata, prompt_summary, session_id, provider, model FROM records WHERE tool = ?",
@@ -687,9 +1171,14 @@ rows = sqlite3.connect(db_path).execute(
 if not rows:
     raise SystemExit(f"{agent}: no monitoring rows")
 events = []
+has_model = False
 for metadata, prompt_summary, session_id, provider, model in rows:
     if not session_id:
         raise SystemExit(f"{agent}: missing session_id")
+    if not provider:
+        raise SystemExit(f"{agent}: missing provider")
+    if (model or "").strip():
+        has_model = True
     try:
         payload = json.loads(metadata or "{}")
     except json.JSONDecodeError as exc:
@@ -699,6 +1188,8 @@ for metadata, prompt_summary, session_id, provider, model in rows:
         events.append((event_type, payload, prompt_summary))
 
 seen = {event_type for event_type, _, _ in events}
+if not has_model:
+    raise SystemExit(f"{agent}: missing model")
 for event_type in required:
     if event_type not in seen:
         raise SystemExit(f"{agent}: missing event_type={event_type}, seen={sorted(seen)}")
@@ -725,11 +1216,22 @@ if "tool_result" in required and not any(
     for event_type, payload, _ in events
 ):
     raise SystemExit(f"{agent}: tool_result event missing tool_result")
+if "edit" in required and not any(
+    event_type == "edit"
+    and (payload.get("tool_name") or payload.get("event_name") or "").strip()
+    for event_type, payload, _ in events
+):
+    raise SystemExit(f"{agent}: edit event missing tool_name/event_name")
+if expects_reasoning == "yes" and not any(
+    "agent_reasoning" in json.dumps(payload, separators=(",", ":"))
+    for _, payload, _ in events
+):
+    raise SystemExit(f"{agent}: reasoning fixture missing agent_reasoning event")
 PY
                 then
-                    ok "Local records.db: ${agent} monitoring metadata includes ${REQUIRED_EVENT_TYPES}"
+                    ok "Local records.db: ${agent} monitoring metadata includes context and ${REQUIRED_EVENT_TYPES}"
                 else
-                    fail "Local records.db: ${agent} monitoring metadata missing required fields (${REQUIRED_EVENT_TYPES})"
+                    fail "Local records.db: ${agent} monitoring metadata missing context or required fields (${REQUIRED_EVENT_TYPES})"
                     agent_fail=1
                 fi
             fi
@@ -737,9 +1239,99 @@ PY
             ok "Local records.db: ${agent} is usage-only for this fixture"
         fi
 
+        LOCAL_EDIT_PATH_COUNTS_JSON="{}"
+        if [ "${MIN_MONITORING_EVENTS}" -gt 0 ]; then
+            if LOCAL_EDIT_PATH_COUNTS_JSON=$(python3 - "${AITRACK_HOME}/records.db" "${agent}" <<'PY'
+import json
+import sqlite3
+import sys
+from collections import Counter
+
+db_path, agent = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+rows = conn.execute(
+    "SELECT metadata, file_path FROM records WHERE tool = ?",
+    (agent,),
+).fetchall()
+counts = Counter()
+for metadata, file_path in rows:
+    try:
+        payload = json.loads(metadata or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{agent}: invalid metadata JSON while collecting edit paths: {exc}") from exc
+    if payload.get("event_type") != "edit":
+        continue
+    path = (file_path or payload.get("file_path") or payload.get("path") or "").strip()
+    if path:
+        counts[path] += 1
+print(json.dumps(dict(sorted(counts.items())), separators=(",", ":")))
+PY
+            ); then
+                if [[ ",${REQUIRED_EVENT_TYPES}," == *",edit,"* ]]; then
+                    HAS_LOCAL_EDIT_PATHS=$(python3 - "${LOCAL_EDIT_PATH_COUNTS_JSON}" <<'PY'
+import json
+import sys
+print("yes" if json.loads(sys.argv[1]) else "no")
+PY
+)
+                    if [ "${HAS_LOCAL_EDIT_PATHS}" = "yes" ]; then
+                        ok "Local records.db: ${agent} edit file_path counts captured before sync"
+                    else
+                        fail "Local records.db: ${agent} expected edit events but no edit file_path was captured"
+                        agent_fail=1
+                    fi
+                fi
+            else
+                fail "Local records.db: ${agent} could not collect edit file_path counts"
+                agent_fail=1
+            fi
+        fi
+
+        if (cd "${GIT_REPO}" && env "${E2E_ENV[@]}" "AITRACK_SCAN_HOME=${AITRACK_HOME}" "${AITRACK_BIN}" usage sync --tool "${agent}" >/tmp/aitrack-usage-sync-${impl}-${agent}.json); then
+            ok "usage sync --tool ${agent} exited 0"
+        else
+            fail "usage sync --tool ${agent} failed"
+            agent_fail=1
+            continue
+        fi
+
+        OUTBOX_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_outbox;" 2>/dev/null || echo "0")
+        OUTBOX_SYNCED_PAYLOAD_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_outbox WHERE synced=1 AND length(payload_json) > 0;" 2>/dev/null || echo "0")
+        OUTBOX_FAILED_PAYLOAD_ROWS=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COUNT(*) FROM usage_outbox WHERE retry_count >= 5 AND length(payload_json) > 0;" 2>/dev/null || echo "0")
+        OUTBOX_PAYLOAD_BYTES=$(sqlite3 "${AITRACK_HOME}/usage.sqlite" \
+            "SELECT COALESCE(SUM(length(payload_json)), 0) FROM usage_outbox;" 2>/dev/null || echo "0")
+        if [ "${OUTBOX_SYNCED_PAYLOAD_ROWS}" -eq 0 ] \
+            && [ "${OUTBOX_FAILED_PAYLOAD_ROWS}" -eq 0 ] \
+            && [ "${OUTBOX_ROWS}" -le 2000 ] \
+            && [ "${OUTBOX_PAYLOAD_BYTES}" -le 16777216 ]; then
+            ok "Local usage.sqlite: ${agent} bounded outbox payloads (rows=${OUTBOX_ROWS}, bytes=${OUTBOX_PAYLOAD_BYTES})"
+        else
+            fail "Local usage.sqlite: ${agent} unbounded outbox rows=${OUTBOX_ROWS} bytes=${OUTBOX_PAYLOAD_BYTES} synced_payload=${OUTBOX_SYNCED_PAYLOAD_ROWS} failed_payload=${OUTBOX_FAILED_PAYLOAD_ROWS}"
+            agent_fail=1
+        fi
+
+        if [ "${MIN_MONITORING_EVENTS}" -gt 0 ]; then
+            RECORD_ROWS_AFTER_SYNC=$(sqlite3 "${AITRACK_HOME}/records.db" \
+                "SELECT COUNT(*) FROM records WHERE tool='${agent}';" 2>/dev/null || echo "0")
+            PRUNED_RECORD_ROWS_AFTER_SYNC=$(sqlite3 "${AITRACK_HOME}/records.db" \
+                "SELECT COUNT(*) FROM records WHERE tool='${agent}' AND synced=1 AND metadata='{\"aitrack_pruned\":true}';" 2>/dev/null || echo "0")
+            if [ "${RECORD_ROWS_AFTER_SYNC}" -ge "${MIN_MONITORING_EVENTS}" ] \
+                && [ "${PRUNED_RECORD_ROWS_AFTER_SYNC}" -ge "${MIN_MONITORING_EVENTS}" ]; then
+                ok "Local records.db: ${agent} monitoring rows retained and metadata pruned after sync (records=${RECORD_ROWS_AFTER_SYNC}, pruned=${PRUNED_RECORD_ROWS_AFTER_SYNC})"
+            else
+                fail "Local records.db: ${agent} post-sync records/pruning mismatch (records=${RECORD_ROWS_AFTER_SYNC}, pruned=${PRUNED_RECORD_ROWS_AFTER_SYNC}, min=${MIN_MONITORING_EVENTS})"
+                agent_fail=1
+            fi
+        else
+            ok "Local records.db: ${agent} has no post-sync monitoring record expectation"
+        fi
+
         sleep 1
         if [ "${MIN_MONITORING_EVENTS}" -gt 0 ]; then
-            MATRIX_EDITS_RESP=$(api_get "${server_url}" "/api/v1/ai-track/edits?page=0&size=200" "${TOKEN}")
+            MATRIX_EDITS_RESP=$(api_get "${server_url}" "/api/v1/ai-track/edits?page=0&size=100" "${TOKEN}")
             MATRIX_SERVER_RECORDS=$(echo "${MATRIX_EDITS_RESP}" | AGENT="${agent}" python3 -c "
 import json, os, sys
 raw = json.load(sys.stdin)
@@ -753,34 +1345,80 @@ print(sum(1 for item in items if item.get('tool') == agent))
                 fail "Server: ${agent} monitoring records missing — response: ${MATRIX_EDITS_RESP}"
                 agent_fail=1
             fi
+            if [[ ",${REQUIRED_EVENT_TYPES}," == *",edit,"* ]]; then
+                MATRIX_SERVER_EDIT_PATHS=$(MATRIX_EDITS_RESP_JSON="${MATRIX_EDITS_RESP}" python3 - "${agent}" "${LOCAL_EDIT_PATH_COUNTS_JSON}" <<'PY'
+import json
+import os
+import sys
+from collections import Counter
+
+agent = sys.argv[1]
+expected = json.loads(sys.argv[2])
+raw = json.loads(os.environ["MATRIX_EDITS_RESP_JSON"])
+items = raw.get("records", [])
+seen = Counter()
+for item in items:
+    if item.get("tool") != agent:
+        continue
+    path = (item.get("file_path") or "").strip()
+    if path in expected:
+        seen[path] += 1
+missing = {
+    path: {"expected": count, "seen": seen.get(path, 0)}
+    for path, count in expected.items()
+    if seen.get(path, 0) < count
+}
+if missing:
+    print(json.dumps({"ok": False, "missing": missing}, separators=(",", ":")))
+else:
+    print(json.dumps({"ok": True, "paths": sorted(expected)}, separators=(",", ":")))
+PY
+)
+                MATRIX_SERVER_EDIT_OK=$(python3 - "${MATRIX_SERVER_EDIT_PATHS}" <<'PY'
+import json
+import sys
+print("yes" if json.loads(sys.argv[1]).get("ok") else "no")
+PY
+)
+                if [ "${MATRIX_SERVER_EDIT_OK}" = "yes" ]; then
+                    ok "Server: ${agent} edit file_path rows accepted"
+                else
+                    fail "Server: ${agent} edit file_path acceptance mismatch — ${MATRIX_SERVER_EDIT_PATHS}"
+                    agent_fail=1
+                fi
+            fi
         else
             ok "Server: ${agent} has no monitoring record expectation for this fixture"
         fi
 
-        MATRIX_USAGE_RESP=$(api_get "${server_url}" "/api/v1/ai-track/usage/summary?agent=${agent}&limit=50" "${TOKEN}")
-        if usage_fixture_requires_positive_tokens "${agent}"; then
+        if ! usage_fixture_expects_usage "${agent}"; then
+            ok "Server: ${agent} has no usage summary expectation for this fixture"
+        else
+            MATRIX_USAGE_RESP=$(api_get "${server_url}" "/api/v1/ai-track/usage/summary?agent=${agent}&limit=50" "${TOKEN}")
+            if usage_fixture_requires_positive_tokens "${agent}"; then
             MATRIX_SERVER_USAGE=$(echo "${MATRIX_USAGE_RESP}" | python3 -c "
 import json, sys
 raw = json.load(sys.stdin)
 print('yes' if raw.get('total_tokens', 0) > 0 and raw.get('message_count', 0) > 0 else 'no')
 " 2>/dev/null || echo "no")
-            if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
-                ok "Server: ${agent} usage summary includes tokens and messages"
+                if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
+                    ok "Server: ${agent} usage summary includes tokens and messages"
+                else
+                    fail "Server: ${agent} usage summary missing tokens/messages — response: ${MATRIX_USAGE_RESP}"
+                    agent_fail=1
+                fi
             else
-                fail "Server: ${agent} usage summary missing tokens/messages — response: ${MATRIX_USAGE_RESP}"
-                agent_fail=1
-            fi
-        else
             MATRIX_SERVER_USAGE=$(echo "${MATRIX_USAGE_RESP}" | python3 -c "
 import json, sys
 raw = json.load(sys.stdin)
 print('yes' if raw.get('message_count', 0) > 0 and raw.get('source_cost', 0) > 0 else 'no')
 " 2>/dev/null || echo "no")
-            if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
-                ok "Server: ${agent} usage summary includes messages and cost"
-            else
-                fail "Server: ${agent} usage summary missing messages/cost — response: ${MATRIX_USAGE_RESP}"
-                agent_fail=1
+                if [ "${MATRIX_SERVER_USAGE}" = "yes" ]; then
+                    ok "Server: ${agent} usage summary includes messages and cost"
+                else
+                    fail "Server: ${agent} usage summary missing messages/cost — response: ${MATRIX_USAGE_RESP}"
+                    agent_fail=1
+                fi
             fi
         fi
 
@@ -954,7 +1592,7 @@ echo "════════════════════════�
 echo -e "  Total: ${GREEN}${PASS_COUNT} passed${NC}, ${RED}${FAIL_COUNT} failed${NC}"
 echo "══════════════════════════════════════════════════════════"
 
-if [ $overall -ne 0 ]; then
+if [ $overall -ne 0 ] || [ $FAIL_COUNT -ne 0 ]; then
     echo -e "${RED}CLIENT E2E SUITE FAILED${NC}"
     exit 1
 fi

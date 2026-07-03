@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 )
 
 // Tests for AggregateByRepo, AggregateByDevice, and Query edge-cases.
+
+var aggregateRecordSigCounter atomic.Uint64
 
 func insertEditRecord(t *testing.T, repo *dbadapter.EditRecordAdapter, status, tokenKey, repoURL, deviceID string) {
 	t.Helper()
@@ -38,9 +41,17 @@ func insertEditRecordWithHostnameAndTool(t *testing.T, repo *dbadapter.EditRecor
 		AddedLines:   n,
 		RemovedLines: 2,
 		Timestamp:    "2026-05-17T10:00:00Z",
-		RecordSig:    "sig123" + status,
-		Status:       status,
-		ReceivedAt:   time.Now().UTC(),
+		RecordSig: fmt.Sprintf(
+			"sig-%s-%s-%s-%s-%s-%d",
+			status,
+			tokenKey,
+			repoURL,
+			deviceID,
+			tool,
+			aggregateRecordSigCounter.Add(1),
+		),
+		Status:     status,
+		ReceivedAt: time.Now().UTC(),
 	}
 	if err := repo.Save(rec); err != nil {
 		t.Fatalf("insert edit_record: %v", err)

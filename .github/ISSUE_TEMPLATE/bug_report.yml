@@ -10,7 +10,7 @@ body:
 
         提交前请先搜索已有 issue，并确认这是 aitrack 本身的产品或运行问题，而不是功能建议、通用部署咨询或第三方服务临时故障。
 
-        隐私提醒：不要粘贴 token、hmac_secret、admin key、组织内部 repo URL、私人 diff 内容、完整环境文件或内部 / 本地文件路径。分享日志前请先脱敏。
+        隐私提醒：不要粘贴 token、hmac_secret、admin key、未脱敏链接、私人 diff 内容、完整环境文件、敏感路径或本地文件路径。分享日志前请先脱敏。
 
   - type: input
     id: version
@@ -82,7 +82,7 @@ body:
     id: environment
     attributes:
       label: Environment details / 环境信息
-      description: Include OS, runtime versions, deployment details, and anything else relevant. Do not paste full env files, secrets, or internal paths.
+      description: Include OS, runtime versions, deployment details, and anything else relevant. Do not paste full env files, secrets, or sensitive paths.
       placeholder: |
         - OS:
         - Rust version (if client):
@@ -95,7 +95,7 @@ body:
     id: logs
     attributes:
       label: Logs or error messages / 日志或错误信息
-      description: Paste only relevant redacted logs, stack traces, or error output. Do not include credentials, tokens, hmac_secret, admin keys, repo URLs, or private diff content.
+      description: Paste only relevant redacted logs, stack traces, or error output. Do not include credentials, tokens, hmac_secret, admin keys, private links, sensitive logs, or private diff content.
       render: shell
 
   - type: textarea
@@ -113,7 +113,7 @@ body:
           required: true
         - label: I filled in the requested details above.
           required: true
-        - label: I removed or redacted credentials, tokens, hmac_secret, admin keys, repo URLs, private diff content, and internal paths from this report.
+        - label: I removed or redacted credentials, tokens, hmac_secret, admin keys, private links, private diff content, sensitive logs, and sensitive paths from this report.
           required: true
         - label: I can help verify a fix if needed.
           required: false

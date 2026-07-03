@@ -10,7 +10,7 @@ body:
 
         请一个 issue 只描述一个问题或工作流，并先说明用户问题，不要只写实现方案。
         aitrack 是 AI 编码效能治理平台，建议也应符合这个产品边界（client capture、server 接收、anti-cheat、stats 分析）。
-        隐私提醒：不要粘贴凭据、token、admin key、私人 diff 内容、内部 repo URL、完整环境文件或内部 / 本地文件路径。
+        隐私提醒：不要粘贴凭据、token、admin key、私人 diff 内容、未脱敏链接、完整环境文件、敏感路径或本地文件路径。
 
   - type: textarea
     id: problem
@@ -88,7 +88,7 @@ body:
           required: true
         - label: I described the user problem, not just a technical implementation detail.
           required: true
-        - label: I removed or redacted credentials, tokens, admin keys, private diff content, repo URLs, env values, and internal paths from this request.
+        - label: I removed or redacted credentials, tokens, admin keys, private diff content, private links, sensitive logs, env values, and sensitive paths from this request.
           required: true
         - label: I can help validate the feature if it gets implemented.
           required: false

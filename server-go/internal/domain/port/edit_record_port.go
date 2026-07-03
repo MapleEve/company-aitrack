@@ -34,3 +34,9 @@ type EditRecordPort interface {
 type EditRecordCounter interface {
 	CountByTokenKeyAndFilePathSince(tokenKey, filePath string, since time.Time) (int64, error)
 }
+
+// EditRecordRetentionPort is implemented by repositories that can strip
+// long-lived raw-ish edit fields after validated records have been persisted.
+type EditRecordRetentionPort interface {
+	ApplyRawRetention(now time.Time) (int64, error)
+}

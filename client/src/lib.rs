@@ -43,7 +43,7 @@ pub fn print_banner() {
 }
 use adapter::sqlite::{
     clean_all, clean_synced, get_recent_prompt, insert_prompt_context, inspect_records, open_db,
-    pending_count, token_breakdown,
+    pending_count, prune_local_record_storage, token_breakdown,
 };
 use config::{apply_init_args, load_config, mask_token, resolve_api_config, split_credential};
 use init::{detect_installed_tools, detect_tool_statuses, install_hooks, remove_hooks};
@@ -87,6 +87,17 @@ async fn handle_usage(args: cli::UsageArgs) -> Result<()> {
                 credential: sync.credential,
             })
             .await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        cli::UsageCommand::Probe(probe) => {
+            let report = usage::probe_now(usage::UsageProbeOptions {
+                tools: probe.tool,
+                since: probe.since,
+                until: probe.until,
+                max_files_per_agent: probe.max_files,
+                max_bytes_per_file: probe.max_bytes,
+                max_records_per_file: probe.max_records,
+            })?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         cli::UsageCommand::Status => {
@@ -255,6 +266,10 @@ fn selected_registry_only_tools(tools: &[String]) -> Vec<String> {
 
 /// 32 MiB: generous enough for any real hook payload, prevents OOM from malformed input.
 const STDIN_MAX_BYTES: usize = 32 * 1024 * 1024;
+const HOOK_EVENT_FILE_NAME: &str = "hook-events.jsonl";
+const IMPORT_MANIFEST_FILE_NAME: &str = "aitrack-sources.json";
+const HOOK_EVENTS_MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
+const HOOK_EVENTS_MAX_LINES: usize = 2000;
 
 async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
     use std::io::Read as _;
@@ -272,7 +287,7 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
     }
     let stdin_json = raw.trim();
 
-    let record_opt = parse_capture_event(stdin_json, &args.tool);
+    let record_opt = journal_capture_event_for_known_agent(&args.tool, stdin_json)?;
 
     let mut record = match record_opt {
         Some(r) => r,
@@ -306,32 +321,43 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
             }
         }
     };
-    record.token_key = mask_token(&token);
+    record.token_key = if token.is_empty() {
+        String::new()
+    } else {
+        mask_token(&token)
+    };
     record.device_id = cfg.device_id.clone();
     record.hostname = gethostname::gethostname()
         .into_string()
         .unwrap_or_else(|_| String::new());
 
-    // Compute record signature
-    record.record_sig = domain::crypto::compute_record_sig(
-        &hmac_secret,
-        &record.token_key,
-        &record.device_id,
-        &record.hostname,
-        &record.timestamp,
-        &record.tool,
-        &record.file_path,
-        &record.repo_url,
-        &record.current_sha,
-        record.added_lines,
-        record.removed_lines,
-        record.diff_hunk.as_deref(),
-    );
+    domain::model::sanitize_sig_bound_record_fields(&mut record);
+
+    // Compute record signature over the same bounded diff that will be stored and uploaded.
+    record.record_sig = if record.token_key.is_empty() {
+        String::new()
+    } else {
+        domain::crypto::compute_record_sig(
+            &hmac_secret,
+            &record.token_key,
+            &record.device_id,
+            &record.hostname,
+            &record.timestamp,
+            &record.tool,
+            &record.file_path,
+            &record.repo_url,
+            &record.current_sha,
+            record.added_lines,
+            record.removed_lines,
+            record.diff_hunk.as_deref(),
+        )
+    };
 
     let conn = open_db()?;
 
     // Attach most recent prompt for this session
     record.prompt_summary = get_recent_prompt(&conn, &record.session_id);
+    domain::model::sanitize_non_sig_record_fields(&mut record);
 
     let inserted = adapter::sqlite::insert_record(&conn, &record)?;
 
@@ -358,6 +384,8 @@ async fn handle_capture(args: cli::CaptureArgs) -> Result<()> {
         heartbeat::send_heartbeat(&conn, &api_url, &credential, false).await?;
     }
 
+    prune_local_record_storage(&conn)?;
+
     Ok(())
 }
 
@@ -368,6 +396,142 @@ fn parse_capture_event(stdin_json: &str, tool: &str) -> Option<domain::model::Re
     }
 
     adapter::event::parse_known_agent(tool, stdin_json)
+}
+
+fn journal_capture_event_for_known_agent(
+    tool: &str,
+    stdin_json: &str,
+) -> Result<Option<domain::model::Record>> {
+    let Some(agent_name) = known_agent_name(tool) else {
+        if tool.trim().is_empty() {
+            eprintln!("[aitrack] --tool must not be empty");
+        } else {
+            eprintln!("[aitrack] unsupported capture tool: {}", tool);
+        }
+        return Ok(None);
+    };
+
+    if let Err(e) = append_local_hook_event(agent_name, stdin_json) {
+        eprintln!("[aitrack] hook-event journal warning: {e}");
+    }
+
+    Ok(parse_capture_event(stdin_json, agent_name))
+}
+
+fn append_local_hook_event(tool: &str, stdin_json: &str) -> Result<bool> {
+    let value = match serde_json::from_str::<serde_json::Value>(stdin_json) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
+    append_local_hook_event_value(tool, &value)
+}
+
+fn append_local_hook_event_value(tool: &str, value: &serde_json::Value) -> Result<bool> {
+    if !value.is_object() {
+        return Ok(false);
+    }
+
+    let record = serde_json::json!({
+        "aitrack": {
+            "schema": 1,
+            "source": "hook-event",
+            "agent": tool,
+            "captured_at": chrono::Utc::now()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        },
+        "event": value,
+    });
+    let mut line = serde_json::to_vec(&record)?;
+    line.push(b'\n');
+    if line.len() > HOOK_EVENTS_MAX_FILE_BYTES {
+        return Ok(false);
+    }
+
+    let source_dir = config::config_dir().join("local-sources").join(tool);
+    std::fs::create_dir_all(&source_dir)?;
+    write_private_file(
+        &source_dir.join(IMPORT_MANIFEST_FILE_NAME),
+        br#"{"files":["hook-events.jsonl"]}"#,
+    )?;
+    let path = source_dir.join(HOOK_EVENT_FILE_NAME);
+    append_private_file(&path, &line)?;
+    prune_hook_event_file(&path)?;
+    Ok(true)
+}
+
+fn known_agent_name(tool: &str) -> Option<&'static str> {
+    let lowered = tool.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return None;
+    }
+    let canonical = agent::canonical_agent_name(&lowered);
+    agent::agent_by_name(canonical).map(|registered| registered.name)
+}
+
+fn append_private_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    Ok(())
+}
+
+fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    Ok(())
+}
+
+fn prune_hook_event_file(path: &std::path::Path) -> Result<()> {
+    let bytes = std::fs::read(path)?;
+    let lines = bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| !line.iter().all(|byte| matches!(byte, b'\n' | b'\r')))
+        .collect::<Vec<_>>();
+    if bytes.len() <= HOOK_EVENTS_MAX_FILE_BYTES && lines.len() <= HOOK_EVENTS_MAX_LINES {
+        return Ok(());
+    }
+
+    let mut kept = Vec::new();
+    let mut total = 0usize;
+    for line in lines.into_iter().rev() {
+        if kept.len() >= HOOK_EVENTS_MAX_LINES {
+            break;
+        }
+        if line.len() > HOOK_EVENTS_MAX_FILE_BYTES {
+            continue;
+        }
+        if total + line.len() > HOOK_EVENTS_MAX_FILE_BYTES {
+            break;
+        }
+        kept.push(line);
+        total += line.len();
+    }
+
+    let mut out = Vec::with_capacity(total);
+    for line in kept.into_iter().rev() {
+        out.extend_from_slice(line);
+        if !line.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+    }
+    write_private_file(path, &out)
 }
 
 fn handle_inspect(args: cli::InspectArgs) -> Result<()> {
@@ -556,43 +720,43 @@ async fn handle_prompt_capture(args: cli::PromptCaptureArgs) -> Result<()> {
     }
     let stdin_json = raw.trim();
 
-    let prompt_hook_supported = agent::agent_by_name(args.tool.as_str())
-        .map(|registered| registered.has_native_prompt_hook)
-        .unwrap_or(false);
-    if !prompt_hook_supported {
-        if agent::is_known_agent(args.tool.as_str()) {
-            eprintln!(
-                "[aitrack] known agent has no native prompt-capture hook yet: {}",
-                args.tool
-            );
-        } else {
-            eprintln!("[aitrack] unsupported prompt-capture tool: {}", args.tool);
-        }
-        return Ok(());
-    }
+    capture_prompt_payload(&args.tool, stdin_json)?;
+    Ok(())
+}
+
+fn capture_prompt_payload(tool: &str, stdin_json: &str) -> Result<bool> {
+    let Some(agent_name) = known_agent_name(tool) else {
+        eprintln!("[aitrack] unsupported prompt-capture tool: {}", tool);
+        return Ok(false);
+    };
 
     let val: serde_json::Value = match serde_json::from_str(stdin_json) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("[aitrack] prompt-capture parse error: {e}");
-            return Ok(());
+            return Ok(false);
         }
     };
+
+    if let Err(e) = append_local_hook_event_value(agent_name, &val) {
+        eprintln!("[aitrack] hook-event journal warning: {e}");
+    }
 
     let session_id = prompt_session_id(&val).unwrap_or_default();
     let prompt = prompt_text(&val).unwrap_or_default();
 
     if session_id.is_empty() || prompt.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     let conn = open_db()?;
     insert_prompt_context(&conn, &session_id, &prompt_capture_text(&prompt))?;
-    Ok(())
+    prune_local_record_storage(&conn)?;
+    Ok(true)
 }
 
 fn prompt_capture_text(prompt: &str) -> String {
-    prompt.chars().take(4096).collect()
+    domain::model::truncate_chars(prompt, domain::model::MAX_STORED_PROMPT_CHARS)
 }
 
 fn prompt_session_id(val: &serde_json::Value) -> Option<String> {
@@ -622,8 +786,10 @@ mod tests {
     fn with_home<F: FnOnce()>(dir: &TempDir, f: F) {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("AITRACK_HOME", dir.path());
+        std::env::set_var("AITRACK_SCAN_HOME", dir.path());
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
         if let Err(e) = r {
             std::panic::resume_unwind(e);
         }
@@ -640,8 +806,10 @@ mod tests {
         let path = dir.path().to_owned();
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("AITRACK_HOME", &path);
+        std::env::set_var("AITRACK_SCAN_HOME", &path);
         f().await;
         std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
     }
 
     // -------------------------------------------------------------------------
@@ -840,6 +1008,68 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn run_dispatch_usage_status() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from(["aitrack", "usage", "status"]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_dispatch_usage_scan_with_tool_window() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from([
+                "aitrack",
+                "usage",
+                "scan",
+                "--tool",
+                "codex",
+                "--since",
+                "2026-06-01",
+                "--until",
+                "2026-06-30",
+            ]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_dispatch_usage_probe_with_limits() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from([
+                "aitrack",
+                "usage",
+                "probe",
+                "--tool",
+                "octofriend",
+                "--max-files",
+                "1",
+                "--max-bytes",
+                "1024",
+                "--max-records",
+                "2",
+            ]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_dispatch_usage_sync_without_api_keeps_local() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from(["aitrack", "usage", "sync", "--tool", "codex"]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
     #[test]
     fn capture_dispatch_unknown_tool_returns_none() {
         let json = serde_json::json!({
@@ -900,6 +1130,88 @@ mod tests {
         assert!(parse_capture_event(&json, "qwen").is_none());
     }
 
+    #[tokio::test]
+    async fn known_non_native_capture_journals_hook_event_without_native_record() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let json = serde_json::json!({
+                "session_id": "kiro-session",
+                "prompt": "summarize local state"
+            })
+            .to_string();
+
+            let record = journal_capture_event_for_known_agent("kiro", &json).unwrap();
+
+            assert!(record.is_none(), "kiro has no native edit adapter yet");
+            let source_dir = dir.path().join("local-sources").join("kiro");
+            let manifest = std::fs::read_to_string(source_dir.join("aitrack-sources.json"))
+                .expect("manifest should be written");
+            assert_eq!(manifest, r#"{"files":["hook-events.jsonl"]}"#);
+
+            let jsonl = std::fs::read_to_string(source_dir.join("hook-events.jsonl"))
+                .expect("hook-events jsonl should be written");
+            let lines = jsonl.lines().collect::<Vec<_>>();
+            assert_eq!(lines.len(), 1);
+            let line: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+            assert_eq!(line["aitrack"]["agent"], "kiro");
+            assert_eq!(line["event"]["session_id"], "kiro-session");
+            assert_eq!(line["event"]["prompt"], "summarize local state");
+
+            let report = usage::scan_now(usage::UsageScanOptions {
+                tools: vec!["kiro".to_string()],
+                since: None,
+                until: None,
+            })
+            .await
+            .unwrap();
+            assert_eq!(report.files_scanned, 1);
+            assert_eq!(report.monitoring_events_parsed, 1);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn known_non_native_prompt_capture_stores_prompt_context() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let json = serde_json::json!({
+                "session_id": "kiro-prompt-session",
+                "prompt": "write the local source manifest"
+            })
+            .to_string();
+
+            assert!(capture_prompt_payload("kiro", &json).unwrap());
+
+            let conn = open_db().unwrap();
+            let prompt = get_recent_prompt(&conn, "kiro-prompt-session")
+                .expect("prompt context should be stored");
+            assert_eq!(prompt, "write the local source manifest");
+            assert!(dir
+                .path()
+                .join("local-sources/kiro/hook-events.jsonl")
+                .exists());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn unknown_capture_and_prompt_capture_do_not_create_local_sources() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let json = serde_json::json!({
+                "session_id": "unknown-session",
+                "prompt": "do not preserve this"
+            })
+            .to_string();
+
+            let record = journal_capture_event_for_known_agent("unsupported-agent", &json).unwrap();
+            assert!(record.is_none());
+            assert!(!capture_prompt_payload("unsupported-agent", &json).unwrap());
+            assert!(!dir.path().join("local-sources").exists());
+        })
+        .await;
+    }
+
     #[test]
     fn prompt_capture_text_preserves_monitoring_content() {
         let raw_prompt = "fix leaked customer token in checkout.rs";
@@ -930,6 +1242,54 @@ mod tests {
             Some("/tmp/cursor/transcript.jsonl")
         );
         assert_eq!(prompt_text(&cursor).as_deref(), Some("cursor prompt"));
+    }
+
+    #[test]
+    fn selected_tools_dedupes_legacy_and_explicit_flags() {
+        let tools = selected_tools(
+            true,
+            true,
+            false,
+            vec![
+                "codex".to_string(),
+                "  ".to_string(),
+                "kiro".to_string(),
+                "kiro".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            tools,
+            vec![
+                "claude".to_string(),
+                "codex".to_string(),
+                "kiro".to_string()
+            ]
+        );
+        assert_eq!(tool_refs(&tools), vec!["claude", "codex", "kiro"]);
+        assert!(selected_native_edit_tools(&tools).contains(&"claude".to_string()));
+        assert!(selected_registry_only_tools(&tools).contains(&"kiro".to_string()));
+    }
+
+    #[test]
+    fn prune_hook_event_file_keeps_recent_lines_and_bounds_size() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hook-events.jsonl");
+        let mut body = Vec::new();
+        for i in 0..(HOOK_EVENTS_MAX_LINES + 5) {
+            body.extend_from_slice(format!("{{\"i\":{i}}}\n").as_bytes());
+        }
+        std::fs::write(&path, body).unwrap();
+
+        prune_hook_event_file(&path).unwrap();
+
+        let pruned = std::fs::read_to_string(&path).unwrap();
+        let lines = pruned.lines().collect::<Vec<_>>();
+        let expected_last = format!("{{\"i\":{}}}", HOOK_EVENTS_MAX_LINES + 4);
+        assert_eq!(lines.len(), HOOK_EVENTS_MAX_LINES);
+        assert_eq!(lines.first().copied(), Some(r#"{"i":5}"#));
+        assert_eq!(lines.last().copied(), Some(expected_last.as_str()));
+        assert!(pruned.len() <= HOOK_EVENTS_MAX_FILE_BYTES);
     }
 
     // -------------------------------------------------------------------------

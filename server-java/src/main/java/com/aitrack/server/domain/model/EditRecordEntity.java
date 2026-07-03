@@ -12,6 +12,8 @@ import java.time.Instant;
     @Index(name = "idx_edit_records_repo_url", columnList = "repo_url"),
     @Index(name = "idx_edit_records_device_id", columnList = "device_id"),
     @Index(name = "idx_edit_records_received_at", columnList = "received_at")
+}, uniqueConstraints = {
+    @UniqueConstraint(name = "uk_edit_records_record_sig", columnNames = "record_sig")
 })
 @Data
 @NoArgsConstructor

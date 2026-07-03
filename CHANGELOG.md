@@ -4,6 +4,34 @@
 
 ---
 
+## [v1.8.0] — 2026-07-03
+
+### 发布摘要
+
+v1.8.0 将默认本地扫描矩阵扩展到 35 个规范工具 key，并把各工具的本地来源按字段级原生读取、本地派生读取和辅助状态/用量来源合并为 agent 级完整数据面。本版本同时补齐批次上限、本地 outbox 保留策略、服务端聚合 upsert 和原文清洗策略，避免默认扫描、上传或服务端落库在大数据目录下无界增长。
+
+GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.8.0.md`](docs/RELEASE_NOTES_v1.8.0.md)。
+
+### 新增
+
+- **35 个默认扫描工具 key**：默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+- **agent 级完整数据面**：默认 key 都必须通过本地来源组合覆盖提示词、助手输出、工具调用、工具结果、用量、会话、时间和模型字段；字段缺失不补假数据。
+- **用量依据区分**：用量上报保留 `usage_basis=native` / `usage_basis=local_derived`，管理员可以区分来源计量和本地派生计量。
+- **服务端原文清洗**：Java 与 Go 服务端都会在保留标量、签名和时间信息的前提下清洗旧的 `diff_hunk`、`metadata` 和 `prompt_summary` 原文字段。
+
+### 变更
+
+- **上传批次有界**：编辑事件客户端按 200 条和 7 MiB 拆包；usage rollup 单 payload 最多 500 items；本地 usage outbox 限制行数、payload 总字节、重试次数和 pending TTL。
+- **服务端聚合落库**：Java 与 Go 服务端对 usage rollup 按 `(token_key, device_id, day, agent, model, account, usage_basis)` 幂等 upsert，不保存提示词或工具结果原文。
+- **默认扫描性能保护**：保留 30 天窗口、单次扫描文件数、候选数、目录遍历项、JSON/CSV/SQLite 行数、zstd 解压大小和 sidecar fan-out 上限，并通过文件缓存跳过未变化来源。
+- **使用文档**：README、API、隐私、安全、部署、开发和工具支持文档同步到 v1.8.0 支持范围。
+
+### 测试 / CI
+
+- 客户端 E2E 矩阵门禁：35 个默认规范 key 覆盖率必须为 100%。
+- 本地来源矩阵自检：67 个 source entry。
+- PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
+
 ## [v1.7.0] — 2026-06-18
 
 ### 发布摘要
@@ -36,7 +64,7 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 ### 测试 / CI
 
 - Rust 客户端单测：**301 tests**。
-- 客户端 E2E 矩阵门禁：必需本地来源工具覆盖 **30 / 30**，默认矩阵覆盖率要求 **100%**，并对可还原监控事件做字段级断言。
+- 客户端 E2E 矩阵门禁：v1.7 初版本地来源工具必须全覆盖，默认矩阵覆盖率要求 **100%**，并对可还原监控事件做字段级断言。
 - 客户端 E2E 验证：未变化本地来源立即第二次执行 `usage sync` 时，解析 **0** 条 message 和 **0** 条 monitoring event。
 - PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
 
@@ -76,7 +104,7 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 
 ### 修复
 
-- E2E：`e2e/run.sh` Go 路径在 `pg_isready` 通过后新增 `sleep 2`，消除首次镜像拉取场景下 PostgreSQL 内部初始化竞态；新增容器日志抓取，方便排查 Go 服务端启动失败原因
+- E2E：`e2e/run.sh` Go 路径在 `pg_isready` 通过后新增 `sleep 2`，消除首次镜像拉取场景下 PostgreSQL 初始化竞态；新增容器日志抓取，方便排查 Go 服务端启动失败原因
 - Go 服务端：测试占位符统一改为 `$N`（兼容 pgx/PostgreSQL）；覆盖率命令新增 `-coverpkg=./internal/...` 确保跨包覆盖统计准确；`page` 参数加 `clamp ≥ 0` 防止 `OFFSET` 为负
 
 ### 覆盖率

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # ── Stage 1: build + test + JaCoCo coverage gate ─────────────────────────────
 FROM maven:3.9-eclipse-temurin-17 AS builder
 
@@ -6,7 +7,10 @@ WORKDIR /workspace
 # Copy pom + source, run full verify (compile + tests + JaCoCo LINE >= 90% gate)
 COPY server-java/pom.xml ./
 COPY server-java/src ./src
-RUN mvn --batch-mode --errors verify -Dmaven.wagon.http.retryHandler.count=5
+RUN --mount=type=cache,target=/root/.m2/repository \
+    mvn --batch-mode --errors verify \
+        -Dmaven.wagon.http.retryHandler.count=5 \
+        -Dmaven.wagon.http.retryHandler.requestSentEnabled=true
 
 # ── Stage 2: minimal JRE runtime ─────────────────────────────────────────────
 FROM eclipse-temurin:17-jre AS runtime

@@ -65,6 +65,15 @@ class IngestServiceTest {
     }
 
     @Test
+    void ingest_successfulSave_appliesRawRetention() {
+        EditBatchRequest request = EditBatchRequestFactory.build();
+
+        ingestService.ingest(token, request);
+
+        verify(editRecordRepository, times(1)).applyRawRetention(any(Instant.class));
+    }
+
+    @Test
     void ingest_multipleValidEdits_allAccepted() {
         List<EditDto> edits = List.of(
                 EditDtoFactory.buildForTool("claude"),
@@ -175,5 +184,55 @@ class IngestServiceTest {
         assertThat(response.getRejected()).hasSize(1);
         assertThat(response.getRejected().get(0).getReason()).contains("rate_limited");
         verify(editRecordRepository, never()).save(any(EditRecordEntity.class));
+    }
+
+    @Test
+    void ingest_duplicateRecordSig_isAcceptedButNotPersistedAgain() {
+        EditDto edit = EditDtoFactory.build();
+        when(editRecordRepository.existsByRecordSig(edit.getRecordSig())).thenReturn(true);
+
+        EditBatchResponse response = ingestService.ingest(token, EditBatchRequestFactory.withEdits(List.of(edit)));
+
+        assertThat(response.getAccepted()).isEqualTo(1);
+        verify(editRecordRepository, never()).save(any(EditRecordEntity.class));
+        verify(editRecordRepository, never()).applyRawRetention(any(Instant.class));
+    }
+
+    @Test
+    void ingest_savedEntity_truncatesLargeStoredTextFields() {
+        String diffHunk = "@@ -1,0 +1,0 @@\n" + " context\n".repeat(9000);
+        String metadata = "m".repeat(5000);
+        String promptSummary = "p".repeat(5000);
+        SignatureService sig = new SignatureService();
+        EditDto edit = EditDtoFactory.with(e -> {
+            e.setAddedLines(0L);
+            e.setRemovedLines(0L);
+            e.setDiffHunk(diffHunk);
+            e.setMetadata(metadata);
+            e.setPromptSummary(promptSummary);
+            e.setRecordSig(sig.computeRecordSig(
+                    EditDtoFactory.DEFAULT_HMAC_SECRET,
+                    EditDtoFactory.DEFAULT_TOKEN_KEY,
+                    EditDtoFactory.DEFAULT_DEVICE_ID,
+                    EditDtoFactory.DEFAULT_HOSTNAME,
+                    EditDtoFactory.DEFAULT_TIMESTAMP,
+                    EditDtoFactory.DEFAULT_TOOL,
+                    EditDtoFactory.DEFAULT_FILE_PATH,
+                    EditDtoFactory.DEFAULT_REPO_URL,
+                    EditDtoFactory.DEFAULT_SHA,
+                    0L,
+                    0L,
+                    diffHunk
+            ));
+        });
+
+        ingestService.ingest(token, EditBatchRequestFactory.withEdits(List.of(edit)));
+
+        ArgumentCaptor<EditRecordEntity> captor = ArgumentCaptor.forClass(EditRecordEntity.class);
+        verify(editRecordRepository).save(captor.capture());
+        EditRecordEntity saved = captor.getValue();
+        assertThat(saved.getDiffHunk()).hasSize(8192);
+        assertThat(saved.getMetadata()).hasSize(4096);
+        assertThat(saved.getPromptSummary()).hasSize(4096);
     }
 }

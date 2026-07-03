@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -89,8 +90,24 @@ public class UsageController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported Content-Encoding");
         }
         try (GZIPInputStream input = new GZIPInputStream(new ByteArrayInputStream(transmittedBody))) {
-            return input.readAllBytes();
+            return readBounded(input);
         }
+    }
+
+    private byte[] readBounded(GZIPInputStream input) throws IOException {
+        long maxBytes = props.getMaxRequestBodyBytes();
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            total += read;
+            if (total > maxBytes) {
+                throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "decompressed request body exceeds maximum allowed size");
+            }
+            output.write(buffer, 0, read);
+        }
+        return output.toByteArray();
     }
 
     private TokenEntity resolveAndVerifySignature(HttpServletRequest request, byte[] transmittedBody) {

@@ -61,17 +61,17 @@ AI 编码工具大规模进入研发团队，带来了三个难以回避的治�
 
 ## 当前支持范围
 
-v1.7.0 之后，aitrack 的采集能力分成三层，不再只围绕三条固定钩子：
+v1.8.0 起，aitrack 的采集能力分成三层，不再只围绕三条固定钩子：
 
 | 层级 | 已支持能力 | 适用工具 |
 |------|------------|----------|
 | 原生编辑证据 | 生成带 diff、行数、仓库信息和 `record_sig` 的 `EditRecord` | Claude Code、Codex CLI、Cursor |
-| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 已登记工具 key 和显式别名 |
-| 本地用量扫描 | 按各工具文档和本地数据结构读取本机会话、导出、遥测或本地数据库；只在来源本身提供字段时提取提示词、输出、工具调用、token、消息数和成本估算 | 默认 30 个工具 key；可用 `--tool` 限定范围 |
+| 状态心跳 | 动态上报工具注册状态、钩子状态和本地可见性 | 已登记规范工具 key；显式别名仅在输入时归并到规范 key |
+| 本地用量扫描 | 按来源级别读取本机会话、导出、遥测或本地数据库；默认列表按字段级、本地派生和辅助状态/用量来源分层处理，并合并成 agent 级完整数据面 | 默认 35 个工具 key；可用 `--tool` 限定范围 |
 
-默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名；`antigravity`、`qoder-work`、`qoder-work-cn`、`roo-code`、`synthetic` 只保留登记或显式入口，不计入默认本地扫描矩阵。
+默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名，并分别归并到 `roo-code`、`kilocode`、`gjc`；这些别名不属于注册或默认 coverage key。
 
-其中 `claude`、`codex`、`cursor` 使用原生 hook 捕获编辑和提示词上下文；`gemini`、`qwen`、`copilot`、`droid` 读取本地遥测；其他默认扫描工具按各自稳定来源读取导出、统计、会话文本、wire 记录、轨迹或本地数据库。任何来源缺失的字段都不会被补成假数据。
+默认列表的 35 个工具 key 都按各自本地结构进入 agent 级完整数据面。其中 `claude`、`codex`、`cursor` 使用原生 hook 捕获编辑和提示词上下文；字段级、本地派生和辅助状态/用量来源按真实字段合并上报。Gemini 的 ChatRecording JSONL 按字段级本地来源处理，telemetry log 提供用量和工具遥测。字段缺失不补假数据。
 
 详细支持矩阵、扫描路径、性能上限和管理员解读方式见 [AI 编码工具支持矩阵](docs/AGENT_SUPPORT.md)。
 
@@ -158,7 +158,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 ### 提示词与本地会话记录监控（v1.7+）
 
-客户端可选安装本地提示词钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机会话目录、导出文件、遥测日志、JSONL、SQLite 和本地状态文件；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填，单次扫描窗口最多 30 天。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具只在稳定本地来源提供对应字段时补齐提示词、工具调用、窗口和编辑监控事件。
+客户端可选安装本地提示词钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机会话目录、导出文件、遥测日志、JSONL、SQLite 和本地状态文件；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填，单次扫描窗口最多 30 天。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具只有在对应本地来源实际提供字段时，才写入提示词、工具调用、窗口和编辑监控事件。
 
 `usage` 子命令同时维护独立的用量汇总和额度/订阅快照数据面，按日期、工具、模型、账号聚合 token 分桶、消息数和成本估算，并通过 `/api/v1/ai-track/usage/*` API 上报到 Java 或 Go 服务端。
 
@@ -204,10 +204,12 @@ curl -X POST http://localhost:8080/admin/tokens \
 cd client && cargo build --release
 # 或从分发包解压二进制到 /usr/local/bin/
 
-# 安装原生编辑钩子（Claude Code 示例；其他注册工具可用 --tool <name>）
+# 安装支持原生编辑钩子的工具（Claude Code / Codex CLI / Cursor）
 aitrack init --claude \
   --api-url https://aitrack.example.com \
   --credential <credential>
+
+# 其他工具通过状态心跳和本地 usage scan/sync 按来源接入
 
 # 验证状态
 aitrack status
@@ -215,7 +217,7 @@ aitrack status
 # 查看本地记录（最近 20 条）
 aitrack inspect --limit 20
 
-# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 30 个工具 key
+# 扫描本机 AI 编码工具用量；不指定 --tool 时扫描默认 35 个工具 key
 aitrack usage scan
 
 # 扫描、汇总并上传用量，也会上传本地会话记录中可还原的监控事件
@@ -275,7 +277,7 @@ bash e2e/run.sh both
 | **token 哈希存储** | 服务端仅存储 `sha256(token)`，明文仅签发时返回一次 |
 | **本地优先** | 所有数据存储于自建服务，不经过任何第三方云服务 |
 | **常量时间比较** | HMAC 验证使用常量时间比较，防止 timing attack |
-| **采集范围透明可控** | 默认采集文件路径、diff、行数、仓库元数据；提示词钩子与稳定本地来源可采集有界提示词、工具调用、窗口监控事件；用量汇总只记录标量指标；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
+| **采集范围透明可控** | 默认采集文件路径、diff、行数、仓库元数据；提示词钩子与本地来源只在字段真实存在时采集有界提示词、工具调用、窗口监控事件；用量汇总只记录标量指标；字段缺失不补假数据；不采集完整工作区文件或键盘输入；采集范围由企业管理员配置控制，画像数据不作为个人绩效考核直接依据 |
 
 ---
 
