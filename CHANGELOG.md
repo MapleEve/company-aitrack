@@ -4,6 +4,34 @@
 
 ---
 
+## [v1.8.0] — 2026-07-03
+
+### 发布摘要
+
+v1.8.0 将默认本地扫描矩阵扩展到 35 个规范工具 key，并把各工具的本地来源按字段级原生读取、本地派生读取和辅助状态/用量来源合并为 agent 级完整数据面。本版本同时补齐批次上限、本地 outbox 保留策略、服务端聚合 upsert 和原文清洗策略，避免默认扫描、上传或服务端落库在大数据目录下无界增长。
+
+GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.8.0.md`](docs/RELEASE_NOTES_v1.8.0.md)。
+
+### 新增
+
+- **35 个默认扫描工具 key**：默认扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+- **agent 级完整数据面**：默认 key 都必须通过本地来源组合覆盖提示词、助手输出、工具调用、工具结果、用量、会话、时间和模型字段；字段缺失不补假数据。
+- **用量依据区分**：用量上报保留 `usage_basis=native` / `usage_basis=local_derived`，管理员可以区分来源计量和本地派生计量。
+- **服务端原文清洗**：Java 与 Go 服务端都会在保留标量、签名和时间信息的前提下清洗旧的 `diff_hunk`、`metadata` 和 `prompt_summary` 原文字段。
+
+### 变更
+
+- **上传批次有界**：编辑事件客户端按 200 条和 7 MiB 拆包；usage rollup 单 payload 最多 500 items；本地 usage outbox 限制行数、payload 总字节、重试次数和 pending TTL。
+- **服务端聚合落库**：Java 与 Go 服务端对 usage rollup 按 `(token_key, device_id, day, agent, model, account, usage_basis)` 幂等 upsert，不保存提示词或工具结果原文。
+- **默认扫描性能保护**：保留 30 天窗口、单次扫描文件数、候选数、目录遍历项、JSON/CSV/SQLite 行数、zstd 解压大小和 sidecar fan-out 上限，并通过文件缓存跳过未变化来源。
+- **使用文档**：README、API、隐私、安全、部署、开发和工具支持文档同步到 v1.8.0 支持范围。
+
+### 测试 / CI
+
+- 客户端 E2E 矩阵门禁：35 个默认规范 key 覆盖率必须为 100%。
+- 本地来源矩阵自检：67 个 source entry。
+- PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
+
 ## [v1.7.0] — 2026-06-18
 
 ### 发布摘要
@@ -15,7 +43,7 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 ### 新增
 
 - **动态工具注册表 / 状态 / 心跳**：客户端状态和心跳 payload 现在按工具 key 表达动态注册项，不再固定为三工具布尔图。
-- **扩展本地来源矩阵**：默认本地扫描覆盖 35 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- **扩展本地来源矩阵**：默认本地扫描覆盖 30 个已验证本地来源的工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。没有真实来源证据的登记项不计入默认采集能力。
 - **用量数据面**：客户端新增 `usage_sessions`、`usage_daily_model_rollups`、`usage_subscription_snapshots`、`usage_outbox` 表；Java 与 Go 服务端新增 `/api/v1/ai-track/usage/rollup`、`/api/v1/ai-track/usage/subscription`、`/api/v1/ai-track/usage/summary`。
 - **本地会话监控恢复**：本地会话记录可为没有原生编辑钩子的工具恢复有界提示词、工具调用、窗口和可还原编辑监控事件。
 - **额度 / 订阅快照**：Claude Code 与 Codex CLI 的本地状态可写入额度和订阅快照数据面。
@@ -35,8 +63,8 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 
 ### 测试 / CI
 
-- Rust 客户端单测：**342 tests**。
-- 客户端 E2E 矩阵门禁：默认 35 个规范 key 都必须有 fixture/parser 路径和字段级断言；该矩阵用于防止扫描链路断裂，不表示 35 个工具都已闭合完整本地结构。
+- Rust 客户端单测：**301 tests**。
+- 客户端 E2E 矩阵门禁：v1.7 初版本地来源工具必须全覆盖，默认矩阵覆盖率要求 **100%**，并对可还原监控事件做字段级断言。
 - 客户端 E2E 验证：未变化本地来源立即第二次执行 `usage sync` 时，解析 **0** 条 message 和 **0** 条 monitoring event。
 - PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
 

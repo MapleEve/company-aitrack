@@ -3726,7 +3726,7 @@ def assert_public_docs_support_counts() -> None:
         "wenxin",
     ]:
         if forbidden in docs:
-            fail(f"public docs contain stale support wording: {forbidden}")
+            fail(f"docs contain stale support wording: {forbidden}")
 
     expected_agents = [
         "claude",

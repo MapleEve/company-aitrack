@@ -27,23 +27,23 @@ Claude Code、Codex CLI、Cursor 仍是原生编辑钩子的主要证据路径�
 
 ### 默认本地扫描工具
 
-默认执行 `aitrack usage scan` 或 `aitrack usage sync` 且未指定 `--tool` 时，会扫描以下 35 个规范 key：
+默认执行 `aitrack usage scan` 或 `aitrack usage sync` 且未指定 `--tool` 时，会扫描以下 30 个规范 key：
 
-`claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`。
+`claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode`。
 
-显式指定 `--tool` 时，也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名并归并到 `roo-code`、`kilocode`、`gjc`，避免同一工具重复扫描和重复汇总。
+显式指定 `--tool` 时，也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 
 ## 升级说明
 
 - 本版本没有移除既有服务端写入 API。
 - 新增 `/usage/*` 接口沿用 Bearer token 与请求签名模型。
 - `EditRecord` 仍是签名监控事件的数据域；用量汇总和额度快照是标量用量数据，不能替代带 diff 的编辑证据。
-- 默认本地扫描按工具稳定来源分层处理；显式 `--tool` 仍接受常见别名。
+- 默认本地扫描按工具稳定来源分层处理；没有真实来源证据的登记项不计入默认采集能力。
 - 默认本地扫描是增量且有近期窗口限制；历史回填请显式使用 `--since/--until`。
 
 ## 验证记录
 
-- Rust 客户端单元测试：342 个通过。
-- 本地扫描 E2E 矩阵：默认 35 个规范 key 都必须有 fixture/parser 路径、字段级断言、agent 级完整数据面和缓存增量断言。
+- Rust 客户端单元测试：301 个通过。
+- 本地扫描 E2E 矩阵：v1.7 初版默认工具 key 已覆盖，默认矩阵覆盖率要求 100%。
 - 客户端 E2E 缓存断言：未变化数据源立即二次同步时，解析 0 条用量消息和 0 条监控事件。
 - PR 门禁覆盖 Rust、Java、Go、架构、覆盖率、Java+Go E2E、Rust 本地扫描 E2E、Codecov、FOSSA 和自动化审查。
