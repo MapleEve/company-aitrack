@@ -786,8 +786,10 @@ mod tests {
     fn with_home<F: FnOnce()>(dir: &TempDir, f: F) {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("AITRACK_HOME", dir.path());
+        std::env::set_var("AITRACK_SCAN_HOME", dir.path());
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
         if let Err(e) = r {
             std::panic::resume_unwind(e);
         }
@@ -804,8 +806,10 @@ mod tests {
         let path = dir.path().to_owned();
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("AITRACK_HOME", &path);
+        std::env::set_var("AITRACK_SCAN_HOME", &path);
         f().await;
         std::env::remove_var("AITRACK_HOME");
+        std::env::remove_var("AITRACK_SCAN_HOME");
     }
 
     // -------------------------------------------------------------------------
@@ -1004,6 +1008,68 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn run_dispatch_usage_status() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from(["aitrack", "usage", "status"]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_dispatch_usage_scan_with_tool_window() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from([
+                "aitrack",
+                "usage",
+                "scan",
+                "--tool",
+                "codex",
+                "--since",
+                "2026-06-01",
+                "--until",
+                "2026-06-30",
+            ]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_dispatch_usage_probe_with_limits() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from([
+                "aitrack",
+                "usage",
+                "probe",
+                "--tool",
+                "octofriend",
+                "--max-files",
+                "1",
+                "--max-bytes",
+                "1024",
+                "--max-records",
+                "2",
+            ]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_dispatch_usage_sync_without_api_keeps_local() {
+        let dir = TempDir::new().unwrap();
+        with_home_async(&dir, || async {
+            let cli = Cli::parse_from(["aitrack", "usage", "sync", "--tool", "codex"]);
+            run(cli).await.unwrap();
+        })
+        .await;
+    }
+
     #[test]
     fn capture_dispatch_unknown_tool_returns_none() {
         let json = serde_json::json!({
@@ -1176,6 +1242,54 @@ mod tests {
             Some("/tmp/cursor/transcript.jsonl")
         );
         assert_eq!(prompt_text(&cursor).as_deref(), Some("cursor prompt"));
+    }
+
+    #[test]
+    fn selected_tools_dedupes_legacy_and_explicit_flags() {
+        let tools = selected_tools(
+            true,
+            true,
+            false,
+            vec![
+                "codex".to_string(),
+                "  ".to_string(),
+                "kiro".to_string(),
+                "kiro".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            tools,
+            vec![
+                "claude".to_string(),
+                "codex".to_string(),
+                "kiro".to_string()
+            ]
+        );
+        assert_eq!(tool_refs(&tools), vec!["claude", "codex", "kiro"]);
+        assert!(selected_native_edit_tools(&tools).contains(&"claude".to_string()));
+        assert!(selected_registry_only_tools(&tools).contains(&"kiro".to_string()));
+    }
+
+    #[test]
+    fn prune_hook_event_file_keeps_recent_lines_and_bounds_size() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hook-events.jsonl");
+        let mut body = Vec::new();
+        for i in 0..(HOOK_EVENTS_MAX_LINES + 5) {
+            body.extend_from_slice(format!("{{\"i\":{i}}}\n").as_bytes());
+        }
+        std::fs::write(&path, body).unwrap();
+
+        prune_hook_event_file(&path).unwrap();
+
+        let pruned = std::fs::read_to_string(&path).unwrap();
+        let lines = pruned.lines().collect::<Vec<_>>();
+        let expected_last = format!("{{\"i\":{}}}", HOOK_EVENTS_MAX_LINES + 4);
+        assert_eq!(lines.len(), HOOK_EVENTS_MAX_LINES);
+        assert_eq!(lines.first().copied(), Some(r#"{"i":5}"#));
+        assert_eq!(lines.last().copied(), Some(expected_last.as_str()));
+        assert!(pruned.len() <= HOOK_EVENTS_MAX_FILE_BYTES);
     }
 
     // -------------------------------------------------------------------------
