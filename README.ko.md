@@ -23,7 +23,7 @@ aitrack는 직원의 AI 코딩 활동을 모니터링하고 거버넌스하기 �
 
 <br>
 
-[빠른 시작](#빠른-시작) · [아키텍처](#아키텍처) · [배포](docs/DEPLOYMENT.md) · [API](docs/API.md) · [기여](CONTRIBUTING.md)
+[빠른 시작](#빠른-시작) · [지원 범위](docs/AGENT_SUPPORT.md) · [아키텍처](#아키텍처) · [배포](docs/DEPLOYMENT.md) · [API](docs/API.md) · [기여](CONTRIBUTING.md)
 
 </div>
 
@@ -59,13 +59,31 @@ AI 코딩 도구가 개발 팀에 대규모로 도입되면서 피할 수 없는
 
 ---
 
+## 현재 지원 범위
+
+v1.8.0부터 aitrack의 수집 모델은 세 개의 고정 훅만이 아니라 다음 세 계층으로 구성됩니다:
+
+| 계층 | 지원되는 기능 | 적용 대상 |
+|------|---------------|-----------|
+| 네이티브 편집 증거 | diff, 줄 수, 저장소 정보, `record_sig`가 포함된 `EditRecord` 생성 | Claude Code, Codex CLI, Cursor |
+| 상태 하트비트 | 도구 등록 상태, 훅 상태, 로컬 가시성을 동적으로 보고 | 등록된 canonical tool key. 명시적 alias 는 입력 시에만 정규 key 로 정규화 |
+| 로컬 사용량 스캔 | 로컬 session, export, telemetry, 로컬 DB 를 source 유형별로 읽고 field-level native / local-derived / auxiliary source 를 agent 단위의 완전한 데이터면으로 병합 | 기본 35 tool key. `--tool` 로 범위 제한 가능 |
+
+기본 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `antigravity`, `opencode`, `qoder`, `qoder-cn`, `qoder-work`, `qoder-work-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `roo-code`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `synthetic`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용하며 각각 `roo-code`, `kilocode`, `gjc` 로 정규화합니다. 이 alias 들은 등록 key 나 coverage key 가 아닙니다.
+
+기본 35 key 는 각자의 로컬 구조에서 agent 단위 데이터면으로 병합됩니다. `claude`, `codex`, `cursor` 는 네이티브 훅으로 편집과 프롬프트 컨텍스트를 캡처하며, field-level, local-derived, auxiliary source 는 실제 존재하는 필드만 병합합니다. Gemini ChatRecording JSONL 은 field-level local source 로 처리하고 telemetry log 는 사용량과 도구 telemetry 를 보완합니다. 존재하지 않는 필드를 만들어 채우지 않습니다.
+
+전체 지원 표, 스캔 경로, 성능 상한, 관리자 해석 방법은 [AI 코딩 도구 지원 매트릭스](docs/AGENT_SUPPORT.md)를 참조하세요.
+
+---
+
 ## 아키텍처
 
 aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌트로 구성됩니다:
 
 | 컴포넌트 | 스택 | 역할 |
 |---------|------|------|
-| **Rust 클라이언트** `aitrack` | Rust · 단일 바이너리 · 런타임 의존성 없음 · 헥사고날 아키텍처(v1.6) | 훅 설치, 편집 이벤트 캡처, HMAC 서명, 데이터 업로드, 자동 업데이트(ed25519) |
+| **Rust 클라이언트** `aitrack` | Rust · 단일 바이너리 · 런타임 의존성 없음 · 헥사고날 아키텍처(v1.6) | 훅 설치, 편집 이벤트 캡처, 로컬 사용량 source 스캔, HMAC 서명, 데이터 업로드, 자동 업데이트(ed25519) |
 | **Java 서버** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB(v1.3+) | 10단계 검증 체인, 신뢰할 수 있는 귀속, 효율 쿼리, 시맨틱 검색(주요 구현) |
 | **Go 서버** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB(필수) | Java와 기능이 동등한 경량 대안 구현, 시맨틱 검색 지원 |
 
@@ -79,20 +97,10 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 **Agent 및 데이터 도메인 경계:**
 
 - Claude Code, Codex CLI, Cursor는 현재 native edit hook adapter를 갖고 있어 diff, 줄 수, 저장소 메타데이터, `record_sig`를 포함한 `EditRecord`를 생성할 수 있습니다
-- 그 밖의 등록 agent는 registry, status, heartbeat, local usage source 흐름에 참여할 수 있습니다. native hook 이 없어도 typed local 스캔으로 prompt, tool, window, 복원 가능한 edit 모니터링 이벤트를 보완할 수 있습니다
+- 그 밖의 등록 agent는 registry, status, heartbeat, local usage source 흐름에 참여할 수 있습니다. 대응 필드가 존재하면 typed local 스캔으로 prompt, assistant output, tool call, tool result, window, usage, model context, 복원 가능한 edit 모니터링 이벤트를 보완할 수 있습니다
 - `EditRecord`는 편집 증거 도메인입니다. usage rollup / snapshot은 스칼라 사용량 도메인이며, token-only 또는 usage-only 데이터를 편집 레코드로 취급할 수 없습니다
-- 로컬 사용량 소스에는 typed transcript/session 디렉터리, JSONL, SQLite, 로컬 클라이언트 상태가 포함됩니다. 명시적 import 디렉터리는 opt-in 진입점이며, aitrack는 사용자에게 서드파티 token을 수동으로 붙여 넣도록 요구하지 않습니다
-
-**현재 지원되는 agent framework:**
-
-| agent key | native edit hook | native prompt hook | local transcript scan | usage rollup | quota / subscription snapshot |
-|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | 지원 | 지원 | 지원: `.claude/`, projects, transcripts, `~/.aitrack/sources/claude` | 지원 | 지원: 로컬 rate-limit snapshot |
-| `codex` | 지원 | 미지원 | 지원: `.codex/sessions`, `~/.aitrack/sources/codex` | 지원 | 지원: session rate-limit snapshot |
-| `cursor` | 지원 | 미지원 | 지원: Cursor globalStorage, `~/.aitrack/sources/cursor` | 지원 | 미지원 |
-| default local-scan agents | 미지원 | 미지원 | typed native path 및 명시적 structured import root | token, message count, source cost | 미지원 |
-
-기본 로컬 스캔은 `claude`, `codex`, `cursor`, `trae`, `qwen`, `opencode`, `qoder`, `qoder-cn`, `wukong`, `hermes`, `openclaw`, `gemini`, `copilot`, `cline`, `kiro`, `zed`, `goose`, `amp`, `droid`, `pi`, `mux`, `crush`, `codebuff`, `kilo`, `kilocode`, `kimi`, `gjc`, `grok`, `warp`, `zcode` 를 대상으로 합니다. 명시적인 `--tool` 은 `roocode`, `kilo-code`, `gajae-code` 도 alias 로 허용합니다. 검증된 로컬 source 증거가 없는 등록 key 는 기본 로컬 스캔 지원에 포함하지 않습니다.
+- 로컬 사용량 스캔은 로컬 파일, 로컬 export, 로컬 상태만 읽습니다. aitrack는 사용자에게 서드파티 서비스 token을 수동으로 붙여 넣도록 요구하지 않습니다.
+- `hooks.<tool> = true` 는 해당 도구가 로컬에서 보이거나 대응 훅을 사용할 수 있음을 뜻합니다. 해당 도구에 네이티브 편집 훅이 있다는 뜻은 아닙니다.
 
 ---
 
@@ -148,9 +156,9 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 
 프로필 데이터는 AI 도구의 실제 채택 효과를 파악하기 위해서만 사용되며, 개인 성과 평가의 직접적인 근거로는 사용되지 않습니다.
 
-### 프롬프트 및 로컬 transcript 모니터링(v1.7+)
+### 프롬프트 및 로컬 transcript 모니터링(v1.8+)
 
-클라이언트는 선택적으로 `UserPromptSubmit` 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 agent, 시간 창, 로컬 커서 캐시 기준으로 typed local session 디렉터리, JSONL, SQLite, 로컬 상태 파일을 스캔할 수 있습니다. 기본 모드는 최근 창의 증분 스캔이며, 명시적인 `--since/--until` 로 작은 범위의 백필을 수행합니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 typed local source 에서 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
+클라이언트는 선택적으로 로컬 프롬프트 훅을 설치할 수 있으며, `aitrack usage scan|sync` 로 agent, 시간 창, 로컬 커서 캐시 기준으로 로컬 session 디렉터리, export, telemetry log, JSONL, SQLite, 로컬 상태 파일을 스캔할 수 있습니다. 기본 모드는 최근 창의 증분 스캔이며, 명시적인 `--since/--until` 로 작은 범위의 백필을 수행합니다. 단일 스캔 창은 최대 30일입니다. `prompt_summary` 는 편집 모니터링 레코드와 함께 제한된 길이의 프롬프트 내용을 전송합니다. native hook 이 없는 agent 도 typed local source 에 해당 필드가 있을 때 prompt, tool, window, edit 모니터링 이벤트를 복원할 수 있습니다.
 
 `usage` 서브커맨드는 별도의 usage rollup / subscription snapshot 데이터면도 유지합니다. day, agent, model, account 기준으로 token bucket, message count, source cost 를 집계하고 `/api/v1/ai-track/usage/*` API 를 통해 Java 또는 Go 서버로 업로드합니다.
 
@@ -159,7 +167,7 @@ aitrack은 프로토콜 v1.2로 통신하는 세 개의 독립적인 컴포넌�
 - Rust 클라이언트가 헥사고날 아키텍처(domain / port / adapter 3계층)로 리팩터링 완료. 모든 I/O는 `StoragePort` / `UploadPort` 인터페이스를 통해 라우팅되어 비즈니스 로직과 인프라가 완전히 분리
 - `aitrack update` 서브커맨드: GitHub Releases에서 최신 버전을 가져와 ed25519 서명 검증 후 현재 바이너리를 원자적으로 교체
 - 키워드 라이브러리 변조 방지: 키워드는 컴파일 타임 상수로 하드코딩되어 있으며, `keyword_fingerprint()`가 서버 측 검증을 위한 SHA-256 지문을 계산
-- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 301 tests / Java 및 Go package tests)
+- 세 컴포넌트 모두 커버리지 ≥ 90%(Rust 342 tests / Java 및 Go package tests)
 
 ---
 
@@ -206,6 +214,14 @@ aitrack status
 
 # 로컬 레코드 보기(최근 20건)
 aitrack inspect --limit 20
+
+# 로컬 AI 코딩 사용량 스캔. --tool 미지정 시 기본 35 tool key 를 대상으로 함
+aitrack usage scan
+
+# 사용량을 스캔·집계해 업로드하고, 로컬 session 에서 복원 가능한 모니터링 이벤트도 전송
+aitrack usage sync \
+  --api-url https://aitrack.example.com \
+  --credential <credential>
 ```
 
 ### 4. 팀 데이터 확인
@@ -267,10 +283,12 @@ bash e2e/run.sh both
 | 문서 | 설명 |
 |------|------|
 | [CONTRACT.md](CONTRACT.md) | 클라이언트/서버 프로토콜 계약(엔드포인트, 필드 정의, 서명 사양, 훅 템플릿) |
+| [docs/AGENT_SUPPORT.md](docs/AGENT_SUPPORT.md) | AI 코딩 도구 지원 매트릭스(네이티브 훅, 로컬 스캔, 사용량 집계, quota snapshot, 스캔 상한) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 시스템 아키텍처 설계(컴포넌트 다이어그램, 데이터 흐름, 배포 토폴로지) |
 | [docs/API.md](docs/API.md) | API 레퍼런스(모든 엔드포인트, 요청/응답 구조) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 배포 가이드(Docker, PostgreSQL 마이그레이션, 프로덕션 설정) |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 개발자 가이드(로컬 빌드, 모듈 구조, 기여 워크플로) |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 제품 로드맵(현재 v1.8 baseline, v1.9 reverse heartbeat 및 production hardening 계획) |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | 보안 모델(위협 모델링, HMAC 사양, 방어 레이어) |
 | [docs/TESTING.md](docs/TESTING.md) | 테스트 시스템(3계층 아키텍처, 팩토리 패턴, 커버리지 임계값, Docker 검증) |
 | [CHANGELOG.md](CHANGELOG.md) | 버전 변경 이력 |

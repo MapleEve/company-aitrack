@@ -156,7 +156,7 @@ aitrack 由三个独立组件构成，通过协议 v1.2 互通：
 
 画像数据仅用于了解 AI 工具实际采用效果，不作为个人绩效考核的直接依据。
 
-### 提示词与本地会话记录监控（v1.7+）
+### 提示词与本地会话记录监控（v1.8+）
 
 客户端可选安装本地提示词钩子，并可通过 `aitrack usage scan|sync` 按工具、时间窗口和本地游标缓存扫描本机会话目录、导出文件、遥测日志、JSONL、SQLite 和本地状态文件；默认近窗口增量扫描，显式 `--since/--until` 用于小范围回填，单次扫描窗口最多 30 天。`prompt_summary` 用于随编辑记录上报有界提示词内容；没有原生钩子的工具只有在对应本地来源实际提供字段时，才写入提示词、工具调用、窗口和编辑监控事件。
 
@@ -291,6 +291,7 @@ bash e2e/run.sh both
 | [docs/API.md](docs/API.md) | API 文档（所有端点、请求/响应结构） |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Docker、PostgreSQL 切换、生产配置） |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发者指南（本地构建、模块结构、贡献流程） |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 产品路线图（当前 v1.8 基线、v1.9 反向心跳与生产强化计划） |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | 安全模型（威胁建模、HMAC 规范、防御层次） |
 | [docs/TESTING.md](docs/TESTING.md) | 测试体系（三层架构、工厂模式、覆盖率门槛、Docker 验证） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录 |

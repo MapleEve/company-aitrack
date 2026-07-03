@@ -23,7 +23,7 @@ aitrack は、従業員の AI コーディング活動を監視・ガバナン�
 
 <br>
 
-[クイックスタート](#クイックスタート) · [アーキテクチャ](#アーキテクチャ) · [デプロイ](docs/DEPLOYMENT.md) · [API](docs/API.md) · [コントリビュート](CONTRIBUTING.md)
+[クイックスタート](#クイックスタート) · [対応範囲](docs/AGENT_SUPPORT.md) · [アーキテクチャ](#アーキテクチャ) · [デプロイ](docs/DEPLOYMENT.md) · [API](docs/API.md) · [コントリビュート](CONTRIBUTING.md)
 
 </div>
 
@@ -59,13 +59,31 @@ AI コーディングツールが開発チームに大規模導入される中�
 
 ---
 
+## 現在の対応範囲
+
+v1.8.0 以降、aitrack の収集モデルは3つの固定フックだけではなく、次の3層で構成されます：
+
+| レイヤー | 対応済みの能力 | 対象 |
+|----------|----------------|------|
+| ネイティブ編集証拠 | diff、行数、リポジトリ情報、`record_sig` を含む `EditRecord` を生成 | Claude Code、Codex CLI、Cursor |
+| ステータスハートビート | ツール登録状態、フック状態、ローカル可視性を動的に報告 | 登録済みの canonical tool key。明示的 alias は入力時だけ正規 key に正規化 |
+| ローカル使用量スキャン | ローカル session、export、telemetry、ローカル DB を source 種別ごとに読み取り、field-level native / local-derived / auxiliary source を agent 単位の完全なデータ面へ統合 | デフォルト 35 tool key。`--tool` で対象を限定可能 |
+
+デフォルトスキャンは `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode` を対象にします。明示的な `--tool` では `roocode`、`kilo-code`、`gajae-code` も alias として受け付け、それぞれ `roo-code`、`kilocode`、`gjc` に正規化します。これらの alias は登録 key や coverage key ではありません。
+
+35 個のデフォルト key は、それぞれのローカル構造から agent 単位のデータ面へ統合されます。`claude`、`codex`、`cursor` はネイティブフックで編集とプロンプト文脈を取得し、field-level、local-derived、auxiliary source は実在するフィールドだけを統合します。Gemini の ChatRecording JSONL は field-level local source として扱い、telemetry log は使用量とツール telemetry を補完します。存在しないフィールドを補完して作ることはありません。
+
+完全な対応表、スキャンパス、性能上限、管理者向けの読み方は [AI コーディングツール対応マトリクス](docs/AGENT_SUPPORT.md) を参照してください。
+
+---
+
 ## アーキテクチャ
 
 aitrack はプロトコル v1.2 で通信する3つの独立したコンポーネントで構成されています：
 
 | コンポーネント | スタック | 役割 |
 |--------------|---------|------|
-| **Rust クライアント** `aitrack` | Rust · シングルバイナリ · ランタイム依存なし · ヘキサゴナルアーキテクチャ（v1.6） | フックのインストール、編集イベントのキャプチャ、HMAC 署名、データのアップロード、自動更新（ed25519） |
+| **Rust クライアント** `aitrack` | Rust · シングルバイナリ · ランタイム依存なし · ヘキサゴナルアーキテクチャ（v1.6） | フックのインストール、編集イベントのキャプチャ、ローカル使用量 source のスキャン、HMAC 署名、データのアップロード、自動更新（ed25519） |
 | **Java サーバー** `aitrack-server` | Java 17 · Spring Boot 3.3.8 · H2 / PostgreSQL · ParadeDB（v1.3+） | 10ステップ検証チェーン、信頼できる帰属、効率クエリ、セマンティック検索（主要実装） |
 | **Go サーバー** `aitrack-server-go` | Go 1.25 · chi v5.2.5 · PostgreSQL / ParadeDB（必須） | Java と機能同等の軽量代替実装、セマンティック検索をサポート |
 
@@ -79,20 +97,10 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 **Agent とデータドメインの境界：**
 
 - Claude Code、Codex CLI、Cursor は現在 native edit hook adapter を持ち、diff、行数、リポジトリメタデータ、`record_sig` を含む `EditRecord` を生成できます
-- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できます。native hook がない場合でも、型付きローカルスキャンから prompt、tool、window、復元可能な編集監視イベントを補完できます
+- そのほかの登録 agent は registry、status、heartbeat、local usage source のフローに参加できます。対応するフィールドが存在する場合、型付きローカルスキャンから prompt、assistant output、tool call、tool result、window、usage、model context、復元可能な編集監視イベントを補完できます
 - `EditRecord` は編集証拠ドメインです。usage rollup / snapshot はスカラー使用量ドメインであり、token-only または usage-only データを編集レコードとして扱うことはできません
-- ローカル使用量ソースには、型付き transcript / session ディレクトリ、JSONL、SQLite、ローカルクライアント状態が含まれます。明示的な import ディレクトリは opt-in の入口であり、aitrack はユーザーにサードパーティの token 貼り付けを求めません
-
-**現在対応している agent framework：**
-
-| agent key | native edit hook | native prompt hook | local transcript scan | usage rollup | quota / subscription snapshot |
-|-----------|------------------|--------------------|-------------------------------|--------------|-------------------------------|
-| `claude` | あり | あり | あり: `.claude/`、projects、transcripts、`~/.aitrack/sources/claude` | あり | あり: ローカル rate-limit snapshot |
-| `codex` | あり | なし | あり: `.codex/sessions`、`~/.aitrack/sources/codex` | あり | あり: session rate-limit snapshot |
-| `cursor` | あり | なし | あり: Cursor globalStorage、`~/.aitrack/sources/cursor` | あり | なし |
-| default local-scan agents | なし | なし | 型付き native path と明示的な構造化 import root | token、message count、source cost | なし |
-
-デフォルトのローカルスキャンは `claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode` を対象にします。明示的な `--tool` では `roocode`、`kilo-code`、`gajae-code` も alias として受け付けます。検証済みのローカル source 証拠がない登録 key は、デフォルトのローカルスキャン対応には含めません。
+- ローカル使用量スキャンはローカルファイル、ローカル export、ローカル状態だけを読み取ります。aitrack はユーザーにサードパーティサービス token の貼り付けを求めません。
+- `hooks.<tool> = true` は、そのツールがローカルで見える、または対応するフックが利用可能であることを示します。そのツールにネイティブ編集フックがあるという意味ではありません。
 
 ---
 
@@ -148,9 +156,9 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 
 プロファイルデータは AI ツールの実際の採用効果を把握するためのみに使用され、個人のパフォーマンス評価の直接的な根拠としては使用されません。
 
-### プロンプトとローカル transcript 監視（v1.7+）
+### プロンプトとローカル transcript 監視（v1.8+）
 
-クライアントはオプションで `UserPromptSubmit` フックをインストールでき、`aitrack usage scan|sync` で agent、時間ウィンドウ、ローカルカーソルキャッシュ単位に型付きローカル session ディレクトリ、JSONL、SQLite、ローカル状態ファイルをスキャンできます。デフォルトは直近ウィンドウの増分スキャンで、明示的な `--since/--until` により小規模なバックフィルを行えます。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、型付きローカルソースから prompt、tool、window、編集監視イベントを復元できます。
+クライアントはオプションでローカルプロンプトフックをインストールでき、`aitrack usage scan|sync` で agent、時間ウィンドウ、ローカルカーソルキャッシュ単位にローカル session ディレクトリ、export、telemetry log、JSONL、SQLite、ローカル状態ファイルをスキャンできます。デフォルトは直近ウィンドウの増分スキャンで、明示的な `--since/--until` により小規模なバックフィルを行えます。単一スキャンウィンドウは最大 30 日です。`prompt_summary` は編集監視レコードと共に有界のプロンプト内容を送信します。native hook がない agent でも、型付きローカルソースに該当フィールドが存在する場合は prompt、tool、window、編集監視イベントを復元できます。
 
 `usage` サブコマンドは独立した usage rollup / subscription snapshot データ面も維持します。day、agent、model、account ごとに token bucket、message count、source cost を集計し、`/api/v1/ai-track/usage/*` API 経由で Java または Go サーバーへアップロードします。
 
@@ -159,7 +167,7 @@ aitrack はプロトコル v1.2 で通信する3つの独立したコンポー�
 - Rust クライアントをヘキサゴナルアーキテクチャ（domain / port / adapter の3層）にリファクタリング完了。すべての I/O は `StoragePort` / `UploadPort` インターフェースを通じてルーティングされ、ビジネスロジックとインフラが完全に分離
 - `aitrack update` サブコマンド：GitHub Releases から最新バージョンを取得し、ed25519 署名検証後に現在のバイナリをアトミックに置換
 - キーワードライブラリ改ざん防止：キーワードはコンパイル時定数としてハードコードされ、`keyword_fingerprint()` がサーバー側検証用の SHA-256 フィンガープリントを計算
-- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 301 tests / Java と Go package tests）
+- 3コンポーネントすべてのカバレッジ ≥ 90%（Rust 342 tests / Java と Go package tests）
 
 ---
 
@@ -206,6 +214,14 @@ aitrack status
 
 # ローカルレコードの表示（最新20件）
 aitrack inspect --limit 20
+
+# ローカル AI コーディング使用量をスキャン。--tool 未指定時はデフォルト 35 tool key を対象にする
+aitrack usage scan
+
+# 使用量をスキャン・集計してアップロードし、ローカル session から復元可能な監視イベントも送信
+aitrack usage sync \
+  --api-url https://aitrack.example.com \
+  --credential <credential>
 ```
 
 ### 4. チームデータの確認
@@ -267,10 +283,12 @@ bash e2e/run.sh both
 | ドキュメント | 説明 |
 |------------|------|
 | [CONTRACT.md](CONTRACT.md) | クライアント/サーバープロトコル契約（エンドポイント、フィールド定義、署名仕様、フックテンプレート） |
+| [docs/AGENT_SUPPORT.md](docs/AGENT_SUPPORT.md) | AI コーディングツール対応マトリクス（ネイティブフック、ローカルスキャン、使用量集計、quota snapshot、スキャン上限） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | システムアーキテクチャ設計（コンポーネント図、データフロー、デプロイトポロジー） |
 | [docs/API.md](docs/API.md) | API リファレンス（全エンドポイント、リクエスト/レスポンス構造） |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | デプロイガイド（Docker、PostgreSQL 移行、本番設定） |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 開発者ガイド（ローカルビルド、モジュール構造、コントリビューションフロー） |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | プロダクトロードマップ（現在の v1.8 baseline、v1.9 reverse heartbeat と production hardening 計画） |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | セキュリティモデル（脅威モデリング、HMAC 仕様、防御レイヤー） |
 | [docs/TESTING.md](docs/TESTING.md) | テストシステム（三層アーキテクチャ、ファクトリーパターン、カバレッジ閾値、Docker 検証） |
 | [CHANGELOG.md](CHANGELOG.md) | バージョン変更履歴 |
