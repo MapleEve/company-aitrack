@@ -1,16 +1,39 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-use crate::domain::model::{InspectRow, Record};
+use crate::domain::model::{
+    sanitize_non_sig_record_fields, truncate_chars, InspectRow, Record, MAX_STORED_PROMPT_CHARS,
+};
+
+pub(crate) const MAX_SYNCED_RECORD_ROWS: i64 = 10_000;
+pub(crate) const MAX_PENDING_RECORD_ROWS: i64 = 1_000;
+pub(crate) const MAX_LOCAL_RECORD_ROWS: i64 = MAX_SYNCED_RECORD_ROWS + MAX_PENDING_RECORD_ROWS;
+pub(crate) const MAX_UNUPLOADABLE_PENDING_RECORD_ROWS: i64 = 250;
+pub(crate) const MAX_RETRY_EXHAUSTED_PENDING_RECORD_ROWS: i64 = 100;
+pub(crate) const MAX_PROMPT_CONTEXT_ROWS: i64 = 256;
+const DB_RECLAIM_PRUNE_THRESHOLD_ROWS: usize = 128;
+const INCREMENTAL_VACUUM_PAGES: i64 = 512;
+const FULL_VACUUM_FREELIST_THRESHOLD_PAGES: i64 = 4096;
+
+const PRUNED_DIFF_HUNK_MARKER: &str = "[aitrack-pruned:diff_hunk]";
+const PRUNED_METADATA_MARKER: &str = "{\"aitrack_pruned\":true}";
+const PRUNED_PROMPT_MARKER: &str = "[aitrack-pruned:prompt_summary]";
 
 pub fn insert_record(conn: &Connection, r: &Record) -> Result<bool> {
-    // 2-second dedup window
+    let mut r = r.clone();
+    sanitize_non_sig_record_fields(&mut r);
+
+    // 2-second dedup window for the same logical event. Different agents or
+    // metadata variants can legitimately touch the same file with the same diff.
     let is_dup: bool = conn.query_row(
         "SELECT COUNT(*) > 0 FROM records
-         WHERE file_path = ?1 AND repo_url = ?2
-           AND ((diff_hunk IS NULL AND ?3 IS NULL) OR (diff_hunk = ?3))
+         WHERE tool = ?1
+           AND file_path = ?2
+           AND repo_url = ?3
+           AND ((diff_hunk IS NULL AND ?4 IS NULL) OR (diff_hunk = ?4))
+           AND ((metadata IS NULL AND ?5 IS NULL) OR (metadata = ?5))
            AND datetime(timestamp) > datetime('now', '-2 seconds')",
-        params![r.file_path, r.repo_url, r.diff_hunk],
+        params![r.tool, r.file_path, r.repo_url, r.diff_hunk, r.metadata],
         |row| row.get(0),
     )?;
 
@@ -75,11 +98,44 @@ pub fn mark_synced(conn: &Connection, ids: &[i64]) -> Result<()> {
         .map(|i| format!("?{i}"))
         .collect::<Vec<_>>()
         .join(",");
+    let diff_marker = ids.len() + 1;
+    let metadata_marker = ids.len() + 2;
+    let prompt_marker = ids.len() + 3;
+    let mut params = ids
+        .iter()
+        .copied()
+        .map(rusqlite::types::Value::Integer)
+        .collect::<Vec<_>>();
+    params.push(rusqlite::types::Value::Text(
+        PRUNED_DIFF_HUNK_MARKER.to_string(),
+    ));
+    params.push(rusqlite::types::Value::Text(
+        PRUNED_METADATA_MARKER.to_string(),
+    ));
+    params.push(rusqlite::types::Value::Text(
+        PRUNED_PROMPT_MARKER.to_string(),
+    ));
+
     conn.execute(
         &format!(
-            "UPDATE records SET synced = 1, synced_at = datetime('now') WHERE id IN ({placeholders})"
+            "UPDATE records
+             SET synced = 1,
+                 synced_at = datetime('now'),
+                 diff_hunk = CASE
+                   WHEN diff_hunk IS NULL THEN NULL
+                   ELSE ?{diff_marker}
+                 END,
+                 metadata = CASE
+                   WHEN metadata IS NULL THEN NULL
+                   ELSE ?{metadata_marker}
+                 END,
+                 prompt_summary = CASE
+                   WHEN prompt_summary IS NULL THEN NULL
+                   ELSE ?{prompt_marker}
+                 END
+             WHERE id IN ({placeholders})"
         ),
-        rusqlite::params_from_iter(ids),
+        rusqlite::params_from_iter(params),
     )?;
     Ok(())
 }
@@ -182,12 +238,170 @@ pub fn token_breakdown(conn: &Connection) -> Result<Vec<(String, i64, i64)>> {
 
 pub fn clean_synced(conn: &Connection) -> Result<usize> {
     let n = conn.execute("DELETE FROM records WHERE synced = 1", [])?;
+    reclaim_after_prune(conn, n)?;
     Ok(n)
+}
+
+pub fn prune_old_synced_records(conn: &Connection, keep_latest_synced: i64) -> Result<usize> {
+    if keep_latest_synced <= 0 {
+        return Ok(0);
+    }
+
+    let current: i64 =
+        conn.query_row("SELECT COUNT(*) FROM records WHERE synced = 1", [], |row| {
+            row.get(0)
+        })?;
+    let overage = current.saturating_sub(keep_latest_synced);
+    if overage <= 0 {
+        return Ok(0);
+    }
+
+    let n = conn.execute(
+        "DELETE FROM records
+         WHERE id IN (
+           SELECT id FROM records
+           WHERE synced = 1
+           ORDER BY id ASC
+           LIMIT ?1
+         )",
+        params![overage],
+    )?;
+    Ok(n)
+}
+
+pub fn prune_local_record_storage(conn: &Connection) -> Result<usize> {
+    let mut changed = 0usize;
+
+    changed += prune_old_synced_records(conn, MAX_SYNCED_RECORD_ROWS)?;
+    changed += prune_records_matching(
+        conn,
+        "synced = 0 AND retry_count >= 5",
+        MAX_RETRY_EXHAUSTED_PENDING_RECORD_ROWS,
+    )?;
+    changed += prune_records_matching(
+        conn,
+        "synced = 0 AND (token_key = '' OR token_key = 'legacy' OR record_sig = '')",
+        MAX_UNUPLOADABLE_PENDING_RECORD_ROWS,
+    )?;
+    changed += strip_retry_exhausted_pending_original_text(conn)?;
+    changed += prune_records_matching(conn, "synced = 0", MAX_PENDING_RECORD_ROWS)?;
+    changed += prune_records_to_total_limit(conn, MAX_LOCAL_RECORD_ROWS)?;
+    changed += prune_prompt_context(conn)?;
+
+    reclaim_after_prune(conn, changed)?;
+    Ok(changed)
+}
+
+fn prune_records_matching(
+    conn: &Connection,
+    where_clause: &'static str,
+    keep_latest: i64,
+) -> Result<usize> {
+    if keep_latest < 0 {
+        return Ok(0);
+    }
+
+    let current: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM records WHERE {where_clause}"),
+        [],
+        |row| row.get(0),
+    )?;
+    let overage = current.saturating_sub(keep_latest);
+    if overage <= 0 {
+        return Ok(0);
+    }
+
+    let deleted = conn.execute(
+        &format!(
+            "DELETE FROM records
+             WHERE id IN (
+               SELECT id FROM records
+               WHERE {where_clause}
+               ORDER BY id ASC
+               LIMIT ?1
+             )"
+        ),
+        params![overage],
+    )?;
+    Ok(deleted)
+}
+
+fn strip_retry_exhausted_pending_original_text(conn: &Connection) -> Result<usize> {
+    let stripped = conn.execute(
+        "UPDATE records
+         SET diff_hunk = CASE
+               WHEN diff_hunk IS NULL THEN NULL
+               ELSE ?1
+             END,
+             metadata = CASE
+               WHEN metadata IS NULL THEN NULL
+               ELSE ?2
+             END,
+             prompt_summary = CASE
+               WHEN prompt_summary IS NULL THEN NULL
+               ELSE ?3
+             END
+         WHERE synced = 0
+           AND retry_count >= 5
+           AND (
+             (diff_hunk IS NOT NULL AND diff_hunk != ?1)
+             OR (metadata IS NOT NULL AND metadata != ?2)
+             OR (prompt_summary IS NOT NULL AND prompt_summary != ?3)
+           )",
+        params![
+            PRUNED_DIFF_HUNK_MARKER,
+            PRUNED_METADATA_MARKER,
+            PRUNED_PROMPT_MARKER
+        ],
+    )?;
+    Ok(stripped)
+}
+
+fn prune_records_to_total_limit(conn: &Connection, keep_latest: i64) -> Result<usize> {
+    if keep_latest <= 0 {
+        return Ok(0);
+    }
+
+    let current: i64 = conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
+    let overage = current.saturating_sub(keep_latest);
+    if overage <= 0 {
+        return Ok(0);
+    }
+
+    let deleted = conn.execute(
+        "DELETE FROM records
+         WHERE id IN (
+           SELECT id FROM records
+           ORDER BY synced DESC, retry_count DESC, id ASC
+           LIMIT ?1
+         )",
+        params![overage],
+    )?;
+    Ok(deleted)
 }
 
 pub fn clean_all(conn: &Connection) -> Result<usize> {
     let n = conn.execute("DELETE FROM records", [])?;
+    reclaim_after_prune(conn, n)?;
     Ok(n)
+}
+
+pub(crate) fn reclaim_after_prune(conn: &Connection, deleted_rows: usize) -> Result<()> {
+    if deleted_rows < DB_RECLAIM_PRUNE_THRESHOLD_ROWS || !conn.is_autocommit() {
+        return Ok(());
+    }
+
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    let vacuum_sql = format!("PRAGMA incremental_vacuum({INCREMENTAL_VACUUM_PAGES});");
+    let _ = conn.execute_batch(&vacuum_sql);
+
+    let freelist_pages: i64 = conn
+        .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+        .unwrap_or(0);
+    if freelist_pages >= FULL_VACUUM_FREELIST_THRESHOLD_PAGES {
+        let _ = conn.execute_batch("VACUUM;");
+    }
+    Ok(())
 }
 
 pub fn get_last_heartbeat(conn: &Connection) -> Option<i64> {
@@ -235,12 +449,32 @@ pub fn ensure_prompt_context_table(conn: &Connection) -> Result<()> {
 }
 
 pub fn insert_prompt_context(conn: &Connection, session_id: &str, prompt_text: &str) -> Result<()> {
-    let truncated: String = prompt_text.chars().take(4096).collect();
+    let truncated = truncate_chars(prompt_text, MAX_STORED_PROMPT_CHARS);
     conn.execute(
         "INSERT INTO prompt_context (session_id, prompt_text) VALUES (?1, ?2)",
         params![session_id, truncated],
     )?;
+    prune_prompt_context(conn)?;
     Ok(())
+}
+
+fn prune_prompt_context(conn: &Connection) -> Result<usize> {
+    let current: i64 =
+        conn.query_row("SELECT COUNT(*) FROM prompt_context", [], |row| row.get(0))?;
+    let overage = current.saturating_sub(MAX_PROMPT_CONTEXT_ROWS);
+    if overage <= 0 {
+        return Ok(0);
+    }
+    let deleted = conn.execute(
+        "DELETE FROM prompt_context
+         WHERE rowid IN (
+           SELECT rowid FROM prompt_context
+           ORDER BY rowid ASC
+           LIMIT ?1
+         )",
+        params![overage],
+    )?;
+    Ok(deleted)
 }
 
 pub fn get_recent_prompt(conn: &Connection, session_id: &str) -> Option<String> {
@@ -296,4 +530,46 @@ fn map_inspect_row(row: &rusqlite::Row) -> rusqlite::Result<InspectRow> {
         token_key: row.get(8)?,
         timestamp: row.get(9)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    fn open_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(super::super::schema::CREATE_TABLE_SQL)
+            .unwrap();
+        ensure_kv_table(&conn).unwrap();
+        ensure_prompt_context_table(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn schema_batch_applies_size_maintenance_pragmas() {
+        let conn = open_test_db();
+        let auto_vacuum: i64 = conn
+            .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))
+            .unwrap();
+        let journal_size_limit: i64 = conn
+            .query_row("PRAGMA journal_size_limit", [], |row| row.get(0))
+            .unwrap();
+        let busy_timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(auto_vacuum, 2);
+        assert_eq!(journal_size_limit, 67_108_864);
+        assert_eq!(busy_timeout, 5_000);
+    }
+
+    #[test]
+    fn reclaim_after_prune_skips_tiny_deletes_and_accepts_large_deletes() {
+        let conn = open_test_db();
+
+        reclaim_after_prune(&conn, 1).unwrap();
+        reclaim_after_prune(&conn, DB_RECLAIM_PRUNE_THRESHOLD_ROWS).unwrap();
+    }
 }

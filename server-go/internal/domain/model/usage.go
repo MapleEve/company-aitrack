@@ -10,6 +10,7 @@ type UsageDailyRollup struct {
 	Agent            string
 	Model            string
 	Account          string
+	UsageBasis       string
 	TokensIn         int64
 	TokensOut        int64
 	TokensCacheRead  int64
@@ -54,6 +55,7 @@ type UsageSummaryItem struct {
 	Agent        string  `json:"agent"`
 	Model        string  `json:"model"`
 	Account      string  `json:"account"`
+	UsageBasis   string  `json:"usage_basis"`
 	TotalTokens  int64   `json:"total_tokens"`
 	MessageCount int64   `json:"message_count"`
 	SourceCost   float64 `json:"source_cost"`

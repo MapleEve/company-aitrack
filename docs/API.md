@@ -22,9 +22,9 @@ Claude Code、Codex CLI、Cursor 当前具备原生编辑钩子适配器和原�
 
 ### 工具支持范围
 
-v1.7.0 默认本地扫描覆盖 30 个已验证来源的工具 key，并接受 3 个显式别名。完整清单、原生钩子范围、用量汇总、额度快照、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
+v1.7.0 默认本地扫描覆盖 35 个规范工具 key，并接受 3 个显式别名。完整清单、原生钩子范围、用量汇总、额度快照、扫描路径和性能上限见 [AI 编码工具支持矩阵](AGENT_SUPPORT.md)。
 
-这些工具 key 可以出现在 `heartbeat.hooks`、`GET /devices`、`/usage/*` 的 `agent` 字段和本地会话记录扫描生成的监控事件中。`hooks.<tool> = true` 只表示该工具在本机可见或对应钩子可用，不代表所有工具都具备原生编辑钩子或完整本地正文来源。
+这些工具 key 可以出现在 `heartbeat.hooks`、`GET /devices`、`/usage/*` 的 `agent` 字段和本地会话记录扫描生成的监控事件中。`hooks.<tool> = true` 表示该工具在本机可见或对应钩子可用；完整提示词、助手输出、工具调用、工具结果、用量、会话和时间字段由本地用量扫描按工具结构补齐。
 
 ---
 
@@ -267,7 +267,7 @@ curl -s -X POST http://localhost:8080/admin/tokens \
       "provider": "claude",
       "model": null,
       "session_id": "sess-abc123",
-      "repo_url": "git@github.com:org/repo.git",
+      "repo_url": "https://github.com/org/repo.git",
       "branch": "main",
       "current_sha": "a1b2c3d4e5f6",
       "file_path": "src/main.rs",
@@ -345,7 +345,7 @@ HOSTNAME_VAL="MacBook-Pro.local"
 TIMESTAMP="2026-05-17T10:21:00Z"
 TOOL="claude"
 FILE_PATH="src/main.rs"
-REPO_URL="git@github.com:org/repo.git"
+REPO_URL="https://github.com/org/repo.git"
 CURRENT_SHA="a1b2c3d4e5f6"
 ADDED_LINES="12"
 REMOVED_LINES="3"
@@ -378,7 +378,7 @@ echo "record_sig: $RECORD_SIG"
 ```bash
 # 先计算签名所需的时间戳和请求体哈希
 TS=$(date +%s)
-BODY='{"device_id":"550e8400-e29b-41d4-a716-446655440000","client_version":"1.0.0","edits":[{"tool":"claude","tool_version":"claude-code","provider":"claude","model":null,"session_id":"sess-abc123","repo_url":"git@github.com:org/repo.git","branch":"main","current_sha":"a1b2c3d4e5f6","file_path":"src/main.rs","added_lines":12,"removed_lines":3,"diff_hunk":"@@ -10,7 +10,16 @@\n ...","metadata":null,"timestamp":"2026-05-17T10:21:00Z","device_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"MacBook-Pro.local","record_sig":"<用上方脚本预先计算>"}]}'
+BODY='{"device_id":"550e8400-e29b-41d4-a716-446655440000","client_version":"1.0.0","edits":[{"tool":"claude","tool_version":"claude-code","provider":"claude","model":null,"session_id":"sess-abc123","repo_url":"https://github.com/org/repo.git","branch":"main","current_sha":"a1b2c3d4e5f6","file_path":"src/main.rs","added_lines":12,"removed_lines":3,"diff_hunk":"@@ -10,7 +10,16 @@\n ...","metadata":null,"timestamp":"2026-05-17T10:21:00Z","device_id":"550e8400-e29b-41d4-a716-446655440000","hostname":"MacBook-Pro.local","record_sig":"<用上方脚本预先计算>"}]}'
 
 BODY_SHA256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hex | awk '{print $2}')
 # credential = POST /admin/tokens 返回的 credential 字段值
@@ -482,7 +482,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
       "file_path": "src/main.rs",
       "added_lines": 12,
       "removed_lines": 3,
-      "repo_url": "git@github.com:org/repo.git",
+      "repo_url": "https://github.com/org/repo.git",
       "branch": "main",
       "timestamp": "2026-05-17T10:21:00Z",
       "flagged": false,
@@ -541,7 +541,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
 
 ## POST /api/v1/ai-track/usage/rollup
 
-本地用量汇总上报。客户端按日期、工具、模型、账号聚合 token 分桶后提交；服务端按 `(token_key, device_id, day, agent, model, account)` 幂等 upsert。
+本地用量汇总上报。客户端按日期、工具、模型、账号和用量依据聚合 token 分桶后提交；服务端按 `(token_key, device_id, day, agent, model, account, usage_basis)` 幂等 upsert。
 
 **鉴权**：Bearer token + `X-AiTrack-Timestamp` + `X-AiTrack-Signature`，并额外要求 `X-AiTrack-Body-Sha256` 与 `X-AiTrack-Body-Timestamp`。签名和 body digest 均覆盖实际传输 body；`Content-Encoding` 可为空、`identity` 或 `gzip`。
 
@@ -554,6 +554,7 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
       "agent": "codex",
       "model": "gpt-5",
       "account": "local",
+      "usage_basis": "native",
       "tokens_in": 10,
       "tokens_out": 20,
       "tokens_cache_read": 3,
@@ -565,6 +566,20 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
   ]
 }
 ```
+
+| item 字段 | 类型 | 必填 | 说明 |
+|-----------|------|------|------|
+| `device_id` | string | 是 | UUIDv4 设备标识 |
+| `day` | string | 是 | 用量日期，格式为 `YYYY-MM-DD` |
+| `agent` | string | 是 | 工具 key |
+| `model` | string | 是 | 模型名称 |
+| `account` | string | 是 | 本地账号或来源标识 |
+| `usage_basis` | string | 否 | 用量依据，可为 `native` 或 `local_derived`；为空或缺失时按 `native` 处理 |
+| `tokens_in` / `tokens_out` | integer | 否 | 输入与输出 token 数 |
+| `tokens_cache_read` / `tokens_cache_write` | integer | 否 | 缓存读取与写入 token 数 |
+| `tokens_reasoning` | integer | 否 | 推理 token 数 |
+| `message_count` | integer | 否 | 消息数 |
+| `source_cost` | number | 否 | 来源侧成本估算 |
 
 ### 响应（200）
 
@@ -618,10 +633,12 @@ curl -s "http://localhost:8080/api/v1/ai-track/edits?repo=org%2Frepo&page=0&size
   "message_count": 3,
   "source_cost": 0.25,
   "items": [
-    {"token_key": "abcdef…7890", "agent": "codex", "model": "gpt-5", "account": "local", "total_tokens": 40, "message_count": 3, "source_cost": 0.25}
+    {"token_key": "abcdef…7890", "agent": "codex", "model": "gpt-5", "account": "local", "usage_basis": "native", "total_tokens": 40, "message_count": 3, "source_cost": 0.25}
   ]
 }
 ```
+
+响应顶层 `total_tokens`、`tokens_*`、`message_count` 和 `source_cost` 会汇总所有 `usage_basis` 的数据；`items` 中每个条目会返回对应分桶的 `usage_basis`，取值为 `native` 或 `local_derived`。
 
 ---
 

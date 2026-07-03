@@ -24,7 +24,7 @@ aitrack v1.7.0 的采集模型由三层组成：
 
 - **原生编辑证据**：`claude`、`codex`、`cursor` 具备原生编辑适配器，可生成带 diff、行数、仓库信息和 `record_sig` 的编辑记录。
 - **原生提示词钩子**：`claude`、`codex`、`cursor` 支持原生提示词钩子；其他工具的提示词、工具调用和窗口上下文只从稳定的本地会话、轨迹、导出或遥测来源提取。
-- **动态状态心跳与本地用量扫描**：所有已登记工具都可以进入心跳状态图；默认本地扫描覆盖 30 个已验证来源的规范工具 key，用于提取用量标量、额度/订阅快照，以及本地来源中可还原的监控事件。
+- **动态状态心跳与本地用量扫描**：所有已登记工具都可以进入心跳状态图；默认本地扫描覆盖 35 个规范工具 key，用于提取用量标量、额度/订阅快照，以及本地来源中可还原的监控事件。
 
 纯 token、额度或订阅快照只属于用量数据域，不能替代编辑记录，也不会生成 diff、行数或 `record_sig`。
 
@@ -111,7 +111,7 @@ X-AiTrack-Signature = lowercase_hex(
 | 6 | `repo_url` 在白名单内（enforce=true 时） | 单条 `flagged/rejected: repo_unknown` | 防 repo 伪造 |
 | 7 | `file_path` 不含 `..`，与 `repo_url` 路径逻辑一致 | 单条 `flagged: path_mismatch` | 防路径注入 |
 | 8 | `added_lines ≤ max_added_lines`（默认 5000） | 单条 `flagged: oversized` | 防行数膨胀 |
-| 9 | (token_key, file_path) 每小时记录数 ≤ rate_limit（默认 30） | 单条 `rejected: rate_limited` | 防刷量 |
+| 9 | (token_key, file_path) 每小时记录数 ≤ rate_limit（30 为默认值） | 单条 `rejected: rate_limited` | 防刷量 |
 | 10 | accepted + flagged 写入数据库 | — | 数据持久化 |
 
 **flagged 与 rejected 的区别**：rejected 不入库，客户端重试；flagged 照常入库但打标，供管理员人工审查。

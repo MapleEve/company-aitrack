@@ -77,7 +77,7 @@ v1.7.0 当前支持边界：
 
 - 原生编辑钩子适配器：`claude`、`codex`、`cursor`。
 - 原生提示词钩子：`claude`、`codex`、`cursor`。
-- 默认本地扫描：30 个已验证来源的规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
+- 默认本地扫描：35 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名并归并到规范 key，避免同一工具重复扫描和重复汇总。
 - 本地来源类型：本机会话目录、JSON/JSONL/NDJSON、CSV、SQLite 和本地客户端状态。
 - 默认扫描窗口：近 30 天；显式 `--since/--until` 用于小范围回填；扫描游标缓存会跳过未变化来源。
 
@@ -127,7 +127,7 @@ let big = tampered_oversized_lines(1);  // added_lines = 99,999,999
 ### usage 子命令
 
 ```bash
-# 扫描默认 30 个工具 key，只写入本地 usage.sqlite
+# 扫描默认 35 个工具 key，只写入本地 usage.sqlite
 ./target/debug/aitrack usage scan
 
 # 针对单个工具做小范围回填

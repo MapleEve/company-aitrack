@@ -87,7 +87,7 @@ impl HttpUploader {
     }
 
     /// Build the JSON payload from a slice of `Record`s.
-    fn build_payload(records: &[Record], device_id: &str) -> Result<Vec<u8>> {
+    pub(crate) fn build_payload(records: &[Record], device_id: &str) -> Result<Vec<u8>> {
         let edits: Vec<EditRecord> = records
             .iter()
             .map(|r| EditRecord {
@@ -118,6 +118,10 @@ impl HttpUploader {
             edits,
         };
         Ok(serde_json::to_vec(&payload)?)
+    }
+
+    pub(crate) fn payload_size_bytes(records: &[Record], device_id: &str) -> Result<usize> {
+        Ok(Self::build_payload(records, device_id)?.len())
     }
 
     /// Async POST — returns the parsed `UploadResponse` on HTTP 2xx.

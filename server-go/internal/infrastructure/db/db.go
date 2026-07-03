@@ -99,6 +99,7 @@ func postgresDDL() []string {
 		`CREATE INDEX IF NOT EXISTS idx_edit_records_repo_url    ON edit_records(repo_url)`,
 		`CREATE INDEX IF NOT EXISTS idx_edit_records_device_id   ON edit_records(device_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_edit_records_received_at ON edit_records(received_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uk_edit_records_record_sig ON edit_records(record_sig)`,
 
 		`CREATE TABLE IF NOT EXISTS devices (
   id             BIGSERIAL PRIMARY KEY,
@@ -120,6 +121,7 @@ func postgresDDL() []string {
   agent               TEXT NOT NULL,
   model               TEXT NOT NULL,
   account             TEXT NOT NULL DEFAULT '',
+  usage_basis         TEXT NOT NULL DEFAULT 'native',
   tokens_in           BIGINT NOT NULL DEFAULT 0,
   tokens_out          BIGINT NOT NULL DEFAULT 0,
   tokens_cache_read   BIGINT NOT NULL DEFAULT 0,
@@ -128,7 +130,7 @@ func postgresDDL() []string {
   message_count       BIGINT NOT NULL DEFAULT 0,
   source_cost         DOUBLE PRECISION NOT NULL DEFAULT 0,
   updated_at          TEXT NOT NULL,
-  UNIQUE(token_key, device_id, day, agent, model, account)
+  UNIQUE(token_key, device_id, day, agent, model, account, usage_basis)
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_daily_rollups_token_key ON usage_daily_rollups(token_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_daily_rollups_day ON usage_daily_rollups(day)`,
@@ -154,7 +156,17 @@ func postgresDDL() []string {
 		// Additive migrations for existing PostgreSQL databases.
 		`ALTER TABLE edit_records ADD COLUMN IF NOT EXISTS prompt_summary TEXT`,
 		`ALTER TABLE edit_records ADD COLUMN IF NOT EXISTS embedding BYTEA`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uk_edit_records_record_sig ON edit_records(record_sig)`,
 		`ALTER TABLE usage_daily_rollups ADD COLUMN IF NOT EXISTS message_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE usage_daily_rollups ADD COLUMN IF NOT EXISTS source_cost DOUBLE PRECISION NOT NULL DEFAULT 0`,
+		`ALTER TABLE usage_daily_rollups ADD COLUMN IF NOT EXISTS usage_basis TEXT NOT NULL DEFAULT 'native'`,
+		`UPDATE usage_daily_rollups SET usage_basis = 'native' WHERE usage_basis = ''`,
+		`ALTER TABLE usage_daily_rollups DROP CONSTRAINT IF EXISTS usage_daily_rollups_token_key_device_id_day_agent_model_account_key`,
+		`ALTER TABLE usage_daily_rollups DROP CONSTRAINT IF EXISTS usage_daily_rollups_token_key_device_id_day_agent_model_acc_key`,
+		`ALTER TABLE usage_daily_rollups DROP CONSTRAINT IF EXISTS uk_usage_daily_rollup`,
+		`DROP INDEX IF EXISTS usage_daily_rollups_token_key_device_id_day_agent_model_account_key`,
+		`DROP INDEX IF EXISTS usage_daily_rollups_token_key_device_id_day_agent_model_acc_key`,
+		`DROP INDEX IF EXISTS uk_usage_daily_rollup`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uk_usage_daily_rollups_basis ON usage_daily_rollups(token_key, device_id, day, agent, model, account, usage_basis)`,
 	}
 }

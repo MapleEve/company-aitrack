@@ -32,16 +32,16 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 | v1.5 | 提示词捕获前置：UserPromptSubmit 钩子 + prompt_summary 字段 + prompt_patterns 画像维度 | 已交付 |
 | v1.6.0 | 六边形架构重构（domain / port / adapter）；`aitrack update` 子命令（ed25519 签名验证）；关键词完整性指纹（SHA-256）；testapp 端到端真实链路 | 已交付 |
 | v1.6.1 | Go 服务端完全迁移为 PostgreSQL-only（移除 SQLite 回退）；E2E 竞态修复；CI 改用原生工具链（llvm-cov / mvn verify）替代 Docker 构建验证 | 已交付 |
-| v1.7.0 | 动态工具注册表 / 状态 / 心跳；30 个默认本地扫描工具 key；用量汇总 / 额度快照数据面；Java + Go 用量 API；本地会话记录监控恢复；30 天默认窗口、按需小回填和文件游标缓存；本地来源 E2E 与架构门禁 | 已交付 |
+| v1.7.0 | 动态工具注册表 / 状态 / 心跳；35 个默认本地扫描工具 key；用量汇总 / 额度快照数据面；Java + Go 用量 API；本地会话记录监控恢复；30 天默认窗口、按需小回填和文件游标缓存；本地来源 E2E 与架构门禁 | 已交付 |
 
 ### 当前工具支持边界
 
 - Claude Code、Codex CLI、Cursor：已具备原生编辑钩子适配器，可生成 `EditRecord` 编辑证据。
 - Claude Code、Codex CLI、Cursor：额外支持原生提示词钩子；Codex CLI 与 Claude Code 可从本地状态提取额度 / 订阅快照。
 - 动态工具注册表 / 状态 / 心跳：心跳 `hooks` 已按工具 key 动态表达，支持登记更多工具的本机可见性和安装状态。
-- 默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`opencode`、`qoder`、`qoder-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`warp`、`zcode`；显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
-- 本地用量来源：已支持按本机会话目录、导出文件、遥测日志、JSONL、NDJSON、SQLite、CSV 和本地客户端状态接入用量汇总 / 快照，按 token 分桶、消息数和成本估算聚合；只有来源自身提供稳定字段时，才将提示词、工具调用、窗口和可还原编辑监控事件补入 `EditRecord` 上报链路。
-- 扫描性能边界：默认 30 天近窗口增量扫描；显式 `--since/--until` 做小范围回填；每个工具有候选、文件数、目录遍历和行数上限；本地文件游标缓存可跳过未变化来源。
+- 默认本地扫描覆盖 `claude`、`codex`、`cursor`、`trae`、`qwen`、`antigravity`、`opencode`、`qoder`、`qoder-cn`、`qoder-work`、`qoder-work-cn`、`wukong`、`hermes`、`openclaw`、`gemini`、`copilot`、`cline`、`roo-code`、`kiro`、`zed`、`goose`、`amp`、`droid`、`pi`、`mux`、`crush`、`codebuff`、`kilo`、`kilocode`、`kimi`、`gjc`、`grok`、`synthetic`、`warp`、`zcode`；显式 `--tool` 也接受 `roocode`、`kilo-code`、`gajae-code` 作为别名并归并到规范 key，避免同一工具重复扫描和重复汇总。
+- 本地用量来源：已支持按本机会话目录、导出文件、遥测日志、JSONL、NDJSON、SQLite、CSV 和本地客户端状态接入完整数据面，合并提示词、助手输出、工具调用、工具结果、token 分桶、消息数、成本估算、会话时间、模型上下文和可还原编辑监控事件。
+- 扫描性能边界：近 30 天默认窗口增量扫描；显式 `--since/--until` 做小范围回填；每个工具有候选、文件数、目录遍历和行数上限；本地文件游标缓存可跳过未变化来源。
 
 ### 当前成功指标（v1.7.0 基线）
 
@@ -50,8 +50,8 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 - 服务端校验链吞吐量 ≥ 500 rps
 - 心跳检测延迟 ≤ 1 小时
 - 三组件（client / server-java / server-go）CI 覆盖率均 ≥ 90%
-- Rust 客户端单测 300 通过
-- 本地来源 E2E 矩阵覆盖 30 / 30；PR 门禁要求默认矩阵覆盖率 100%
+- Rust 客户端单测 342 通过
+- 默认扫描 key 的本地来源 E2E fixture/parser 覆盖所有默认规范 key；PR 门禁要求默认矩阵覆盖率 100%，并验证 agent 级完整数据面、来源级字段断言和增量缓存行为
 - 未变化本地来源的第二次 `usage sync` 必须解析 0 条 message 和 0 条 monitoring event
 
 ---
@@ -85,13 +85,13 @@ AiTrack 是一款通用、自托管、开源的 **员工 AI 编码监控与治�
 |--------|------|------|
 | M14 | Rust 服务端 | 基于 axum + sqlx + tokio；与 Java / Go 协议完全等价；目标资源占用 ≤ 32MB 空载；适用于边缘部署与资源受限场景 |
 | M15 | 原生编辑适配器扩展 | 按工具自身本地编辑事件能力逐个落地原生编辑适配器，提升文件编辑类 `EditRecord` 的 diff 与行数精度 |
-| M16 | 工具专属本地来源包 | 在通用 JSON/SQLite/CSV 解析之外，逐个补充工具专属字段映射、fixture 和回归测试，提高提示词、工具调用、窗口、编辑和成本字段的提取精度 |
+| M16 | 新工具来源包机制 | 为后续新增 AI 工具提供独立来源包、fixture 和回归测试模板，保持默认工具矩阵可扩展、可审计 |
 | M17 | 服务端 Skills + 服务端 CLI（纯 Rust） | Skills：服务端沙箱执行能力（初始内置 summarize_edits / detect_pattern / suggest_refactor）；CLI：管理员命令行工具，无需 JVM / Go 运行时，支持 token 管理、设备查询、统计与画像查询 |
 | M18 | MCP 管理接口 | 将 aitrack 服务端暴露为 MCP Server；管理者可在 Claude Desktop / Claude Code 中直接查询统计、设备、画像、相似代码等数据，无需传统后台 UI |
 
 预计工期：12 周
 
-完成后，工具覆盖从「动态注册 + 状态心跳 + 通用本地用量来源」扩展为「按能力落地编辑适配 + 专属本地来源包」，管理形态从「Web 后台 + REST API」扩展至「CLI + MCP」。
+完成后，工具覆盖从「动态注册 + 状态心跳 + 默认本地来源矩阵」扩展为「按能力落地更多原生编辑适配 + 可插拔新增工具来源包」，管理形态从「Web 后台 + REST API」扩展至「CLI + MCP」。
 
 ---
 
@@ -156,7 +156,7 @@ Java / Go 双服务端     并发加固（M9）            服务端 Skills（M1
 | 提示词 / 会话记录数据治理策略 | — | 规划中 | ✓ | ✓ |
 | Rust 服务端（第三实现） | — | — | 规划中 | ✓ |
 | 更多原生编辑适配器 | — | — | 规划中 | ✓ |
-| 工具专属本地来源包 | — | — | 规划中 | ✓ |
+| 新工具来源包机制 | — | — | 规划中 | ✓ |
 | 服务端 Skills | — | — | 规划中 | ✓ |
 | 服务端 CLI（纯 Rust） | — | — | 规划中 | ✓ |
 | MCP 管理接口 | — | — | 规划中 | ✓ |

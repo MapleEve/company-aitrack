@@ -29,6 +29,28 @@ pub struct Record {
     pub prompt_summary: Option<String>,
 }
 
+pub const MAX_STORED_DIFF_HUNK_CHARS: usize = 8192;
+pub const MAX_STORED_METADATA_CHARS: usize = 4096;
+pub const MAX_STORED_PROMPT_CHARS: usize = 4096;
+
+pub fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+pub fn truncate_optional_chars(value: &Option<String>, max_chars: usize) -> Option<String> {
+    value.as_deref().map(|s| truncate_chars(s, max_chars))
+}
+
+pub fn sanitize_sig_bound_record_fields(record: &mut Record) {
+    record.diff_hunk = truncate_optional_chars(&record.diff_hunk, MAX_STORED_DIFF_HUNK_CHARS);
+}
+
+pub fn sanitize_non_sig_record_fields(record: &mut Record) {
+    record.metadata = truncate_optional_chars(&record.metadata, MAX_STORED_METADATA_CHARS);
+    record.prompt_summary =
+        truncate_optional_chars(&record.prompt_summary, MAX_STORED_PROMPT_CHARS);
+}
+
 /// A lightweight row returned by the `inspect` command.
 #[derive(Debug)]
 pub struct InspectRow {

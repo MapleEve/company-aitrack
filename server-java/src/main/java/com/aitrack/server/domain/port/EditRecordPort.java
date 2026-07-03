@@ -22,8 +22,14 @@ public interface EditRecordPort {
     /** Persists a single edit record; returns the saved instance. */
     EditRecordEntity save(EditRecordEntity record);
 
+    /** Returns true when a validated record signature has already been persisted. */
+    boolean existsByRecordSig(String recordSig);
+
     /** Counts records for a token+file within a rolling window (rate limiting). */
     long countByTokenKeyAndFilePathSince(String tokenKey, String filePath, Instant since);
+
+    /** Strips raw-ish edit text fields outside the retention window. */
+    int applyRawRetention(Instant now);
 
     /** Returns a page of records optionally filtered by token key and repo URL. */
     PageResult<EditRecordEntity> findByFilters(String tokenKey, String repoUrl, int page, int size);

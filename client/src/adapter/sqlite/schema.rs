@@ -1,5 +1,11 @@
 /// DDL for the core `records` table and its index.
 pub const CREATE_TABLE_SQL: &str = "
+PRAGMA auto_vacuum = INCREMENTAL;
+PRAGMA journal_mode = WAL;
+PRAGMA journal_size_limit = 67108864;
+PRAGMA wal_autocheckpoint = 1000;
+PRAGMA busy_timeout = 5000;
+
 CREATE TABLE IF NOT EXISTS records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tool TEXT NOT NULL,
@@ -28,6 +34,9 @@ CREATE TABLE IF NOT EXISTS records (
 );
 CREATE INDEX IF NOT EXISTS idx_synced ON records(synced);
 CREATE INDEX IF NOT EXISTS idx_record_sig ON records(record_sig);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_record_sig_nonempty ON records(record_sig) WHERE record_sig != '';
+CREATE INDEX IF NOT EXISTS idx_records_pending_retry ON records(synced, retry_count, id);
+CREATE INDEX IF NOT EXISTS idx_records_pending_identity ON records(synced, token_key, record_sig, id);
 ";
 
 /// Idempotent migrations applied after table creation.
@@ -38,6 +47,9 @@ pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE records ADD COLUMN embedding BLOB",
     "ALTER TABLE records ADD COLUMN prompt_summary TEXT",
     "CREATE INDEX IF NOT EXISTS idx_record_sig ON records(record_sig)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_record_sig_nonempty ON records(record_sig) WHERE record_sig != ''",
+    "CREATE INDEX IF NOT EXISTS idx_records_pending_retry ON records(synced, retry_count, id)",
+    "CREATE INDEX IF NOT EXISTS idx_records_pending_identity ON records(synced, token_key, record_sig, id)",
 ];
 
 /// DDL for the key-value store table.

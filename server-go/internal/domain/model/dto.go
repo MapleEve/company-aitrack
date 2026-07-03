@@ -1,5 +1,10 @@
 package model
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // CreateTokenRequest is the body of POST /admin/tokens.
 type CreateTokenRequest struct {
 	Owner string `json:"owner"`
@@ -80,6 +85,7 @@ type UsageRollupItem struct {
 	Agent            string  `json:"agent"`
 	Model            string  `json:"model"`
 	Account          string  `json:"account"`
+	UsageBasis       string  `json:"usage_basis"`
 	TokensIn         int64   `json:"tokens_in"`
 	TokensOut        int64   `json:"tokens_out"`
 	TokensCacheRead  int64   `json:"tokens_cache_read"`
@@ -87,6 +93,24 @@ type UsageRollupItem struct {
 	TokensReasoning  int64   `json:"tokens_reasoning"`
 	MessageCount     int64   `json:"message_count"`
 	SourceCost       float64 `json:"source_cost"`
+}
+
+// UnmarshalJSON normalizes the public usage basis field during ingestion.
+func (i *UsageRollupItem) UnmarshalJSON(data []byte) error {
+	type alias UsageRollupItem
+	var item alias
+	if err := json.Unmarshal(data, &item); err != nil {
+		return err
+	}
+	switch item.UsageBasis {
+	case "":
+		item.UsageBasis = "native"
+	case "native", "local_derived":
+	default:
+		return fmt.Errorf("invalid usage_basis %q", item.UsageBasis)
+	}
+	*i = UsageRollupItem(item)
+	return nil
 }
 
 // UsageSubscriptionSnapshotRequest is a scalar subscription/quota snapshot.

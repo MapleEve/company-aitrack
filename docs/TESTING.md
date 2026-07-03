@@ -347,7 +347,7 @@ cd e2e && go test ./... -run TestReal -v
 
 ```rust
 #[tokio::test]
-async fn test_full_capture_flow() {
+async fn test_capture_upload_flow() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/v1/ai-track/edits"))

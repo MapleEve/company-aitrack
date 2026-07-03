@@ -22,7 +22,8 @@ pub use queries::{
     backfill_repo_info, clean_all, clean_synced, ensure_kv_table, ensure_prompt_context_table,
     fetch_unsynced, get_kv, get_last_heartbeat, get_recent_prompt, increment_retry,
     insert_prompt_context, insert_record, inspect_records, mark_synced, pending_count,
-    pending_count_all, set_kv, set_last_heartbeat, token_breakdown,
+    pending_count_all, prune_local_record_storage, prune_old_synced_records, set_kv,
+    set_last_heartbeat, token_breakdown,
 };
 
 /// SQLite-backed storage adapter.
@@ -146,7 +147,7 @@ mod tests {
             token_key: token_key.to_string(),
             device_id: "device-1".to_string(),
             hostname: "test-host".to_string(),
-            record_sig: "sigxyz".to_string(),
+            record_sig: format!("sig-{tool}-{token_key}-{}", file_path.replace('/', "_")),
             prompt_summary: None,
         }
     }
@@ -173,6 +174,48 @@ mod tests {
         conn
     }
 
+    fn record_ids_by_synced(conn: &Connection, synced: i64) -> Vec<i64> {
+        let mut stmt = conn
+            .prepare("SELECT id FROM records WHERE synced = ?1 ORDER BY id")
+            .unwrap();
+        stmt.query_map([synced], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+
+    fn record_count_where(conn: &Connection, where_clause: &str) -> i64 {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM records WHERE {where_clause}"),
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn original_text_fields(
+        conn: &Connection,
+        id: i64,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT diff_hunk, metadata, prompt_summary FROM records WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    fn record_exists_with_file_path(conn: &Connection, file_path: &str) -> bool {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM records WHERE file_path = ?1",
+                [file_path],
+                |row| row.get(0),
+            )
+            .unwrap();
+        count > 0
+    }
+
     #[test]
     fn insert_and_fetch_unsynced() {
         let conn = open_test_db();
@@ -187,6 +230,25 @@ mod tests {
     }
 
     #[test]
+    fn insert_record_truncates_non_signature_text_fields() {
+        let conn = open_test_db();
+        let mut r = make_record("claude", "src/large.rs", "tok-large");
+        r.metadata = Some("m".repeat(crate::domain::model::MAX_STORED_METADATA_CHARS + 16));
+        r.prompt_summary = Some("p".repeat(crate::domain::model::MAX_STORED_PROMPT_CHARS + 16));
+        assert!(insert_record(&conn, &r).unwrap());
+
+        let rows = fetch_unsynced(&conn, "tok-large", 100).unwrap();
+        assert_eq!(
+            rows[0].metadata.as_ref().unwrap().chars().count(),
+            crate::domain::model::MAX_STORED_METADATA_CHARS
+        );
+        assert_eq!(
+            rows[0].prompt_summary.as_ref().unwrap().chars().count(),
+            crate::domain::model::MAX_STORED_PROMPT_CHARS
+        );
+    }
+
+    #[test]
     fn dedup_window_prevents_second_insert() {
         let conn = open_test_db();
         let r = make_record("claude", "src/dup.rs", "tok-dup");
@@ -194,6 +256,37 @@ mod tests {
         assert!(ins1);
         let ins2 = insert_record(&conn, &r).unwrap();
         assert!(!ins2, "duplicate within 2s should be rejected");
+    }
+
+    #[test]
+    fn prompt_context_is_truncated_and_pruned() {
+        let conn = open_test_db();
+        let long_prompt = "x".repeat(crate::domain::model::MAX_STORED_PROMPT_CHARS + 64);
+        insert_prompt_context(&conn, "sess-large", &long_prompt).unwrap();
+        assert_eq!(
+            get_recent_prompt(&conn, "sess-large")
+                .unwrap()
+                .chars()
+                .count(),
+            crate::domain::model::MAX_STORED_PROMPT_CHARS
+        );
+
+        let worst_case_prompt = "w".repeat(crate::domain::model::MAX_STORED_PROMPT_CHARS);
+        for idx in 0..(queries::MAX_PROMPT_CONTEXT_ROWS + 10) {
+            insert_prompt_context(&conn, &format!("sess-{idx}"), &worst_case_prompt).unwrap();
+        }
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM prompt_context", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, queries::MAX_PROMPT_CONTEXT_ROWS);
+        let stored_chars: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(length(prompt_text)), 0) FROM prompt_context",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored_chars <= queries::MAX_PROMPT_CONTEXT_ROWS * 4096);
     }
 
     #[test]
@@ -217,6 +310,55 @@ mod tests {
         mark_synced(&conn, &[id]).unwrap();
         let after = fetch_unsynced(&conn, "tok-sync", 100).unwrap();
         assert!(after.is_empty(), "should be empty after mark_synced");
+    }
+
+    #[test]
+    fn mark_synced_strips_original_text_fields() {
+        let conn = open_test_db();
+        let mut r = make_record("claude", "src/sync-strip.rs", "tok-sync-strip");
+        r.diff_hunk = Some("@@ -1 +1 @@\n-raw\n+changed".to_string());
+        r.metadata = Some("{\"raw\":\"metadata\"}".to_string());
+        r.prompt_summary = Some("raw prompt".to_string());
+        insert_record(&conn, &r).unwrap();
+
+        let row = fetch_unsynced(&conn, "tok-sync-strip", 100).unwrap();
+        let id = row[0].id;
+        mark_synced(&conn, &[id]).unwrap();
+
+        let (diff_hunk, metadata, prompt_summary) = original_text_fields(&conn, id);
+        assert_eq!(diff_hunk.as_deref(), Some("[aitrack-pruned:diff_hunk]"));
+        assert_eq!(metadata.as_deref(), Some("{\"aitrack_pruned\":true}"));
+        assert_eq!(
+            prompt_summary.as_deref(),
+            Some("[aitrack-pruned:prompt_summary]")
+        );
+        let record_sig: String = conn
+            .query_row(
+                "SELECT record_sig FROM records WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(record_sig, r.record_sig);
+    }
+
+    #[test]
+    fn increment_retry_keeps_pending_original_text_fields() {
+        let conn = open_test_db();
+        let mut r = make_record("claude", "src/retry-keep.rs", "tok-retry-keep");
+        r.diff_hunk = Some("@@ -1 +1 @@\n-raw\n+retry".to_string());
+        r.metadata = Some("{\"raw\":\"metadata\"}".to_string());
+        r.prompt_summary = Some("raw retry prompt".to_string());
+        insert_record(&conn, &r).unwrap();
+
+        let row = fetch_unsynced(&conn, "tok-retry-keep", 100).unwrap();
+        let id = row[0].id;
+        increment_retry(&conn, &[id]).unwrap();
+
+        let (diff_hunk, metadata, prompt_summary) = original_text_fields(&conn, id);
+        assert_eq!(diff_hunk, r.diff_hunk);
+        assert_eq!(metadata, r.metadata);
+        assert_eq!(prompt_summary, r.prompt_summary);
     }
 
     #[test]
@@ -274,6 +416,204 @@ mod tests {
         let deleted = clean_synced(&conn).unwrap();
         assert_eq!(deleted, 1);
         assert_eq!(pending_count(&conn, "tok-cs"), 1);
+    }
+
+    #[test]
+    fn prune_old_synced_records_preserves_unsynced_rows() {
+        let conn = open_test_db();
+        for idx in 0..4 {
+            insert_record(
+                &conn,
+                &make_record(
+                    "claude",
+                    &format!("src/prune-unsynced-{idx}.rs"),
+                    "tok-prune",
+                ),
+            )
+            .unwrap();
+        }
+
+        let unsynced = fetch_unsynced(&conn, "tok-prune", 100).unwrap();
+        mark_synced(&conn, &[unsynced[0].id, unsynced[1].id]).unwrap();
+
+        let deleted = prune_old_synced_records(&conn, 1).unwrap();
+
+        assert_eq!(deleted, 1);
+        assert_eq!(
+            record_ids_by_synced(&conn, 0),
+            vec![unsynced[2].id, unsynced[3].id]
+        );
+    }
+
+    #[test]
+    fn prune_old_synced_records_keeps_latest_synced_rows_by_id() {
+        let conn = open_test_db();
+        for idx in 0..5 {
+            insert_record(
+                &conn,
+                &make_record("claude", &format!("src/prune-latest-{idx}.rs"), "tok-prune"),
+            )
+            .unwrap();
+        }
+
+        let rows = fetch_unsynced(&conn, "tok-prune", 100).unwrap();
+        let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        mark_synced(&conn, &ids).unwrap();
+
+        let deleted = prune_old_synced_records(&conn, 2).unwrap();
+
+        assert_eq!(deleted, 3);
+        assert_eq!(record_ids_by_synced(&conn, 1), vec![ids[3], ids[4]]);
+    }
+
+    #[test]
+    fn prune_old_synced_records_is_noop_when_under_limit() {
+        let conn = open_test_db();
+        for idx in 0..2 {
+            insert_record(
+                &conn,
+                &make_record("claude", &format!("src/prune-under-{idx}.rs"), "tok-prune"),
+            )
+            .unwrap();
+        }
+
+        let rows = fetch_unsynced(&conn, "tok-prune", 100).unwrap();
+        let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        mark_synced(&conn, &ids).unwrap();
+
+        let deleted = prune_old_synced_records(&conn, 5).unwrap();
+
+        assert_eq!(deleted, 0);
+        assert_eq!(record_ids_by_synced(&conn, 1), ids);
+    }
+
+    #[test]
+    fn prune_old_synced_records_ignores_non_positive_limits() {
+        let conn = open_test_db();
+        for idx in 0..2 {
+            insert_record(
+                &conn,
+                &make_record(
+                    "claude",
+                    &format!("src/prune-non-positive-{idx}.rs"),
+                    "tok-prune",
+                ),
+            )
+            .unwrap();
+        }
+
+        let rows = fetch_unsynced(&conn, "tok-prune", 100).unwrap();
+        let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        mark_synced(&conn, &ids).unwrap();
+
+        assert_eq!(prune_old_synced_records(&conn, 0).unwrap(), 0);
+        assert_eq!(prune_old_synced_records(&conn, -1).unwrap(), 0);
+        assert_eq!(record_ids_by_synced(&conn, 1), ids);
+    }
+
+    #[test]
+    fn prune_local_record_storage_caps_unuploadable_pending_records() {
+        let conn = open_test_db();
+        let mut inserted = Vec::new();
+        for idx in 0..(queries::MAX_UNUPLOADABLE_PENDING_RECORD_ROWS + 8) {
+            let mut r = make_record("claude", &format!("src/no-credential-{idx}.rs"), "");
+            r.token_key = String::new();
+            r.record_sig = String::new();
+            let diff_hunk = format!("@@ -1 +1 @@\n-old-{idx}\n+new-{idx}");
+            let metadata = format!("raw metadata {idx}");
+            let prompt_summary = format!("raw prompt {idx}");
+            r.diff_hunk = Some(diff_hunk.clone());
+            r.metadata = Some(metadata.clone());
+            r.prompt_summary = Some(prompt_summary.clone());
+            insert_record(&conn, &r).unwrap();
+            inserted.push((
+                idx,
+                conn.last_insert_rowid(),
+                diff_hunk,
+                metadata,
+                prompt_summary,
+            ));
+        }
+
+        prune_local_record_storage(&conn).unwrap();
+
+        assert_eq!(
+            record_count_where(
+                &conn,
+                "synced = 0 AND (token_key = '' OR token_key = 'legacy' OR record_sig = '')"
+            ),
+            queries::MAX_UNUPLOADABLE_PENDING_RECORD_ROWS
+        );
+        assert_eq!(
+            record_count_where(
+                &conn,
+                "COALESCE(diff_hunk, '') LIKE '%old-%'
+                 AND COALESCE(metadata, '') LIKE '%raw metadata%'
+                 AND COALESCE(prompt_summary, '') LIKE '%raw prompt%'"
+            ),
+            queries::MAX_UNUPLOADABLE_PENDING_RECORD_ROWS
+        );
+
+        for idx in 0..8 {
+            assert!(
+                !record_exists_with_file_path(&conn, &format!("src/no-credential-{idx}.rs")),
+                "old over-cap unuploadable row {idx} should be deleted"
+            );
+        }
+
+        for (idx, id, diff_hunk, metadata, prompt_summary) in inserted.into_iter().skip(8) {
+            let (stored_diff_hunk, stored_metadata, stored_prompt_summary) =
+                original_text_fields(&conn, id);
+            assert_eq!(
+                stored_diff_hunk.as_deref(),
+                Some(diff_hunk.as_str()),
+                "retained unuploadable row {idx} should keep diff_hunk"
+            );
+            assert_eq!(
+                stored_metadata.as_deref(),
+                Some(metadata.as_str()),
+                "retained unuploadable row {idx} should keep metadata"
+            );
+            assert_eq!(
+                stored_prompt_summary.as_deref(),
+                Some(prompt_summary.as_str()),
+                "retained unuploadable row {idx} should keep prompt_summary"
+            );
+        }
+    }
+
+    #[test]
+    fn prune_local_record_storage_strips_retry_exhausted_pending_text() {
+        let conn = open_test_db();
+        for idx in 0..(queries::MAX_RETRY_EXHAUSTED_PENDING_RECORD_ROWS + 8) {
+            let mut r = make_record(
+                "claude",
+                &format!("src/retry-exhausted-{idx}.rs"),
+                "tok-retry",
+            );
+            r.diff_hunk = Some(format!("@@ -1 +1 @@\n-old-retry-{idx}\n+new-retry-{idx}"));
+            r.metadata = Some(format!("retry raw metadata {idx}"));
+            r.prompt_summary = Some(format!("retry raw prompt {idx}"));
+            insert_record(&conn, &r).unwrap();
+        }
+        conn.execute("UPDATE records SET retry_count = 5", [])
+            .unwrap();
+
+        prune_local_record_storage(&conn).unwrap();
+
+        assert_eq!(
+            record_count_where(&conn, "synced = 0 AND retry_count >= 5"),
+            queries::MAX_RETRY_EXHAUSTED_PENDING_RECORD_ROWS
+        );
+        assert_eq!(
+            record_count_where(
+                &conn,
+                "COALESCE(diff_hunk, '') LIKE '%old-retry%'
+                 OR COALESCE(metadata, '') LIKE '%retry raw metadata%'
+                 OR COALESCE(prompt_summary, '') LIKE '%retry raw prompt%'"
+            ),
+            0
+        );
     }
 
     #[test]

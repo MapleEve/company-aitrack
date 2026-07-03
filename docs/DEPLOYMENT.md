@@ -11,7 +11,7 @@
 ## 前提条件
 
 - Docker 20+
-- 所有构建命令均从项目根目录 `company-aitrack/` 执行（构建上下文包含三个组件）
+- 所有构建命令均从项目根目录 `aitrack/` 执行（构建上下文包含三个组件）
 
 ---
 
@@ -20,8 +20,8 @@
 aitrack v1.7.0 支持三层采集模型：
 
 - **原生编辑证据**：`claude`、`codex`、`cursor` 可通过原生编辑适配器生成带签名的编辑记录。
-- **提示词与会话来源**：原生提示词钩子支持 `claude`、`codex`、`cursor`；其他工具主要通过稳定的本地会话、轨迹、导出、遥测和用量来源提取可用字段。不稳定的日志或缓存只作为可见来源，不承诺完整正文采集。
-- **动态心跳与本地用量扫描**：心跳可上报已登记工具状态；默认本地扫描覆盖 30 个已验证来源的规范工具 key。
+- **提示词与会话来源**：原生提示词钩子支持 `claude`、`codex`、`cursor`；其他工具通过稳定的本地会话、轨迹、导出、遥测和用量来源接入 agent 级完整数据面。
+- **动态心跳与本地用量扫描**：心跳可上报已登记工具状态；默认本地扫描覆盖 35 个规范工具 key。
 
 纯 token、额度或订阅快照只进入用量数据域，不会被当作编辑监控事件上传。
 
@@ -187,7 +187,7 @@ docker compose -f docker/docker-compose.yml --profile java up -d
 ```bash
 # 1. 克隆仓库
 git clone <repo-url>
-cd company-aitrack
+cd aitrack
 
 # 2. 生成密钥
 export AITRACK_SECRET_KEY=$(openssl rand -base64 32)

@@ -11,6 +11,8 @@ public class UsageRollupItem {
     private String agent;
     private String model;
     private String account;
+    @JsonProperty("usage_basis")
+    private String usageBasis;
     @JsonProperty("tokens_in")
     private long tokensIn;
     @JsonProperty("tokens_out")

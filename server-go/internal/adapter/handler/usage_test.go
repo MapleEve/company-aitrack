@@ -76,6 +76,93 @@ func TestUsageRollupIngestAndSummary(t *testing.T) {
 	}
 }
 
+func TestUsageRollupBasisKeepsNativeAndLocalDerivedSeparate(t *testing.T) {
+	env := newTestEnv(t)
+	body := []byte(`{"items":[{"device_id":"usage-device-basis","day":"2026-06-17","agent":"codex","model":"gpt-5","account":"openai","usage_basis":"native","tokens_in":10,"tokens_out":5,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":0,"message_count":1},{"device_id":"usage-device-basis","day":"2026-06-17","agent":"codex","model":"gpt-5","account":"openai","usage_basis":"local_derived","tokens_in":20,"tokens_out":6,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":0,"message_count":2}]}`)
+
+	req := env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
+	w := do(env.router, req)
+	assertStatus(t, w, http.StatusOK)
+
+	// Same basis still overwrites idempotently.
+	body = []byte(`{"items":[{"device_id":"usage-device-basis","day":"2026-06-17","agent":"codex","model":"gpt-5","account":"openai","usage_basis":"local_derived","tokens_in":30,"tokens_out":7,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":0,"message_count":3}]}`)
+	req = env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
+	w = do(env.router, req)
+	assertStatus(t, w, http.StatusOK)
+
+	req = env.signedRequest(http.MethodGet, "/api/v1/ai-track/usage/summary?agent=codex&limit=10", nil)
+	w = do(env.router, req)
+	assertStatus(t, w, http.StatusOK)
+
+	var resp struct {
+		TotalTokens  int64 `json:"total_tokens"`
+		MessageCount int64 `json:"message_count"`
+		Items        []struct {
+			UsageBasis   string `json:"usage_basis"`
+			TotalTokens  int64  `json:"total_tokens"`
+			MessageCount int64  `json:"message_count"`
+		} `json:"items"`
+	}
+	decodeJSON(t, w, &resp)
+	if resp.TotalTokens != 52 {
+		t.Fatalf("total_tokens = %d, want 52", resp.TotalTokens)
+	}
+	if resp.MessageCount != 4 {
+		t.Fatalf("message_count = %d, want 4", resp.MessageCount)
+	}
+	got := map[string]struct {
+		totalTokens  int64
+		messageCount int64
+	}{}
+	for _, item := range resp.Items {
+		got[item.UsageBasis] = struct {
+			totalTokens  int64
+			messageCount int64
+		}{totalTokens: item.TotalTokens, messageCount: item.MessageCount}
+	}
+	if got["native"].totalTokens != 15 || got["native"].messageCount != 1 {
+		t.Fatalf("native summary item = %+v, want total_tokens=15 message_count=1", got["native"])
+	}
+	if got["local_derived"].totalTokens != 37 || got["local_derived"].messageCount != 3 {
+		t.Fatalf("local_derived summary item = %+v, want total_tokens=37 message_count=3", got["local_derived"])
+	}
+}
+
+func TestUsageRollupDefaultsMissingBasisToNative(t *testing.T) {
+	env := newTestEnv(t)
+	body := []byte(`{"items":[{"device_id":"usage-device-default-basis","day":"2026-06-18","agent":"codex","model":"gpt-5","account":"openai","tokens_in":1,"tokens_out":0,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":0}]}`)
+
+	req := env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
+	w := do(env.router, req)
+	assertStatus(t, w, http.StatusOK)
+
+	req = env.signedRequest(http.MethodGet, "/api/v1/ai-track/usage/summary?agent=codex&limit=10", nil)
+	w = do(env.router, req)
+	assertStatus(t, w, http.StatusOK)
+
+	var resp struct {
+		Items []struct {
+			UsageBasis string `json:"usage_basis"`
+		} `json:"items"`
+	}
+	decodeJSON(t, w, &resp)
+	for _, item := range resp.Items {
+		if item.UsageBasis == "native" {
+			return
+		}
+	}
+	t.Fatalf("summary items did not include default usage_basis native: %+v", resp.Items)
+}
+
+func TestUsageRollupRejectsInvalidBasis(t *testing.T) {
+	env := newTestEnv(t)
+	body := []byte(`{"items":[{"device_id":"usage-device-invalid-basis","day":"2026-06-18","agent":"codex","model":"gpt-5","account":"openai","usage_basis":"estimated","tokens_in":1,"tokens_out":0,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":0}]}`)
+
+	req := env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
+	w := do(env.router, req)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
 func TestUsageRollupAcceptsIdentityJson(t *testing.T) {
 	env := newTestEnv(t)
 	body := []byte(`{"items":[{"device_id":"usage-device-identity","day":"2026-06-16","agent":"codex","model":"gpt-5","account":"local","tokens_in":1,"tokens_out":2,"tokens_cache_read":0,"tokens_cache_write":0,"tokens_reasoning":0}]}`)
@@ -90,6 +177,15 @@ func TestUsageRollupRejectsDigestMismatch(t *testing.T) {
 	req.Header.Set("X-AiTrack-Body-Sha256", "deadbeef")
 	w := do(env.router, req)
 	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestUsageRollupRejectsGzipBodyAboveDecodedLimit(t *testing.T) {
+	env := newTestEnv(t)
+	body := bytes.Repeat([]byte("x"), 8<<20+1)
+
+	req := env.signedGzipUsageRequest(http.MethodPost, "/api/v1/ai-track/usage/rollup", body)
+	w := do(env.router, req)
+	assertStatus(t, w, http.StatusRequestEntityTooLarge)
 }
 
 func TestUsageSubscriptionIngest(t *testing.T) {

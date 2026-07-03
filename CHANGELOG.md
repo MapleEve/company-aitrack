@@ -15,7 +15,7 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 ### 新增
 
 - **动态工具注册表 / 状态 / 心跳**：客户端状态和心跳 payload 现在按工具 key 表达动态注册项，不再固定为三工具布尔图。
-- **扩展本地来源矩阵**：默认本地扫描覆盖 30 个已验证本地来源的工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。没有真实来源证据的登记项不计入默认采集能力。
+- **扩展本地来源矩阵**：默认本地扫描覆盖 35 个规范工具 key；显式 `--tool` 还接受 `roocode`、`kilo-code`、`gajae-code` 作为别名。
 - **用量数据面**：客户端新增 `usage_sessions`、`usage_daily_model_rollups`、`usage_subscription_snapshots`、`usage_outbox` 表；Java 与 Go 服务端新增 `/api/v1/ai-track/usage/rollup`、`/api/v1/ai-track/usage/subscription`、`/api/v1/ai-track/usage/summary`。
 - **本地会话监控恢复**：本地会话记录可为没有原生编辑钩子的工具恢复有界提示词、工具调用、窗口和可还原编辑监控事件。
 - **额度 / 订阅快照**：Claude Code 与 Codex CLI 的本地状态可写入额度和订阅快照数据面。
@@ -35,8 +35,8 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 
 ### 测试 / CI
 
-- Rust 客户端单测：**301 tests**。
-- 客户端 E2E 矩阵门禁：必需本地来源工具覆盖 **30 / 30**，默认矩阵覆盖率要求 **100%**，并对可还原监控事件做字段级断言。
+- Rust 客户端单测：**342 tests**。
+- 客户端 E2E 矩阵门禁：默认 35 个规范 key 都必须有 fixture/parser 路径和字段级断言；该矩阵用于防止扫描链路断裂，不表示 35 个工具都已闭合完整本地结构。
 - 客户端 E2E 验证：未变化本地来源立即第二次执行 `usage sync` 时，解析 **0** 条 message 和 **0** 条 monitoring event。
 - PR CI 门禁覆盖 Rust / Java / Go 构建与覆盖率、架构门禁、Java + Go E2E、Rust 客户端本地来源 E2E、Codecov、FOSSA 和自动 review 检查。
 
@@ -76,7 +76,7 @@ GitHub Release 正文见 [`docs/RELEASE_NOTES_v1.7.0.md`](docs/RELEASE_NOTES_v1.
 
 ### 修复
 
-- E2E：`e2e/run.sh` Go 路径在 `pg_isready` 通过后新增 `sleep 2`，消除首次镜像拉取场景下 PostgreSQL 内部初始化竞态；新增容器日志抓取，方便排查 Go 服务端启动失败原因
+- E2E：`e2e/run.sh` Go 路径在 `pg_isready` 通过后新增 `sleep 2`，消除首次镜像拉取场景下 PostgreSQL 初始化竞态；新增容器日志抓取，方便排查 Go 服务端启动失败原因
 - Go 服务端：测试占位符统一改为 `$N`（兼容 pgx/PostgreSQL）；覆盖率命令新增 `-coverpkg=./internal/...` 确保跨包覆盖统计准确；`page` 参数加 `clamp ≥ 0` 防止 `OFFSET` 为负
 
 ### 覆盖率

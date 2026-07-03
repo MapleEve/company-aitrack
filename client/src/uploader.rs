@@ -4,8 +4,10 @@ use rusqlite::Connection;
 use crate::adapter::http::upload::{HttpUploader, PostBatchResult};
 use crate::adapter::sqlite::{fetch_unsynced, increment_retry, mark_synced};
 use crate::config::{load_config, mask_token, split_credential};
+use crate::domain::model::Record;
 
 const BATCH_LIMIT: i64 = 200;
+const MAX_UPLOAD_BODY_BYTES: usize = 7 * 1024 * 1024;
 
 /// Flush unsynced records to the server.
 ///
@@ -16,6 +18,15 @@ const BATCH_LIMIT: i64 = 200;
 /// - Marking accepted / flagged records as synced
 /// - Incrementing the retry counter for rejected records or on transient errors
 pub async fn flush_unsynced(conn: &Connection, uploader: &HttpUploader) -> Result<()> {
+    flush_unsynced_with_limits(conn, uploader, BATCH_LIMIT as usize, MAX_UPLOAD_BODY_BYTES).await
+}
+
+async fn flush_unsynced_with_limits(
+    conn: &Connection,
+    uploader: &HttpUploader,
+    max_count: usize,
+    max_body_bytes: usize,
+) -> Result<()> {
     let (token, _) = match split_credential(&uploader.credential) {
         Ok(parts) => parts,
         Err(e) => {
@@ -33,9 +44,22 @@ pub async fn flush_unsynced(conn: &Connection, uploader: &HttpUploader) -> Resul
         return Ok(());
     }
 
+    for batch in split_upload_batches(&rows, &device_id, max_count, max_body_bytes)? {
+        flush_batch(conn, uploader, &device_id, &batch).await?;
+    }
+
+    Ok(())
+}
+
+async fn flush_batch(
+    conn: &Connection,
+    uploader: &HttpUploader,
+    device_id: &str,
+    rows: &[Record],
+) -> Result<()> {
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
 
-    match uploader.post_batch(&rows, &device_id).await {
+    match uploader.post_batch(rows, device_id).await {
         PostBatchResult::Success(ur) => {
             // rejected: increment retry counter
             let rejected_ids: Vec<i64> = ur
@@ -69,13 +93,54 @@ pub async fn flush_unsynced(conn: &Connection, uploader: &HttpUploader) -> Resul
     Ok(())
 }
 
+fn split_upload_batches(
+    rows: &[Record],
+    device_id: &str,
+    max_count: usize,
+    max_body_bytes: usize,
+) -> Result<Vec<Vec<Record>>> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let max_count = max_count.max(1);
+    let max_body_bytes = max_body_bytes.max(1);
+    let mut batches = Vec::new();
+    let mut current: Vec<Record> = Vec::new();
+
+    for row in rows {
+        let count_full = current.len() >= max_count;
+        let byte_full = if current.is_empty() {
+            false
+        } else {
+            let mut candidate = current.clone();
+            candidate.push(row.clone());
+            HttpUploader::payload_size_bytes(&candidate, device_id)? > max_body_bytes
+        };
+
+        if count_full || byte_full {
+            batches.push(std::mem::take(&mut current));
+        }
+        current.push(row.clone());
+    }
+
+    if !current.is_empty() {
+        batches.push(current);
+    }
+
+    Ok(batches)
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::flush_unsynced;
+    use super::{
+        flush_unsynced, flush_unsynced_with_limits, split_upload_batches, BATCH_LIMIT,
+        MAX_UPLOAD_BODY_BYTES,
+    };
     use crate::adapter::http::upload::HttpUploader;
     use crate::adapter::sqlite::{self as db, ensure_kv_table, fetch_unsynced, pending_count};
     use crate::config::mask_token;
@@ -147,6 +212,43 @@ mod tests {
         .unwrap()
     }
 
+    fn set_original_text_fields(conn: &Connection, id: i64) {
+        conn.execute(
+            "UPDATE records
+             SET diff_hunk = ?1, metadata = ?2, prompt_summary = ?3
+             WHERE id = ?4",
+            (
+                "@@ -1 +1 @@\n-raw\n+changed",
+                "{\"raw\":\"metadata\"}",
+                "raw prompt",
+                id,
+            ),
+        )
+        .unwrap();
+    }
+
+    fn original_text_fields(
+        conn: &Connection,
+        id: i64,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT diff_hunk, metadata, prompt_summary FROM records WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    fn assert_original_text_fields_pruned(conn: &Connection, id: i64) {
+        let (diff_hunk, metadata, prompt_summary) = original_text_fields(conn, id);
+        assert_eq!(diff_hunk.as_deref(), Some("[aitrack-pruned:diff_hunk]"));
+        assert_eq!(metadata.as_deref(), Some("{\"aitrack_pruned\":true}"));
+        assert_eq!(
+            prompt_summary.as_deref(),
+            Some("[aitrack-pruned:prompt_summary]")
+        );
+    }
+
     fn make_uploader(api_url: &str) -> HttpUploader {
         HttpUploader::new(api_url.to_string(), TEST_CREDENTIAL.to_string())
     }
@@ -173,7 +275,8 @@ mod tests {
             .await;
 
         let conn = open_test_db();
-        insert_factory_record(&conn, 1, TEST_TOKEN);
+        let id = insert_factory_record(&conn, 1, TEST_TOKEN);
+        set_original_text_fields(&conn, id);
 
         let masked = mask_token(TEST_TOKEN);
         assert_eq!(pending_count(&conn, &masked), 1);
@@ -182,6 +285,7 @@ mod tests {
         flush_unsynced(&conn, &uploader).await.unwrap();
 
         assert_eq!(pending_count(&conn, &masked), 0, "accepted → synced");
+        assert_original_text_fields_pruned(&conn, id);
     }
 
     #[tokio::test]
@@ -198,7 +302,8 @@ mod tests {
             .await;
 
         let conn = open_test_db();
-        insert_factory_record(&conn, 2, TEST_TOKEN);
+        let id = insert_factory_record(&conn, 2, TEST_TOKEN);
+        set_original_text_fields(&conn, id);
 
         let masked = mask_token(TEST_TOKEN);
         let uploader = make_uploader(&mock_server.uri());
@@ -209,6 +314,14 @@ mod tests {
         // Verify retry_count incremented
         let rows = fetch_unsynced(&conn, &masked, 10).unwrap();
         assert_eq!(rows[0].retry_count, 1);
+        assert_eq!(
+            original_text_fields(&conn, id),
+            (
+                Some("@@ -1 +1 @@\n-raw\n+changed".to_string()),
+                Some("{\"raw\":\"metadata\"}".to_string()),
+                Some("raw prompt".to_string())
+            )
+        );
     }
 
     #[tokio::test]
@@ -225,7 +338,8 @@ mod tests {
             .await;
 
         let conn = open_test_db();
-        insert_factory_record(&conn, 3, TEST_TOKEN);
+        let id = insert_factory_record(&conn, 3, TEST_TOKEN);
+        set_original_text_fields(&conn, id);
         let masked = mask_token(TEST_TOKEN);
 
         let uploader = make_uploader(&mock_server.uri());
@@ -233,6 +347,7 @@ mod tests {
 
         // flagged → synced per contract
         assert_eq!(pending_count(&conn, &masked), 0, "flagged → synced");
+        assert_original_text_fields_pruned(&conn, id);
     }
 
     #[tokio::test]
@@ -245,7 +360,8 @@ mod tests {
             .await;
 
         let conn = open_test_db();
-        insert_factory_record(&conn, 4, TEST_TOKEN);
+        let id = insert_factory_record(&conn, 4, TEST_TOKEN);
+        set_original_text_fields(&conn, id);
         let masked = mask_token(TEST_TOKEN);
 
         let uploader = make_uploader(&mock_server.uri());
@@ -253,12 +369,21 @@ mod tests {
 
         let rows = fetch_unsynced(&conn, &masked, 10).unwrap();
         assert_eq!(rows[0].retry_count, 1, "HTTP 500 → retry incremented");
+        assert_eq!(
+            original_text_fields(&conn, id),
+            (
+                Some("@@ -1 +1 @@\n-raw\n+changed".to_string()),
+                Some("{\"raw\":\"metadata\"}".to_string()),
+                Some("raw prompt".to_string())
+            )
+        );
     }
 
     #[tokio::test]
     async fn flush_connection_error_increments_retry() {
         let conn = open_test_db();
-        insert_factory_record(&conn, 5, TEST_TOKEN);
+        let id = insert_factory_record(&conn, 5, TEST_TOKEN);
+        set_original_text_fields(&conn, id);
         let masked = mask_token(TEST_TOKEN);
 
         // Use an invalid URL → connection error
@@ -269,6 +394,14 @@ mod tests {
         assert_eq!(
             rows[0].retry_count, 1,
             "connection error → retry incremented"
+        );
+        assert_eq!(
+            original_text_fields(&conn, id),
+            (
+                Some("@@ -1 +1 @@\n-raw\n+changed".to_string()),
+                Some("{\"raw\":\"metadata\"}".to_string()),
+                Some("raw prompt".to_string())
+            )
         );
     }
 
@@ -300,6 +433,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn flush_splits_records_by_serialized_body_limit() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/ai-track/edits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "accepted": 1,
+                "rejected": [],
+                "flagged": []
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let conn = open_test_db();
+        let id_1 = insert_factory_record(&conn, 201, TEST_TOKEN);
+        let id_2 = insert_factory_record(&conn, 202, TEST_TOKEN);
+        set_original_text_fields(&conn, id_1);
+        set_original_text_fields(&conn, id_2);
+        let rows = fetch_unsynced(&conn, &mask_token(TEST_TOKEN), 10).unwrap();
+        let device_id = crate::config::load_config().device_id;
+        let single_size = HttpUploader::payload_size_bytes(&rows[0..1], &device_id).unwrap();
+        let pair_size = HttpUploader::payload_size_bytes(&rows[0..2], &device_id).unwrap();
+
+        let uploader = make_uploader(&mock_server.uri());
+        flush_unsynced_with_limits(&conn, &uploader, BATCH_LIMIT as usize, pair_size - 1)
+            .await
+            .unwrap();
+
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert!(request.body.len() >= single_size);
+            assert!(request.body.len() < pair_size);
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body["edits"].as_array().unwrap().len(), 1);
+        }
+        let masked = mask_token(TEST_TOKEN);
+        assert_eq!(pending_count(&conn, &masked), 0);
+        assert_original_text_fields_pruned(&conn, id_1);
+        assert_original_text_fields_pruned(&conn, id_2);
+    }
+
+    #[tokio::test]
     async fn flush_marks_synced_when_response_unparseable() {
         let mock_server = MockServer::start().await;
         // 200 with non-JSON body → fallback: mark all synced
@@ -311,6 +486,7 @@ mod tests {
 
         let conn = open_test_db();
         let id = insert_factory_record(&conn, 6, TEST_TOKEN);
+        set_original_text_fields(&conn, id);
         let masked = mask_token(TEST_TOKEN);
 
         let uploader = make_uploader(&mock_server.uri());
@@ -322,6 +498,7 @@ mod tests {
             rows.iter().all(|r| r.id != id),
             "unparseable 200 → fallback synced"
         );
+        assert_original_text_fields_pruned(&conn, id);
     }
 
     #[test]
@@ -387,6 +564,53 @@ mod tests {
             rec.record_sig, real_sig,
             "tampered sig must differ from real sig"
         );
+    }
+
+    #[test]
+    fn split_upload_batches_preserves_count_limit() {
+        let records = (0..(BATCH_LIMIT as u64 + 1))
+            .map(|seed| EditRecordFactory::new(seed).build())
+            .collect::<Vec<_>>();
+
+        let batches =
+            split_upload_batches(&records, "dev-count", BATCH_LIMIT as usize, usize::MAX).unwrap();
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].len(), BATCH_LIMIT as usize);
+        assert_eq!(batches[1].len(), 1);
+    }
+
+    #[test]
+    fn split_upload_batches_respects_serialized_body_limit() {
+        let records = (0..3)
+            .map(|seed| EditRecordFactory::new(seed).build())
+            .collect::<Vec<_>>();
+        let single_size = HttpUploader::payload_size_bytes(&records[0..1], "dev-bytes").unwrap();
+        let pair_size = HttpUploader::payload_size_bytes(&records[0..2], "dev-bytes").unwrap();
+
+        let batches =
+            split_upload_batches(&records, "dev-bytes", BATCH_LIMIT as usize, pair_size - 1)
+                .unwrap();
+
+        assert!(single_size < pair_size);
+        assert_eq!(batches.len(), 3);
+        assert!(batches.iter().all(|batch| batch.len() == 1));
+    }
+
+    #[test]
+    fn production_stored_single_record_fits_upload_body_limit() {
+        let mut rec = EditRecordFactory::new(204)
+            .with_diff_hunk(Some(
+                "d".repeat(crate::domain::model::MAX_STORED_DIFF_HUNK_CHARS),
+            ))
+            .with_prompt_summary(Some(
+                "p".repeat(crate::domain::model::MAX_STORED_PROMPT_CHARS),
+            ))
+            .build();
+        rec.metadata = Some("m".repeat(crate::domain::model::MAX_STORED_METADATA_CHARS));
+        let body_size = HttpUploader::payload_size_bytes(&[rec], "dev-single-limit").unwrap();
+
+        assert!(body_size < MAX_UPLOAD_BODY_BYTES);
     }
 
     /// Capture chain integration test: parse → diff → sig → db insert → upload → mark synced.

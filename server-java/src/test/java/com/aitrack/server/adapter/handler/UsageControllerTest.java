@@ -5,6 +5,7 @@ import com.aitrack.server.adapter.db.UsageSubscriptionSnapshotRepository;
 import com.aitrack.server.application.TokenService;
 import com.aitrack.server.domain.model.TokenEntity;
 import com.aitrack.server.domain.service.SignatureService;
+import com.aitrack.server.infrastructure.config.AiTrackProperties;
 import com.aitrack.server.infrastructure.config.AiTrackServerApplication;
 import com.aitrack.server.testkit.EditDtoFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,9 +20,12 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPOutputStream;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -37,6 +41,7 @@ class UsageControllerTest {
     @Autowired TokenRepository tokenRepository;
     @Autowired UsageSubscriptionSnapshotRepository subscriptionRepository;
     @Autowired SignatureService signatureService;
+    @Autowired AiTrackProperties props;
 
     private static final String RAW_TOKEN = "aitrack_" + "d".repeat(64);
     private static final String HMAC_SECRET = EditDtoFactory.DEFAULT_HMAC_SECRET;
@@ -126,7 +131,87 @@ class UsageControllerTest {
             .andExpect(jsonPath("$.tokens_in", is(11)))
             .andExpect(jsonPath("$.message_count", is(3)))
             .andExpect(jsonPath("$.source_cost", is(0.25)))
-            .andExpect(jsonPath("$.items[0].agent", is("codex")));
+            .andExpect(jsonPath("$.items[0].agent", is("codex")))
+            .andExpect(jsonPath("$.items[0].usage_basis", is("native")));
+    }
+
+    @Test
+    void rollup_usageBasisSeparatesUpsertRowsAndSummaryGroups() throws Exception {
+        byte[] first = objectMapper.writeValueAsBytes(Map.of(
+            "items", java.util.List.of(Map.ofEntries(
+                Map.entry("device_id", "usage-device-java"),
+                Map.entry("day", "2026-06-16"),
+                Map.entry("agent", "codex"),
+                Map.entry("model", "gpt-5"),
+                Map.entry("account", "local"),
+                Map.entry("usage_basis", "native"),
+                Map.entry("tokens_in", 10),
+                Map.entry("tokens_out", 0),
+                Map.entry("tokens_cache_read", 0),
+                Map.entry("tokens_cache_write", 0),
+                Map.entry("tokens_reasoning", 0),
+                Map.entry("message_count", 1),
+                Map.entry("source_cost", 0.10)
+            ))
+        ));
+        byte[] second = objectMapper.writeValueAsBytes(Map.of(
+            "items", java.util.List.of(Map.ofEntries(
+                Map.entry("device_id", "usage-device-java"),
+                Map.entry("day", "2026-06-16"),
+                Map.entry("agent", "codex"),
+                Map.entry("model", "gpt-5"),
+                Map.entry("account", "local"),
+                Map.entry("usage_basis", "local_derived"),
+                Map.entry("tokens_in", 20),
+                Map.entry("tokens_out", 0),
+                Map.entry("tokens_cache_read", 0),
+                Map.entry("tokens_cache_write", 0),
+                Map.entry("tokens_reasoning", 0),
+                Map.entry("message_count", 2),
+                Map.entry("source_cost", 0.20)
+            ))
+        ));
+
+        mockMvc.perform(signedUsageRequest("/api/v1/ai-track/usage/rollup", first, false))
+            .andExpect(status().isOk());
+        mockMvc.perform(signedUsageRequest("/api/v1/ai-track/usage/rollup", second, false))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/ai-track/usage/summary")
+                .param("agent", "codex")
+                .header("Authorization", "Bearer " + RAW_TOKEN))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.total_tokens", is(30)))
+            .andExpect(jsonPath("$.tokens_in", is(30)))
+            .andExpect(jsonPath("$.message_count", is(3)))
+            .andExpect(jsonPath("$.items[0].usage_basis", is("local_derived")))
+            .andExpect(jsonPath("$.items[0].total_tokens", is(20)))
+            .andExpect(jsonPath("$.items[1].usage_basis", is("native")))
+            .andExpect(jsonPath("$.items[1].total_tokens", is(10)));
+    }
+
+    @Test
+    void rollup_invalidUsageBasis_400() throws Exception {
+        byte[] body = objectMapper.writeValueAsBytes(Map.of(
+            "items", java.util.List.of(Map.ofEntries(
+                Map.entry("device_id", "usage-device-java"),
+                Map.entry("day", "2026-06-16"),
+                Map.entry("agent", "codex"),
+                Map.entry("model", "gpt-5"),
+                Map.entry("account", "local"),
+                Map.entry("usage_basis", "estimated"),
+                Map.entry("tokens_in", 1),
+                Map.entry("tokens_out", 0),
+                Map.entry("tokens_cache_read", 0),
+                Map.entry("tokens_cache_write", 0),
+                Map.entry("tokens_reasoning", 0),
+                Map.entry("message_count", 1),
+                Map.entry("source_cost", 0.01)
+            ))
+        ));
+
+        mockMvc.perform(signedUsageRequest("/api/v1/ai-track/usage/rollup", body, false))
+            .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -156,6 +241,34 @@ class UsageControllerTest {
             .andExpect(status().isOk());
 
         org.assertj.core.api.Assertions.assertThat(subscriptionRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void rollup_gzipDecodedBodyExceedsLimit_413() throws Exception {
+        props.setMaxRequestBodyBytes(512);
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (int i = 0; i < 80; i++) {
+            items.add(Map.ofEntries(
+                Map.entry("device_id", "usage-device-java"),
+                Map.entry("day", "2026-06-16"),
+                Map.entry("agent", "codex"),
+                Map.entry("model", "gpt-5"),
+                Map.entry("account", "local"),
+                Map.entry("tokens_in", 1),
+                Map.entry("tokens_out", 1),
+                Map.entry("tokens_cache_read", 0),
+                Map.entry("tokens_cache_write", 0),
+                Map.entry("tokens_reasoning", 0),
+                Map.entry("message_count", 1),
+                Map.entry("source_cost", 0.01)
+            ));
+        }
+        byte[] body = objectMapper.writeValueAsBytes(Map.of("items", items));
+
+        assertThat((long) body.length).isGreaterThan(props.getMaxRequestBodyBytes());
+        assertThat(gzip(body).length).isLessThanOrEqualTo((int) props.getMaxRequestBodyBytes());
+        mockMvc.perform(signedUsageRequest("/api/v1/ai-track/usage/rollup", body, true))
+            .andExpect(status().isPayloadTooLarge());
     }
 
     private static byte[] gzip(byte[] body) throws Exception {

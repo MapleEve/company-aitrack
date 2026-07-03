@@ -8,12 +8,15 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Spring Data JPA persistence adapter implementing {@link EditRecordPort}.
@@ -25,10 +28,19 @@ import java.util.List;
 @Repository
 public interface EditRecordRepository extends JpaRepository<EditRecordEntity, Long>, EditRecordPort {
 
+    String RAW_FIELD_STRIPPED_MARKER = "[stripped by edit retention]";
+    int DEFAULT_RAW_RETENTION_DAYS = 30;
+    int DEFAULT_MAX_RAW_ROWS = 10_000;
+
     // Most-specific re-declaration resolves the overload clash between
     // JpaRepository's generic save(S) and the EditRecordPort save method.
     @Override
     EditRecordEntity save(EditRecordEntity record);
+
+    @Override
+    boolean existsByRecordSig(String recordSig);
+
+    Optional<EditRecordEntity> findByRecordSig(String recordSig);
 
     // Rate limit query by diffHunkHash stored separately — simpler approach: count by tokenKey+filePath+receivedAt
     @Query("SELECT COUNT(e) FROM EditRecordEntity e WHERE e.tokenKey = :tokenKey AND e.filePath = :filePath AND e.receivedAt >= :since")
@@ -36,6 +48,61 @@ public interface EditRecordRepository extends JpaRepository<EditRecordEntity, Lo
         @Param("tokenKey") String tokenKey,
         @Param("filePath") String filePath,
         @Param("since") Instant since
+    );
+
+    @Override
+    @Transactional
+    default int applyRawRetention(Instant now) {
+        return applyRawRetentionWithPolicy(now, DEFAULT_RAW_RETENTION_DAYS, DEFAULT_MAX_RAW_ROWS);
+    }
+
+    @Transactional
+    default int applyRawRetentionWithPolicy(Instant now, int rawRetentionDays, int maxRawRows) {
+        int normalizedDays = rawRetentionDays > 0 ? rawRetentionDays : DEFAULT_RAW_RETENTION_DAYS;
+        int normalizedRows = maxRawRows > 0 ? maxRawRows : DEFAULT_MAX_RAW_ROWS;
+        Instant cutoff = now.minusSeconds(normalizedDays * 24L * 60L * 60L);
+        return stripRawFieldsOlderThan(cutoff, RAW_FIELD_STRIPPED_MARKER)
+            + stripRawFieldsBeyondNewestRows(normalizedRows, RAW_FIELD_STRIPPED_MARKER);
+    }
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+        UPDATE EditRecordEntity e
+           SET e.diffHunk = CASE WHEN e.diffHunk IS NULL OR e.diffHunk = '' THEN e.diffHunk ELSE :marker END,
+               e.metadata = CASE WHEN e.metadata IS NULL OR e.metadata = '' THEN e.metadata ELSE :marker END,
+               e.promptSummary = CASE WHEN e.promptSummary IS NULL OR e.promptSummary = '' THEN e.promptSummary ELSE :marker END
+         WHERE e.receivedAt < :cutoff
+           AND (
+               (e.diffHunk IS NOT NULL AND e.diffHunk <> '' AND e.diffHunk <> :marker)
+               OR (e.metadata IS NOT NULL AND e.metadata <> '' AND e.metadata <> :marker)
+               OR (e.promptSummary IS NOT NULL AND e.promptSummary <> '' AND e.promptSummary <> :marker)
+           )
+        """)
+    int stripRawFieldsOlderThan(
+        @Param("cutoff") Instant cutoff,
+        @Param("marker") String marker
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+        UPDATE edit_records
+           SET diff_hunk = CASE WHEN diff_hunk IS NULL OR diff_hunk = '' THEN diff_hunk ELSE :marker END,
+               metadata = CASE WHEN metadata IS NULL OR metadata = '' THEN metadata ELSE :marker END,
+               prompt_summary = CASE WHEN prompt_summary IS NULL OR prompt_summary = '' THEN prompt_summary ELSE :marker END
+         WHERE id NOT IN (
+               SELECT id FROM (
+                   SELECT id FROM edit_records ORDER BY received_at DESC, id DESC LIMIT :maxRows
+               ) retained
+           )
+           AND (
+               (diff_hunk IS NOT NULL AND diff_hunk <> '' AND diff_hunk <> :marker)
+               OR (metadata IS NOT NULL AND metadata <> '' AND metadata <> :marker)
+               OR (prompt_summary IS NOT NULL AND prompt_summary <> '' AND prompt_summary <> :marker)
+           )
+        """, nativeQuery = true)
+    int stripRawFieldsBeyondNewestRows(
+        @Param("maxRows") int maxRows,
+        @Param("marker") String marker
     );
 
     Page<EditRecordEntity> findByTokenKey(String tokenKey, Pageable pageable);
